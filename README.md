@@ -98,6 +98,17 @@ Open the dashboard, enter your API URL (`http://localhost:3010`) and secret. The
 
 In the dashboard go to **Agents → Add agent**. After registering, copy the generated MCP config into each agent's session. Relai works with any MCP-compatible client — Claude Code, Copilot, Cursor, Windsurf, Gemini, or anything else that supports MCP tools.
 
+**Running an autonomous Claude worker loop** — use `start-worker.ts` from the relai directory, passing the repo you want it to work in:
+
+```bash
+API_SECRET=changeme PROJECT_ID=proj_xxx \
+  pnpm exec tsx scripts/start-worker.ts claude --repo /path/to/your/repo
+```
+
+This registers the agent (or reuses an existing one with the same name) and starts a headless Claude Code loop that polls for tasks. Run multiple instances with different `--name` and `--repo` flags for parallel workers.
+
+**Running an interactive session** — add a `.mcp.json` to your project root (the dashboard generates this after registration) and start Claude Code normally. The agent connects on startup and appears online in the dashboard.
+
 ### 8. Create tasks
 
 Tasks in automated projects are routed to workers automatically. Tasks in manual projects wait for assignment from the Tasks page.

@@ -25,7 +25,7 @@ import { ROLE_PRESETS } from "./presets.js";
 
 // --- Config -----------------------------------------------------------------
 
-const API_URL    = process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010";
+const API_URL    = process.env.API_URL ?? process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010";
 const API_SECRET = process.env.API_SECRET ?? process.env.ORCHESTRATOR_API_SECRET ?? "";
 const PROJECT_ID = process.env.PROJECT_ID ?? "";
 
@@ -99,7 +99,7 @@ async function main() {
   }
 
   if (!API_SECRET) {
-    console.error("Error: API_SECRET (or ORCHESTRATOR_API_SECRET) must be set.");
+    console.error("Error: API_SECRET must be set.");
     process.exit(1);
   }
 
@@ -152,8 +152,8 @@ async function main() {
     ...process.env as Record<string, string>,
     AGENT_ID:                  agentId,
     PROJECT_ID,
-    ORCHESTRATOR_API_URL:      API_URL,
-    ORCHESTRATOR_API_SECRET:   API_SECRET,
+    API_URL,
+    API_SECRET,
     SPECIALIZATION:             specialization,
     REPO_PATH:                  repo,
     CLAUDE_MODEL:               model,

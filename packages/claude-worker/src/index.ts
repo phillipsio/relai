@@ -26,8 +26,8 @@ function writeMcpConfig(): string {
         command: "node",
         args: [mcpServerPath],
         env: {
-          ORCHESTRATOR_API_URL: config.apiUrl,
-          ORCHESTRATOR_API_SECRET: config.apiSecret,
+          API_URL: config.apiUrl,
+          API_SECRET: config.apiSecret,
           AGENT_ID: config.agentId,
           PROJECT_ID: config.projectId,
         },

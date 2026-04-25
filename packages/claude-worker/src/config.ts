@@ -14,7 +14,7 @@ export interface ClaudeWorkerConfig {
 }
 
 export function loadConfig(): ClaudeWorkerConfig {
-  const required = ["AGENT_ID", "PROJECT_ID", "ORCHESTRATOR_API_SECRET", "REPO_PATH"];
+  const required = ["AGENT_ID", "PROJECT_ID", "API_SECRET", "REPO_PATH"];
   const missing = required.filter((k) => !process.env[k]);
   if (missing.length) throw new Error(`Missing required env vars: ${missing.join(", ")}`);
 
@@ -27,8 +27,8 @@ export function loadConfig(): ClaudeWorkerConfig {
   return {
     agentId:        process.env.AGENT_ID!,
     projectId:      process.env.PROJECT_ID!,
-    apiUrl:         process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010",
-    apiSecret:      process.env.ORCHESTRATOR_API_SECRET!,
+    apiUrl:         process.env.API_URL ?? process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010",
+    apiSecret:      (process.env.API_SECRET ?? process.env.ORCHESTRATOR_API_SECRET)!,
     repoPath:       process.env.REPO_PATH!,
     pollIntervalMs: Number(process.env.POLL_INTERVAL_MS  ?? 15_000),
     maxTaskRounds:  Number(process.env.MAX_TASK_ROUNDS   ?? 5),

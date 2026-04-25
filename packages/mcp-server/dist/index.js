@@ -9,25 +9,25 @@ const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const api_client_js_1 = require("./api-client.js");
 const tools_js_1 = require("./tools.js");
-const { ORCHESTRATOR_API_URL = "http://localhost:3010", ORCHESTRATOR_API_SECRET, AGENT_ID, PROJECT_ID, TRANSPORT = "stdio", } = process.env;
-if (!ORCHESTRATOR_API_SECRET) {
-    console.error("[orch-mcp] ORCHESTRATOR_API_SECRET is required");
+const { API_URL = process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010", API_SECRET = process.env.ORCHESTRATOR_API_SECRET, AGENT_ID, PROJECT_ID, TRANSPORT = "stdio", } = process.env;
+if (!API_SECRET) {
+    console.error("[relai-mcp] API_SECRET is required");
     process.exit(1);
 }
 if (!AGENT_ID) {
-    console.error("[orch-mcp] AGENT_ID is required — register your agent first and pass its ID here");
+    console.error("[relai-mcp] AGENT_ID is required — register your agent first and pass its ID here");
     process.exit(1);
 }
 if (!PROJECT_ID) {
-    console.error("[orch-mcp] PROJECT_ID is required");
+    console.error("[relai-mcp] PROJECT_ID is required");
     process.exit(1);
 }
 const apiClient = new api_client_js_1.ApiClient({
-    baseUrl: ORCHESTRATOR_API_URL,
-    secret: ORCHESTRATOR_API_SECRET,
+    baseUrl: API_URL,
+    secret: API_SECRET,
 });
 const server = new mcp_js_1.McpServer({
-    name: "ai-orchestrator",
+    name: "relai",
     version: "0.1.0",
 });
 // Register all tools

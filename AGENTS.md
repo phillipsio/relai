@@ -12,7 +12,7 @@ pnpm install
 docker compose up -d
 
 # Push Drizzle schema to the database (run once after clone, and after schema changes)
-DATABASE_URL=postgresql://orch:orch@localhost:5433/ai_orchestrator \
+DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
   pnpm --filter @relai/db db:push
 
 # Seed a fresh database (creates project + orchestrator agent, patches .env)
@@ -142,7 +142,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://orch:orch@localhost:5433/ai_orchestrator` | |
+| `DATABASE_URL` | `postgresql://relai:relai@localhost:5433/relai` | |
 | `API_PORT` | `3010` | |
 | `API_SECRET` | — | Required; shared with all clients |
 | `ANTHROPIC_API_KEY` | — | Enables Claude fallback routing; optional |
@@ -162,7 +162,7 @@ cp .env.example .env
 # Edit .env: set API_SECRET, optionally add ANTHROPIC_API_KEY
 pnpm install
 docker compose up -d
-DATABASE_URL=postgresql://orch:orch@localhost:5433/ai_orchestrator \
+DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
   pnpm --filter @relai/db db:push
 pnpm --filter @relai/api dev        # terminal 1
 API_SECRET=<your-secret> tsx scripts/seed.ts my-project my-agent orchestrator

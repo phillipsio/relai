@@ -5,8 +5,8 @@ import type { FastifyInstance } from "fastify";
 
 // ── env setup ─────────────────────────────────────────────────────────────────
 // Requires a running postgres instance at DATABASE_URL (docker-compose default:
-//   postgresql://orch:orch@localhost:5433/ai_orchestrator)
-const DB_URL = process.env.DATABASE_URL ?? "postgresql://orch:orch@localhost:5433/ai_orchestrator";
+//   postgresql://relai:relai@localhost:5433/relai)
+const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
 const SECRET = "test-secret-abc123";
 
 process.env.DATABASE_URL = DB_URL;

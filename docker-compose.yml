@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: orch
-      POSTGRES_PASSWORD: orch
-      POSTGRES_DB: ai_orchestrator
+      POSTGRES_USER: relai
+      POSTGRES_PASSWORD: relai
+      POSTGRES_DB: relai
     ports:
       - "5433:5432"
     volumes:

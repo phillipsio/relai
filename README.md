@@ -73,7 +73,7 @@ cp .env.example .env
 ### 4. Push the database schema
 
 ```bash
-DATABASE_URL=postgresql://orch:orch@localhost:5433/ai_orchestrator \
+DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
   pnpm --filter @relai/db db:push
 ```
 
@@ -130,7 +130,7 @@ Set `ANTHROPIC_API_KEY` to enable Claude fallback. Without it, unresolvable task
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://orch:orch@localhost:5433/ai_orchestrator` | |
+| `DATABASE_URL` | `postgresql://relai:relai@localhost:5433/relai` | |
 | `API_PORT` | `3010` | |
 | `API_SECRET` | — | Required; shared with all clients |
 | `ANTHROPIC_API_KEY` | — | Enables Claude fallback routing |

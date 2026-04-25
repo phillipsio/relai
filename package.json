@@ -1,5 +1,5 @@
 {
-  "name": "ai-orchestrator",
+  "name": "relai",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -15,7 +15,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --workspace=vitest.workspace.ts",
-    "demo": "pnpm --filter @relai/orchestrator exec tsx ../../scripts/demo.ts"
+    "demo": "pnpm --filter @relai/orchestrator exec tsx ../../scripts/demo.ts",
+    "start-worker": "node_modules/.pnpm/node_modules/.bin/tsx scripts/start-worker.ts"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

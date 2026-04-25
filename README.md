@@ -102,7 +102,7 @@ In the dashboard go to **Agents → Add agent**. After registering, copy the gen
 
 ```bash
 API_SECRET=changeme PROJECT_ID=proj_xxx \
-  pnpm exec tsx scripts/start-worker.ts claude --repo /path/to/your/repo
+  pnpm start-worker claude --repo /path/to/your/repo
 ```
 
 This registers the agent (or reuses an existing one with the same name) and starts a headless Claude Code loop that polls for tasks. Run multiple instances with different `--name` and `--repo` flags for parallel workers.

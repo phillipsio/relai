@@ -157,7 +157,7 @@ The `dev` scripts for `api` and `mcp-server` load `.env` automatically via `tsx 
 
 ```bash
 git clone <repo>
-cd ai-orchestrator
+cd relai
 cp .env.example .env
 # Edit .env: set API_SECRET, optionally add ANTHROPIC_API_KEY
 pnpm install

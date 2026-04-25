@@ -20,7 +20,7 @@ DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
 API_SECRET=changeme tsx scripts/seed.ts [project-name] [agent-name] [preset]
 # Add more agents to an existing project
 API_SECRET=changeme tsx scripts/add-agent.ts <project-id> <agent-name> <preset>
-# Presets: orchestrator, architect, writer, reviewer, tester, devops
+# Presets: claude, copilot, architect, writer, reviewer, tester, devops
 
 # Start individual packages (each in its own terminal)
 pnpm --filter @relai/api dev          # REST API → :3010

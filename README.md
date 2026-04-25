@@ -52,7 +52,7 @@ The routing scheduler runs inside the API process — no separate daemon needed 
 
 ```bash
 git clone <repo-url>
-cd ai-orchestrator
+cd relai
 pnpm install
 ```
 
@@ -83,7 +83,7 @@ DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
 pnpm --filter @relai/api dev   # start the API first (terminal 1)
 
 # In another terminal:
-API_SECRET=changeme tsx scripts/seed.ts my-project my-agent orchestrator
+API_SECRET=changeme pnpm exec tsx scripts/seed.ts my-project my-agent claude
 ```
 
 ### 6. Start the web dashboard

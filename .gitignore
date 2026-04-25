@@ -7,3 +7,4 @@ dist/
 *.tsbuildinfo
 .idea/
 .vscode/mcp.json
+.ai/mcp/

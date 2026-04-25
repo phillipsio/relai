@@ -64,7 +64,7 @@ packages/
 
 Six tables: `projects`, `agents`, `threads`, `messages`, `tasks`, `routing_log`. All IDs are prefixed strings (`proj_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`). Enums are Postgres-native (`pgEnum`).
 
-- `projects` has `routingMode` (`"automated"` | `"manual"` | null) and `anthropicApiKey` (nullable)
+- \`projects\` has \`routingMode\` (\`\"automated\"\` | \`\"manual\"\` | null)
 - `agents` has `specialization`, `workerType` (`claude` | `copilot` | `cursor` | `windsurf` | `gemini` | `gpt` | `mcp` | `human`), `repoPath`
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`
 - `tasks` has `domains`, `specialization`, `assignedTo`, `metadata` (jsonb)
@@ -75,7 +75,7 @@ Fastify v4 with Zod validation. Every route — including `GET /health` — requ
 
 Key routes:
 - `POST /projects`, `GET /projects`, `DELETE /projects/:id`
-- `POST /agents`, `PUT /agents/:id/heartbeat`, `GET /agents`, `DELETE /agents/:id`
+- `POST /agents`, `PUT /agents/:id/heartbeat`, `GET /agents`, `GET /agents/:id`, `DELETE /agents/:id`
 - `POST /tasks`, `GET /tasks`, `GET /tasks/:id`, `PUT /tasks/:id`
 - `POST /threads`, `GET /threads`, `DELETE /threads/:id`, `PUT /threads/:id/conclude`
 - `POST /threads/:id/messages`, `GET /threads/:id/messages`
@@ -164,9 +164,10 @@ pnpm install
 docker compose up -d
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
   pnpm --filter @relai/db db:push
-pnpm --filter @relai/api dev        # terminal 1
+pnpm --filter @relai/api dev        # terminal 1 — must be running before seed
+# In a second terminal:
 API_SECRET=<your-secret> tsx scripts/seed.ts my-project my-agent orchestrator
-pnpm --filter @relai/web dev        # terminal 2
+pnpm --filter @relai/web dev        # terminal 3
 ```
 
 Then open http://localhost:5173, enter the API URL and secret.

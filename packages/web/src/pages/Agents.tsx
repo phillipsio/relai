@@ -96,15 +96,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function SetupInstructions({ agent, api }: { agent: AgentRow; api: WebApiClient }) {
-  const envBlock = [
-    `ORCHESTRATOR_API_URL=${api.apiUrl}`,
-    `ORCHESTRATOR_API_SECRET=${api.apiSecret}`,
-    `AGENT_ID=${agent.id}`,
-    `PROJECT_ID=${api.projectId}`,
-    ...(agent.repoPath ? [`REPO_PATH=${agent.repoPath}`] : ["REPO_PATH=/path/to/repo"]),
-  ].join("\n");
-
+function McpJsonBlock({ api, agent }: { api: WebApiClient; agent: AgentRow }) {
   const mcpBlock = JSON.stringify({
     mcpServers: {
       relai: {
@@ -121,46 +113,60 @@ function SetupInstructions({ agent, api }: { agent: AgentRow; api: WebApiClient 
   }, null, 2);
 
   return (
+    <div className="space-y-1">
+      <p className="text-xs text-zinc-500 uppercase tracking-wider">Add to .mcp.json in your project root</p>
+      <p className="text-xs text-zinc-500">Replace <code className="text-zinc-400">/path/to/relai</code> with the absolute path to your Relai clone.</p>
+      <div className="flex gap-2 items-start rounded-md bg-zinc-950 border border-zinc-800 p-3">
+        <pre className="flex-1 text-xs text-zinc-300 font-mono whitespace-pre overflow-x-auto">{mcpBlock}</pre>
+        <CopyButton text={mcpBlock} />
+      </div>
+    </div>
+  );
+}
+
+function SetupInstructions({ agent, api }: { agent: AgentRow; api: WebApiClient }) {
+  const repo = agent.repoPath ?? "/path/to/your/repo";
+
+  const workerCmd = [
+    `API_SECRET=${api.apiSecret}`,
+    `PROJECT_ID=${api.projectId}`,
+    `pnpm start-worker ${agent.specialization ?? "claude"} \\`,
+    `  --name ${agent.name} \\`,
+    `  --repo ${repo}`,
+  ].join("\n");
+
+  return (
     <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-zinc-200">Agent registered</h3>
         <span className="text-xs text-zinc-500 font-mono">{agent.id}</span>
       </div>
 
-      {agent.workerType === "human" ? (
+      {agent.workerType === "human" && (
         <p className="text-sm text-zinc-400">
           This agent represents a human team member. Tasks assigned to <span className="text-zinc-200 font-medium">{agent.name}</span> will
           appear in their task queue in the UI — no further setup needed.
         </p>
-      ) : (
-        <>
-          {agent.repoPath && (
-            <div className="rounded-md bg-amber-950/40 border border-amber-800/50 px-3 py-2 flex items-start gap-2">
-              <span className="text-amber-400 text-xs mt-0.5">⚠</span>
-              <p className="text-xs text-amber-300">
-                Start your agent session from{" "}
-                <span className="font-mono text-amber-200">{agent.repoPath}</span>
-                {" "}— Relai can't enforce this automatically. The agent will work in whatever directory it was launched from.
-              </p>
-            </div>
-          )}
+      )}
 
+      {agent.workerType === "claude" && (
+        <>
           <div className="space-y-1">
-            <p className="text-xs text-zinc-500 uppercase tracking-wider">1. Add to .env</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider">Autonomous worker — run from the Relai directory</p>
             <div className="flex gap-2 items-start rounded-md bg-zinc-950 border border-zinc-800 p-3">
-              <pre className="flex-1 text-xs text-zinc-300 font-mono whitespace-pre overflow-x-auto">{envBlock}</pre>
-              <CopyButton text={envBlock} />
+              <pre className="flex-1 text-xs text-zinc-300 font-mono whitespace-pre overflow-x-auto">{workerCmd}</pre>
+              <CopyButton text={workerCmd} />
             </div>
           </div>
-
           <div className="space-y-1">
-            <p className="text-xs text-zinc-500 uppercase tracking-wider">2. Add to .mcp.json</p>
-            <div className="flex gap-2 items-start rounded-md bg-zinc-950 border border-zinc-800 p-3">
-              <pre className="flex-1 text-xs text-zinc-300 font-mono whitespace-pre overflow-x-auto">{mcpBlock}</pre>
-              <CopyButton text={mcpBlock} />
-            </div>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider">Interactive session — optional</p>
+            <McpJsonBlock api={api} agent={agent} />
           </div>
         </>
+      )}
+
+      {agent.workerType !== "human" && agent.workerType !== "claude" && (
+        <McpJsonBlock api={api} agent={agent} />
       )}
     </div>
   );

@@ -1,16 +1,13 @@
 {
   "mcpServers": {
-    "orch": {
+    "relai": {
       "command": "node",
-      "args": [
-        "/Users/jim/PhpStormProjects/ai-orchestrator/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/cli.mjs",
-        "/Users/jim/PhpStormProjects/ai-orchestrator/packages/mcp-server/src/index.ts"
-      ],
+      "args": ["./packages/mcp-server/dist/index.js"],
       "env": {
-        "ORCHESTRATOR_API_URL": "http://localhost:3010",
-        "ORCHESTRATOR_API_SECRET": "changeme",
-        "AGENT_ID": "agent_ID-m7haQq3BBcVapTADQV",
-        "PROJECT_ID": "proj_-zvoGDJwxyOt9QhDJNeyr"
+        "API_URL": "http://localhost:3010",
+        "API_SECRET": "your-secret",
+        "AGENT_ID": "agent_yourAgentId",
+        "PROJECT_ID": "proj_yourProjectId"
       }
     }
   }

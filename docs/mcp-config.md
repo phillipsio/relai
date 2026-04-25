@@ -1,34 +1,36 @@
 # MCP Server Configuration
 
-The `@ai-orchestrator/mcp-server` package works with any MCP-compatible client.
+The `@relai/mcp-server` package works with any MCP-compatible client.
 Config format differs per client — the server code is identical.
 
 ## Required environment variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `ORCHESTRATOR_API_URL` | No (default: `http://localhost:3000`) | URL of the running API server |
-| `ORCHESTRATOR_API_SECRET` | **Yes** | Shared secret from your `.env` |
-| `AGENT_ID` | **Yes** | Your agent's ID (from `POST /agents` on first run) |
+| `API_URL` | No (default: `http://localhost:3010`) | URL of the running API server |
+| `API_SECRET` | **Yes** | Shared secret from your `.env` |
+| `AGENT_ID` | **Yes** | Your agent's ID (from the Agents page or `orch init`) |
 | `PROJECT_ID` | **Yes** | The project this agent belongs to |
 | `TRANSPORT` | No (default: `stdio`) | `stdio` or `http` |
 | `MCP_PORT` | No (default: `3001`) | Port for HTTP transport only |
+
+The easiest way to get a pre-filled config snippet is to register an agent in the dashboard (**Agents → Add agent**) or run `orch init`.
 
 ---
 
 ## Claude Code
 
-Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (per-repo):
+Add to `.mcp.json` in your project root (project-scoped) or `~/.claude.json` (global):
 
 ```json
 {
   "mcpServers": {
-    "orch": {
-      "command": "npx",
-      "args": ["@ai-orchestrator/mcp-server"],
+    "relai": {
+      "command": "node",
+      "args": ["/path/to/relai/packages/mcp-server/dist/index.js"],
       "env": {
-        "ORCHESTRATOR_API_URL": "http://localhost:3010",
-        "ORCHESTRATOR_API_SECRET": "your-secret",
+        "API_URL": "http://localhost:3010",
+        "API_SECRET": "your-secret",
         "AGENT_ID": "agent_yourAgentId",
         "PROJECT_ID": "proj_yourProjectId"
       }
@@ -36,6 +38,8 @@ Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (per-repo):
   }
 }
 ```
+
+Replace `/path/to/relai` with the absolute path to your local clone. The dashboard generates this snippet with the correct values after agent registration.
 
 ---
 
@@ -46,13 +50,13 @@ Add to `.vscode/mcp.json` in your repo root:
 ```json
 {
   "servers": {
-    "orch": {
+    "relai": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["@ai-orchestrator/mcp-server"],
+      "command": "node",
+      "args": ["/path/to/relai/packages/mcp-server/dist/index.js"],
       "env": {
-        "ORCHESTRATOR_API_URL": "http://localhost:3010",
-        "ORCHESTRATOR_API_SECRET": "your-secret",
+        "API_URL": "http://localhost:3010",
+        "API_SECRET": "your-secret",
         "AGENT_ID": "agent_yourAgentId",
         "PROJECT_ID": "proj_yourProjectId"
       }
@@ -61,33 +65,34 @@ Add to `.vscode/mcp.json` in your repo root:
 }
 ```
 
-> **Note:** Verify the exact `.vscode/mcp.json` format against the current
-> GitHub Copilot docs — this format was correct as of the server's authoring
-> date but the Copilot MCP integration was still evolving.
+---
+
+## Cursor, Windsurf, and other MCP clients
+
+Any client that supports stdio MCP servers works with the same pattern — point `command` at `node` and `args` at the compiled `dist/index.js`. Check your client's docs for the exact config file location.
 
 ---
 
 ## Remote / team setup (HTTP transport)
 
-When the API server is hosted remotely and multiple developers connect to it,
-run the MCP server in HTTP mode on the API host:
+When the API server is hosted remotely, run the MCP server in HTTP mode:
 
 ```bash
 TRANSPORT=http \
-ORCHESTRATOR_API_URL=http://localhost:3000 \
-ORCHESTRATOR_API_SECRET=your-secret \
+API_URL=https://your-api-host \
+API_SECRET=your-secret \
 AGENT_ID=agent_yourAgentId \
 PROJECT_ID=proj_yourProjectId \
 MCP_PORT=3001 \
-npx @ai-orchestrator/mcp-server
+node packages/mcp-server/dist/index.js
 ```
 
-Then configure clients to point at the remote SSE endpoint:
+Then configure clients to point at the SSE endpoint:
 
 ```json
 {
   "mcpServers": {
-    "orch": {
+    "relai": {
       "url": "http://your-server:3001/sse"
     }
   }

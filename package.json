@@ -1,0 +1,27 @@
+{
+  "name": "ai-orchestrator",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "shared/*"
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "dev:ui": "pnpm --parallel --filter @ai-orchestrator/api --filter @ai-orchestrator/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run --workspace=vitest.workspace.ts",
+    "demo": "pnpm --filter @ai-orchestrator/orchestrator exec tsx ../../scripts/demo.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

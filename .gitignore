@@ -1,0 +1,9 @@
+node_modules/
+# dist is gitignored everywhere except mcp-server (Copilot needs compiled JS)
+dist/
+!packages/mcp-server/dist/
+.env
+.env.local
+*.tsbuildinfo
+.idea/
+.vscode/mcp.json

@@ -154,7 +154,7 @@ async function main() {
     PROJECT_ID,
     API_URL,
     API_SECRET,
-    SPECIALIZATION:             specialization,
+    SPECIALIZATION:             preset.specialization,
     REPO_PATH:                  repo,
     CLAUDE_MODEL:               model,
   };

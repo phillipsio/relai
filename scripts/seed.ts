@@ -11,7 +11,7 @@
  *   copilot              — tier-1 worker; review, docs, tickets, PRs
  *   architect / writer / reviewer / tester / devops — specialization aliases
  *
- * Requires the API server to be running (pnpm --filter @ai-orchestrator/api dev).
+ * Requires the API server to be running (pnpm --filter @relai/api dev).
  */
 
 import fs from "node:fs";

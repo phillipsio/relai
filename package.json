@@ -11,11 +11,11 @@
   },
   "scripts": {
     "dev": "pnpm --parallel -r dev",
-    "dev:ui": "pnpm --parallel --filter @ai-orchestrator/api --filter @ai-orchestrator/web dev",
+    "dev:ui": "pnpm --parallel --filter @relai/api --filter @relai/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --workspace=vitest.workspace.ts",
-    "demo": "pnpm --filter @ai-orchestrator/orchestrator exec tsx ../../scripts/demo.ts"
+    "demo": "pnpm --filter @relai/orchestrator exec tsx ../../scripts/demo.ts"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

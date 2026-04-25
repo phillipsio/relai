@@ -90,7 +90,7 @@ function PostCreationGuide({
                 Run the orchestrator in a terminal — it will pick up pending tasks and route them automatically.
               </p>
               <pre className="mt-1.5 text-xs text-zinc-300 bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 font-mono">
-                pnpm --filter @ai-orchestrator/orchestrator dev
+                pnpm --filter @relai/orchestrator dev
               </pre>
             </div>
           </li>

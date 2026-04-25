@@ -1,4 +1,4 @@
-# @ai-orchestrator/mcp-server
+# @relai/mcp-server
 
 MCP server that AI agents connect to. Exposes 8 tools for task management and agent coordination. Compatible with Claude Code, GitHub Copilot, and any MCP-capable client.
 

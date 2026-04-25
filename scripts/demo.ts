@@ -3,8 +3,8 @@
  * Live demo setup — creates a fresh project, registers agents, queues real tasks.
  *
  * Requires:
- *   - API running:  pnpm --filter @ai-orchestrator/api dev
- *   - MCP built:   pnpm --filter @ai-orchestrator/mcp-server build
+ *   - API running:  pnpm --filter @relai/api dev
+ *   - MCP built:   pnpm --filter @relai/mcp-server build
  *
  * Usage:
  *   API_SECRET=changeme pnpm demo
@@ -61,7 +61,7 @@ async function main() {
     await api("GET", "/health");
   } catch {
     console.error(`${c.red}API not reachable at ${API_URL}${c.reset}`);
-    console.error("Start it first:  pnpm --filter @ai-orchestrator/api dev");
+    console.error("Start it first:  pnpm --filter @relai/api dev");
     process.exit(1);
   }
 
@@ -169,7 +169,7 @@ async function main() {
   console.log(`  ${c.dim}PROJECT_ID=${project.id} \\${c.reset}`);
   console.log(`  ${c.dim}ORCHESTRATOR_API_SECRET=${SECRET} \\${c.reset}`);
   console.log(`  ${c.dim}REPO_PATH=$(pwd) \\${c.reset}`);
-  console.log(`  ${c.cyan}pnpm --filter @ai-orchestrator/copilot-worker dev${c.reset}`);
+  console.log(`  ${c.cyan}pnpm --filter @relai/copilot-worker dev${c.reset}`);
 
   console.log(`\n  Register Claude Code as tier-2 (run in your Claude Code session):`);
   console.log(`  ${c.dim}AGENT_ID=${claude.id}   PROJECT_ID=${project.id}${c.reset}`);

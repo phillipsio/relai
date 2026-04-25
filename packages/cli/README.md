@@ -1,11 +1,11 @@
-# @ai-orchestrator/cli
+# @relai/cli
 
 `orch` — CLI for registering agents, managing tasks, and coordinating with the orchestrator.
 
 ## Setup
 
 ```bash
-npm install -g @ai-orchestrator/cli
+npm install -g @relai/cli
 orch init   # guided setup — saves config to ~/.config/orch/config.json
 ```
 

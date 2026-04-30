@@ -2,7 +2,7 @@ import type { WebConfig } from "./config";
 
 export interface ProjectRow {
   id: string; name: string; description?: string | null; repoUrl?: string | null;
-  routingMode?: string | null; createdAt: string;
+  defaultAssignee?: string | null; createdAt: string;
 }
 export interface TaskRow {
   id: string; title: string; description: string;
@@ -55,8 +55,8 @@ export class WebApiClient {
   }
 
   getProjects()  { return this.request<ProjectRow[]>("GET", "/projects"); }
-  createProject(name: string, description?: string, routingMode?: string) {
-    return this.request<ProjectRow>("POST", "/projects", { name, description, routingMode });
+  createProject(name: string, description?: string, defaultAssignee?: string) {
+    return this.request<ProjectRow>("POST", "/projects", { name, description, defaultAssignee });
   }
   deleteProject(id: string) { return this.request<void>("DELETE", `/projects/${id}`); }
 

@@ -9,18 +9,19 @@ import { Badge } from "../components/ui/badge";
 import { saveConfig } from "../lib/config";
 import type { WebApiClient, ProjectRow } from "../lib/api";
 
-type RoutingMode = "automated" | "manual";
+// "@auto" → routing scheduler picks an agent; null → tasks stay unassigned by default.
+type DefaultAssignee = "@auto" | null;
 
-function RoutingModeCard({
+function DefaultAssigneeCard({
   mode,
   selected,
   onSelect,
 }: {
-  mode: RoutingMode;
+  mode: DefaultAssignee;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const isAutomated = mode === "automated";
+  const isAuto = mode === "@auto";
   return (
     <button
       type="button"
@@ -32,17 +33,17 @@ function RoutingModeCard({
       }`}
     >
       <div className="flex items-center gap-2 mb-1.5">
-        {isAutomated
+        {isAuto
           ? <Cpu className="h-4 w-4 text-violet-400" />
           : <User className="h-4 w-4 text-zinc-400" />}
         <span className="text-sm font-medium text-zinc-100">
-          {isAutomated ? "Automated" : "Manual"}
+          {isAuto ? "Auto-route" : "Manual"}
         </span>
       </div>
       <p className="text-xs text-zinc-500 leading-relaxed">
-        {isAutomated
-          ? "A lead agent (Claude or Copilot loop) picks up pending tasks and routes them to workers automatically."
-          : "You assign tasks to agents manually from the Tasks page. Good for small teams or when you want full control."}
+        {isAuto
+          ? "New tasks without an explicit assignee are picked up by the routing scheduler and assigned to a worker."
+          : "Tasks stay unassigned until you (or another agent) pick an assignee. Per-task @auto still works."}
       </p>
     </button>
   );
@@ -55,7 +56,7 @@ function PostCreationGuide({
   project: ProjectRow;
   onDone: () => void;
 }) {
-  const isAutomated = project.routingMode === "automated";
+  const isAutomated = project.defaultAssignee === "@auto";
 
   return (
     <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 space-y-4">
@@ -127,14 +128,18 @@ function PostCreationGuide({
 }
 
 function CreateProjectForm({ api, onCreated }: { api: WebApiClient; onCreated: (p: ProjectRow) => void }) {
-  const [name, setName]               = useState("");
-  const [desc, setDesc]               = useState("");
-  const [routingMode, setRoutingMode] = useState<RoutingMode>("automated");
-  const [open, setOpen]               = useState(false);
+  const [name, setName]                       = useState("");
+  const [desc, setDesc]                       = useState("");
+  const [defaultAssignee, setDefaultAssignee] = useState<DefaultAssignee>("@auto");
+  const [open, setOpen]                       = useState(false);
   const qc = useQueryClient();
 
   const create = useMutation({
-    mutationFn: () => api.createProject(name.trim(), desc.trim() || undefined, routingMode),
+    mutationFn: () => api.createProject(
+      name.trim(),
+      desc.trim() || undefined,
+      defaultAssignee ?? undefined,
+    ),
     onSuccess: (p) => {
       qc.invalidateQueries({ queryKey: ["projects"] });
       setName(""); setDesc(""); setOpen(false);
@@ -171,10 +176,10 @@ function CreateProjectForm({ api, onCreated }: { api: WebApiClient; onCreated: (
       </div>
 
       <div className="space-y-2">
-        <p className="text-xs text-zinc-500 uppercase tracking-wider">Routing mode</p>
+        <p className="text-xs text-zinc-500 uppercase tracking-wider">Default assignee</p>
         <div className="flex gap-2">
-          <RoutingModeCard mode="automated" selected={routingMode === "automated"} onSelect={() => setRoutingMode("automated")} />
-          <RoutingModeCard mode="manual" selected={routingMode === "manual"} onSelect={() => setRoutingMode("manual")} />
+          <DefaultAssigneeCard mode="@auto" selected={defaultAssignee === "@auto"} onSelect={() => setDefaultAssignee("@auto")} />
+          <DefaultAssigneeCard mode={null}    selected={defaultAssignee === null}    onSelect={() => setDefaultAssignee(null)} />
         </div>
       </div>
 
@@ -253,9 +258,9 @@ export function Projects({
                     <CheckCircle2 className="h-3.5 w-3.5 text-green-400 shrink-0" />
                   )}
                   <span className="text-sm font-medium text-zinc-100">{p.name}</span>
-                  {p.routingMode && (
-                    <Badge variant={p.routingMode === "automated" ? "blue" : "outline"}>
-                      {p.routingMode}
+                  {p.defaultAssignee && (
+                    <Badge variant={p.defaultAssignee === "@auto" ? "blue" : "outline"}>
+                      {p.defaultAssignee === "@auto" ? "auto-route" : `→ ${p.defaultAssignee}`}
                     </Badge>
                   )}
                 </div>

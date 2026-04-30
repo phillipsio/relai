@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
-import { tasksCommand, taskUpdateCommand } from "./commands/tasks.js";
+import { tasksCommand, taskUpdateCommand, taskCreateCommand } from "./commands/tasks.js";
+import { projectsListCommand, projectShowCommand } from "./commands/projects.js";
+import { agentsListCommand } from "./commands/agents.js";
 import { threadsCommand, threadNewCommand } from "./commands/threads.js";
 import { sendCommand } from "./commands/send.js";
 import { inboxCommand } from "./commands/inbox.js";
 import { statusCommand } from "./commands/status.js";
+import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
+import { projectInviteCommand, loginCommand } from "./commands/invite.js";
 
 const program = new Command();
 
@@ -39,7 +43,18 @@ program
 
 // ── task subcommands ──────────────────────────────────────────────────────────
 
-const task = program.command("task").description("Update a task's status");
+const task = program.command("task").description("Create or update a task");
+
+task
+  .command("create")
+  .description("Create a new task")
+  .option("-t, --title <title>", "Task title")
+  .option("-d, --description <description>", "Task description")
+  .option("-p, --priority <priority>", "low|normal|high|urgent")
+  .option("--to <agent>", "Assign to an agent (id or name)")
+  .option("--domains <list>", "Comma-separated domain tags")
+  .option("--specialization <s>", "Required specialization")
+  .action(taskCreateCommand);
 
 task
   .command("start <id>")
@@ -94,5 +109,57 @@ program
   .description("Show unread messages")
   .option("-r, --read", "Mark all displayed messages as read")
   .action(inboxCommand);
+
+// ── discovery ────────────────────────────────────────────────────────────────
+
+program
+  .command("projects")
+  .description("List all projects on this server")
+  .action(projectsListCommand);
+
+program
+  .command("agents")
+  .description("List agents in the current project")
+  .action(agentsListCommand);
+
+// ── login ────────────────────────────────────────────────────────────────────
+
+program
+  .command("login")
+  .description("Log in to a project on this machine using an invite code")
+  .option("--invite <code>", "Invite code from `orch project invite`")
+  .option("--api <url>", "API URL (skips prompt)")
+  .action(loginCommand);
+
+// ── project invite ───────────────────────────────────────────────────────────
+
+const project = program.command("project").description("Project operations");
+
+project
+  .command("show [id]")
+  .description("Show a project's details (defaults to the current project)")
+  .action(projectShowCommand);
+
+project
+  .command("invite")
+  .description("Create an invite code for another agent to join this project")
+  .option("-n, --name <name>", "Suggested agent name (the new agent can override)")
+  .option("-s, --specialization <s>", "Suggested specialization")
+  .option("--ttl <seconds>", "Expiry in seconds (default: 7 days)")
+  .action(projectInviteCommand);
+
+// ── token ────────────────────────────────────────────────────────────────────
+
+const token = program.command("token").description("Manage your agent's API tokens");
+
+token
+  .command("rotate")
+  .description("Issue a new token for your agent and save it to config (old token remains valid until revoked)")
+  .action(tokenRotateCommand);
+
+token
+  .command("revoke <tokenId>")
+  .description("Revoke a specific token id")
+  .action(tokenRevokeCommand);
 
 program.parseAsync(process.argv);

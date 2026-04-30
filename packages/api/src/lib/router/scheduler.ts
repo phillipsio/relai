@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { eq, and, inArray } from "drizzle-orm";
-import { projects, agents, tasks, routingLog, messages } from "@relai/db";
+import { agents, tasks, routingLog, messages } from "@relai/db";
 import type { Db } from "@relai/db";
 import { newId } from "../id.js";
 import { tryRulesRouting } from "./rules.js";
@@ -23,7 +23,11 @@ async function routePendingTasks(db: Db, projectId: string): Promise<void> {
   const pending = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "pending")));
+    .where(and(
+      eq(tasks.projectId, projectId),
+      eq(tasks.status, "pending"),
+      eq(tasks.autoAssign, true),
+    ));
 
   if (pending.length === 0) return;
 
@@ -144,12 +148,25 @@ async function runCycle(db: Db, projectId: string): Promise<void> {
 export function startRoutingScheduler(db: Db): void {
   async function tick() {
     try {
-      const automated = await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.routingMode, "automated"));
+      // Find every project that currently has work for the scheduler:
+      // pending+autoAssign tasks (routing) or blocked tasks with thread metadata
+      // (resume watcher). One cycle per affected project.
+      const auto = await db
+        .selectDistinct({ projectId: tasks.projectId })
+        .from(tasks)
+        .where(and(eq(tasks.status, "pending"), eq(tasks.autoAssign, true)));
 
-      await Promise.all(automated.map((p) => runCycle(db, p.id)));
+      const blocked = await db
+        .selectDistinct({ projectId: tasks.projectId })
+        .from(tasks)
+        .where(eq(tasks.status, "blocked"));
+
+      const projectIds = Array.from(new Set([
+        ...auto.map((r) => r.projectId),
+        ...blocked.map((r) => r.projectId),
+      ]));
+
+      await Promise.all(projectIds.map((id) => runCycle(db, id)));
     } catch (err) {
       console.error("[scheduler] tick error:", err);
     }

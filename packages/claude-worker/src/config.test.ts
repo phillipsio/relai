@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 const REQUIRED_ENV: Record<string, string> = {
   AGENT_ID: "agent_test",
   PROJECT_ID: "proj_test",
-  ORCHESTRATOR_API_SECRET: "secret",
+  API_SECRET: "secret",
   REPO_PATH: "/workspace/repo",
 };
 
@@ -20,7 +20,7 @@ describe("loadConfig", () => {
   beforeEach(() => setEnv(REQUIRED_ENV));
   afterEach(() => unsetEnv([
     ...Object.keys(REQUIRED_ENV),
-    "SPECIALIZATION", "ORCHESTRATOR_API_URL", "POLL_INTERVAL_MS",
+    "SPECIALIZATION", "API_URL", "POLL_INTERVAL_MS",
     "MAX_TASK_ROUNDS", "CLAUDE_MODEL", "CLAUDE_BIN",
   ]));
 
@@ -78,8 +78,8 @@ describe("loadConfig", () => {
     expect(loadConfig().claudeBin).toBe("claude");
   });
 
-  it("accepts custom ORCHESTRATOR_API_URL", () => {
-    process.env.ORCHESTRATOR_API_URL = "http://prod:3010";
+  it("accepts custom API_URL", () => {
+    process.env.API_URL = "http://prod:3010";
     expect(loadConfig().apiUrl).toBe("http://prod:3010");
   });
 

@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "orch": "./src/index.ts"
+    "orch": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -31,9 +31,9 @@ function getHandler(tools: ReturnType<typeof buildTools>, name: string) {
 }
 
 describe("buildTools", () => {
-  it("returns all 8 tools", () => {
+  it("returns all 9 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, PROJECT_ID);
-    expect(tools).toHaveLength(8);
+    expect(tools).toHaveLength(9);
     const names = tools.map((t) => t.name);
     expect(names).toContain("get_my_tasks");
     expect(names).toContain("update_task_status");
@@ -42,6 +42,7 @@ describe("buildTools", () => {
     expect(names).toContain("mark_thread_read");
     expect(names).toContain("list_threads");
     expect(names).toContain("create_thread");
+    expect(names).toContain("conclude_plan");
     expect(names).toContain("list_all_tasks");
   });
 });
@@ -188,13 +189,13 @@ describe("list_threads", () => {
     const client = mockClient();
     const handler = getHandler(buildTools(client, AGENT_ID, PROJECT_ID), "list_threads");
     await (handler as Function)({});
-    expect(client.listThreads).toHaveBeenCalledWith(PROJECT_ID);
+    expect(client.listThreads).toHaveBeenCalledWith(PROJECT_ID, undefined);
   });
 
-  it("returns 'No threads exist yet.' when empty", async () => {
+  it("returns 'No threads found.' when empty", async () => {
     const handler = getHandler(buildTools(mockClient(), AGENT_ID, PROJECT_ID), "list_threads");
     const result = await (handler as Function)({});
-    expect(result.content[0].text).toBe("No threads exist yet.");
+    expect(result.content[0].text).toBe("No threads found.");
   });
 });
 

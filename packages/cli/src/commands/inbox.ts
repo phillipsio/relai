@@ -20,7 +20,7 @@ export async function inboxCommand(options: { read?: boolean }) {
   const spinner = ora("Checking inbox...").start();
 
   try {
-    const messages = await client.getUnread(config.agentId);
+    const messages = await client.getUnread(config.agentId, config.projectId);
     spinner.stop();
 
     if (messages.length === 0) {

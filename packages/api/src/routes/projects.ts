@@ -9,7 +9,7 @@ const createSchema = z.object({
   name: z.string().min(1),
   repoUrl: z.string().url().optional(),
   description: z.string().optional(),
-  routingMode: z.enum(["automated", "manual"]).optional(),
+  defaultAssignee: z.string().optional(),
 });
 
 export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -27,7 +27,7 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       name: body.data.name,
       repoUrl: body.data.repoUrl,
       description: body.data.description,
-      routingMode: body.data.routingMode ?? null,
+      defaultAssignee: body.data.defaultAssignee ?? null,
     }).returning();
 
     return reply.status(201).send({ data: project });
@@ -35,6 +35,27 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
 
   fastify.get<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
     const [project] = await db.select().from(projects).where(eq(projects.id, request.params.id));
+    if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
+    return { data: project };
+  });
+
+  const updateSchema = z.object({
+    name:            z.string().min(1).optional(),
+    description:     z.string().nullable().optional(),
+    repoUrl:         z.string().url().nullable().optional(),
+    defaultAssignee: z.string().nullable().optional(),
+  });
+
+  fastify.put<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
+    const body = updateSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const [project] = await db
+      .update(projects)
+      .set(body.data)
+      .where(eq(projects.id, request.params.id))
+      .returning();
+
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
     return { data: project };
   });

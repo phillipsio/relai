@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean } from "drizzle-orm/pg-core";
 
 export const agentRoleEnum = pgEnum("agent_role", ["orchestrator", "worker"]);
 
@@ -21,7 +21,11 @@ export const projects = pgTable("projects", {
   name:        text("name").notNull(),
   repoUrl:     text("repo_url"),
   description: text("description"),
-  routingMode: text("routing_mode"),  // "automated" | "manual" | null (unset)
+  // Used when a task is created without an explicit assignee. Values:
+  //   - agent ID (e.g. "agent_xyz") — auto-assign to that agent
+  //   - "@auto"                     — defer to the routing scheduler
+  //   - null                        — leave the task unassigned
+  defaultAssignee: text("default_assignee"),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -39,6 +43,33 @@ export const agents = pgTable("agents", {
   repoPath:       text("repo_path"),
   connectedAt:    timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
   lastSeenAt:     timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ── Agent tokens ──────────────────────────────────────────────────────────────
+
+export const tokens = pgTable("tokens", {
+  id:         text("id").primaryKey(),
+  agentId:    text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  tokenHash:  text("token_hash").notNull().unique(),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt:  timestamp("revoked_at", { withTimezone: true }),
+});
+
+// ── Project invites ───────────────────────────────────────────────────────────
+
+export const invites = pgTable("invites", {
+  id:                     text("id").primaryKey(),
+  projectId:              text("project_id").references(() => projects.id, { onDelete: "cascade" }).notNull(),
+  codeHash:               text("code_hash").notNull().unique(),
+  createdBy:              text("created_by").references(() => agents.id),
+  suggestedName:          text("suggested_name"),
+  suggestedSpecialization: text("suggested_specialization"),
+  expiresAt:              timestamp("expires_at",  { withTimezone: true }).notNull(),
+  acceptedAt:             timestamp("accepted_at", { withTimezone: true }),
+  acceptedAgentId:        text("accepted_agent_id").references(() => agents.id),
+  revokedAt:              timestamp("revoked_at",  { withTimezone: true }),
+  createdAt:              timestamp("created_at",  { withTimezone: true }).defaultNow().notNull(),
 });
 
 // ── Threads ───────────────────────────────────────────────────────────────────
@@ -79,10 +110,23 @@ export const tasks = pgTable("tasks", {
   domains:        text("domains").array().notNull().default([]),
   specialization: text("specialization"),   // optional hint: "architect", "writer", etc.
   assignedTo:     text("assigned_to").references(() => agents.id),
+  autoAssign:     boolean("auto_assign").notNull().default(false),
   createdBy:      text("created_by").notNull(),
   metadata:    jsonb("metadata").default({}).notNull(),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ── Subscriptions ─────────────────────────────────────────────────────────────
+
+export const subscriptionTargetTypeEnum = pgEnum("subscription_target_type", ["thread", "task", "agent"]);
+
+export const subscriptions = pgTable("subscriptions", {
+  id:         text("id").primaryKey(),
+  agentId:    text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  targetType: subscriptionTargetTypeEnum("target_type").notNull(),
+  targetId:   text("target_id").notNull(),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // ── Routing audit log ─────────────────────────────────────────────────────────

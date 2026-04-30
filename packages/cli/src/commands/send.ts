@@ -3,6 +3,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../config.js";
 import { CliApiClient } from "../api.js";
+import { resolveAgentRef } from "../lib/resolve.js";
 
 const MESSAGE_TYPES = [
   { value: "handoff",    name: "handoff    — finished a task, passing context to next agent" },
@@ -35,12 +36,16 @@ export async function sendCommand(
     process.exit(1);
   }
 
+  const toAgent = options.to
+    ? await resolveAgentRef(client, config.projectId, options.to)
+    : undefined;
+
   const spinner = ora("Sending...").start();
 
   try {
     const message = await client.sendMessage(threadId, {
       fromAgent: config.agentId,
-      toAgent: options.to,
+      toAgent,
       type,
       body,
     });

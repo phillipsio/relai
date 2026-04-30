@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, sql, asc } from "drizzle-orm";
 import { messages, threads, tasks } from "@relai/db";
 import { newId } from "../lib/id.js";
+import { publish, ensureSubscription } from "../lib/events.js";
 import type { Db } from "@relai/db";
 
 const createSchema = z.object({
@@ -49,6 +50,26 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         });
       }
     }
+
+    // Auto-subscribe sender + recipient (if any) to the thread.
+    await ensureSubscription(db, body.data.fromAgent, "thread", request.params.id);
+    if (body.data.toAgent) {
+      await ensureSubscription(db, body.data.toAgent, "thread", request.params.id);
+    }
+
+    const [thread] = await db.select().from(threads).where(eq(threads.id, request.params.id));
+    publish({
+      id:         newId("evt"),
+      kind:       "message.posted",
+      projectId:  thread?.projectId ?? "",
+      targetType: "thread",
+      targetId:   request.params.id,
+      alsoNotify: body.data.toAgent
+        ? [{ targetType: "agent", targetId: body.data.toAgent }]
+        : [],
+      payload:    { message },
+      createdAt:  message.createdAt.toISOString(),
+    });
 
     return reply.status(201).send({ data: message });
   });

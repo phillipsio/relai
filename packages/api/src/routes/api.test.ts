@@ -225,6 +225,51 @@ describe("POST /tasks", () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it("flags task for auto-routing when assignedTo='@auto'", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId,
+        title: "auto routed", description: "auto routed",
+        assignedTo: "@auto",
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const task = res.json().data;
+    expect(task.autoAssign).toBe(true);
+    expect(task.assignedTo).toBeNull();
+    expect(task.status).toBe("pending");
+  });
+
+  it("falls back to project's defaultAssignee when assignee is omitted", async () => {
+    // create a project with defaultAssignee="@auto"
+    const proj = await app.inject({
+      method: "POST", url: "/projects",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "__test__ auto-default", defaultAssignee: "@auto" }),
+    });
+    expect(proj.statusCode).toBe(201);
+    const autoProjectId = proj.json().data.id;
+
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: autoProjectId, createdBy: agentId,
+        title: "inherits @auto", description: "inherits @auto",
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const task = res.json().data;
+    expect(task.autoAssign).toBe(true);
+    expect(task.assignedTo).toBeNull();
+    expect(task.status).toBe("pending");
+
+    // cleanup
+    await app.inject({ method: "DELETE", url: `/projects/${autoProjectId}`, headers: AUTH });
+  });
 });
 
 describe("GET /tasks", () => {

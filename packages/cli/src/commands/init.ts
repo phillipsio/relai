@@ -1,7 +1,7 @@
 import { input, password, select, confirm } from "@inquirer/prompts";
 import ora from "ora";
 import chalk from "chalk";
-import { writeConfig, readConfig } from "../config.js";
+import { writeConfig, readConfig, configPath } from "../config.js";
 import { CliApiClient } from "../api.js";
 
 const SPECIALIZATION_CHOICES = [
@@ -27,7 +27,7 @@ export async function initCommand() {
   const existing = readConfig();
   if (existing) {
     console.log(chalk.yellow(`\nAlready initialized as ${chalk.bold(existing.agentName)} (${existing.agentId})`));
-    console.log(chalk.dim("Delete ~/.config/orch/config.json to re-run init.\n"));
+    console.log(chalk.dim(`Delete ${configPath()} to re-run init.\n`));
     return;
   }
 
@@ -41,12 +41,14 @@ export async function initCommand() {
   });
 
   const apiSecret = await password({
-    message: "API secret",
+    message: "API admin secret (used once to register; per-agent token is saved after)",
   });
 
-  // Verify connection before proceeding
+  // Verify connection before proceeding. The bootstrap client uses the admin
+  // secret; once the agent is registered we discard it and use the per-agent
+  // token returned by POST /agents.
   const spinner = ora("Connecting to API…").start();
-  const client = new CliApiClient({ apiUrl, apiSecret });
+  const client = new CliApiClient({ apiUrl, apiToken: apiSecret });
   try {
     await client.heartbeat("_ping").catch(() => {}); // will 404 but proves connectivity + auth
     const res = await fetch(`${apiUrl.replace(/\/$/, "")}/health`, {
@@ -116,13 +118,13 @@ export async function initCommand() {
 
   const s = ora("Registering agent…").start();
   try {
-    const agent = await client.registerAgent({
+    const { agent, token } = await client.registerAgent({
       projectId, name: agentName, role,
       specialization: specialization !== "custom" ? specialization : undefined,
       domains,
     });
 
-    writeConfig({ apiUrl, apiSecret, agentId: agent.id, agentName: agent.name, projectId, specialization });
+    writeConfig({ apiUrl, apiToken: token, agentId: agent.id, agentName: agent.name, projectId, specialization });
     s.succeed(chalk.green("Agent registered"));
 
     console.log(`
@@ -132,7 +134,8 @@ ${chalk.bold("Agent")}
   specialization: ${specialization}
   role:           ${role}
 
-${chalk.bold("Config saved to")} ${chalk.dim("~/.config/orch/config.json")}
+${chalk.bold("Config saved to")} ${chalk.dim(configPath())}
+${chalk.dim("(per-agent token stored — admin secret discarded)")}
 
 ${chalk.bold("Add to your Claude Code MCP config")} ${chalk.dim("(~/.claude/mcp.json or .mcp.json in your repo):")}
 
@@ -142,8 +145,8 @@ ${chalk.cyan(JSON.stringify({
       command: "npx",
       args: ["@relai/mcp-server"],
       env: {
-        ORCHESTRATOR_API_URL: apiUrl,
-        ORCHESTRATOR_API_SECRET: "<your-secret>",
+        API_URL: apiUrl,
+        API_SECRET: token,
         AGENT_ID: agent.id,
         PROJECT_ID: projectId,
       },

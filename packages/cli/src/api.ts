@@ -4,31 +4,92 @@ export class CliApiClient {
   private baseUrl: string;
   private headers: Record<string, string>;
 
-  constructor(config: Pick<Config, "apiUrl" | "apiSecret">) {
+  constructor(config: { apiUrl: string; apiToken?: string }) {
     this.baseUrl = config.apiUrl.replace(/\/$/, "");
-    this.headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiSecret}`,
-    };
+    this.headers = { "Content-Type": "application/json" };
+    if (config.apiToken) this.headers.Authorization = `Bearer ${config.apiToken}`;
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const json = await this.requestRaw<{ data?: T; error?: { code: string; message: string } }>(method, path, body);
+    return json.data as T;
+  }
+
+  private async requestRaw<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: this.headers,
       body: body != null ? JSON.stringify(body) : undefined,
     });
-    const json = await res.json() as { data?: T; error?: { code: string; message: string } };
+    if (res.status === 204) return undefined as T;
+    const json = await res.json() as T & { error?: { code: string; message: string } };
     if (!res.ok) throw new Error(json.error?.message ?? `API error ${res.status}`);
-    return json.data as T;
+    return json;
   }
 
   createProject(body: { name: string; description?: string }) {
     return this.request<{ id: string; name: string }>("POST", "/projects", body);
   }
 
-  registerAgent(body: { projectId: string; name: string; role: string; specialization?: string; domains: string[] }) {
-    return this.request<{ id: string; name: string; specialization?: string }>("POST", "/agents", body);
+  listProjects() {
+    return this.request<ProjectRow[]>("GET", "/projects");
+  }
+
+  getProject(id: string) {
+    return this.request<ProjectRow>("GET", `/projects/${id}`);
+  }
+
+  createTask(body: {
+    projectId: string;
+    createdBy: string;
+    title: string;
+    description: string;
+    priority?: "low" | "normal" | "high" | "urgent";
+    assignedTo?: string;
+    domains?: string[];
+    specialization?: string;
+  }) {
+    return this.request<TaskRow>("POST", "/tasks", body);
+  }
+
+  async registerAgent(body: { projectId: string; name: string; role: string; specialization?: string; domains: string[] }) {
+    const res = await this.requestRaw<{
+      data: { id: string; name: string; specialization?: string };
+      token: string;
+    }>("POST", "/agents", body);
+    return { agent: res.data, token: res.token };
+  }
+
+  async rotateToken(agentId: string) {
+    const res = await this.requestRaw<{ data: { id: string }; token: string }>("POST", `/agents/${agentId}/tokens`, {});
+    return { tokenId: res.data.id, token: res.token };
+  }
+
+  revokeToken(tokenId: string) {
+    return this.requestRaw<void>("DELETE", `/tokens/${tokenId}`);
+  }
+
+  async createInvite(projectId: string, body: { suggestedName?: string; suggestedSpecialization?: string; ttlSeconds?: number }) {
+    const res = await this.requestRaw<{
+      data: { id: string; expiresAt: string; suggestedName?: string | null; suggestedSpecialization?: string | null };
+      code: string;
+    }>("POST", `/projects/${projectId}/invites`, body);
+    return { invite: res.data, code: res.code };
+  }
+
+  async acceptInvite(body: {
+    code: string;
+    name: string;
+    role?: "orchestrator" | "worker";
+    specialization?: string;
+    workerType?: string;
+    domains?: string[];
+  }) {
+    const res = await this.requestRaw<{
+      data: { id: string; name: string; projectId: string; specialization?: string | null };
+      token: string;
+    }>("POST", "/auth/accept-invite", body);
+    return { agent: res.data, token: res.token };
   }
 
   getTasks(params: { projectId: string; assignedTo?: string; status?: string }) {
@@ -60,8 +121,9 @@ export class CliApiClient {
     return this.request<MessageRow>("POST", `/threads/${threadId}/messages`, body);
   }
 
-  getUnread(agentId: string) {
-    return this.request<MessageRow[]>("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}`);
+  getUnread(agentId: string, projectId: string) {
+    const qs = new URLSearchParams({ agentId, projectId });
+    return this.request<MessageRow[]>("GET", `/messages/unread?${qs}`);
   }
 
   markRead(threadId: string, agentId: string) {
@@ -116,4 +178,13 @@ export interface AgentRow {
   specialization?: string | null;
   domains: string[];
   lastSeenAt: string;
+}
+
+export interface ProjectRow {
+  id: string;
+  name: string;
+  description?: string | null;
+  repoUrl?: string | null;
+  defaultAssignee?: string | null;
+  createdAt: string;
 }

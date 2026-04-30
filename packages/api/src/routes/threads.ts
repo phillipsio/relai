@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, sql, and } from "drizzle-orm";
 import { threads, messages, tasks } from "@relai/db";
 import { newId } from "../lib/id.js";
+import { publish } from "../lib/events.js";
 import type { Db } from "@relai/db";
 
 const createSchema = z.object({
@@ -26,6 +27,16 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       title: body.data.title,
       type: body.data.type ?? null,
     }).returning();
+
+    publish({
+      id:         newId("evt"),
+      kind:       "thread.created",
+      projectId:  thread.projectId,
+      targetType: "thread",
+      targetId:   thread.id,
+      payload:    { thread },
+      createdAt:  thread.createdAt.toISOString(),
+    });
 
     return reply.status(201).send({ data: thread });
   });
@@ -85,6 +96,17 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       .returning();
 
     if (!thread) return reply.status(404).send({ error: { code: "not_found", message: "Thread not found" } });
+
+    publish({
+      id:         newId("evt"),
+      kind:       "thread.concluded",
+      projectId:  thread.projectId,
+      targetType: "thread",
+      targetId:   thread.id,
+      payload:    { thread },
+      createdAt:  new Date().toISOString(),
+    });
+
     return { data: thread };
   });
 };

@@ -13,7 +13,7 @@ export async function statusCommand() {
     const [agents, tasks, unread] = await Promise.all([
       client.getAgents(config.projectId),
       client.getTasks({ projectId: config.projectId }),
-      client.getUnread(config.agentId),
+      client.getUnread(config.agentId, config.projectId),
     ]);
     spinner.stop();
 

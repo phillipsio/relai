@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
-import { agents } from "@relai/db";
+import { agents, tokens } from "@relai/db";
 import { newId } from "../lib/id.js";
+import { generateToken, hashToken } from "../lib/tokens.js";
 import type { Db } from "@relai/db";
 
 const registerSchema = z.object({
@@ -34,7 +35,28 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       lastSeenAt:     new Date(0), // never connected; first heartbeat marks it online
     }).returning();
 
-    return reply.status(201).send({ data: agent });
+    const plaintext = generateToken();
+    await db.insert(tokens).values({
+      id:        newId("tok"),
+      agentId:   agent.id,
+      tokenHash: hashToken(plaintext),
+    });
+
+    return reply.status(201).send({ data: agent, token: plaintext });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/agents/:id/tokens", async (request, reply) => {
+    const [agent] = await db.select().from(agents).where(eq(agents.id, request.params.id));
+    if (!agent) return reply.status(404).send({ error: { code: "not_found", message: "Agent not found" } });
+
+    const plaintext = generateToken();
+    const [row] = await db.insert(tokens).values({
+      id:        newId("tok"),
+      agentId:   agent.id,
+      tokenHash: hashToken(plaintext),
+    }).returning();
+
+    return reply.status(201).send({ data: row, token: plaintext });
   });
 
   fastify.put<{ Params: { id: string } }>("/agents/:id/heartbeat", async (request, reply) => {

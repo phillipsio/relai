@@ -129,6 +129,26 @@ export const subscriptions = pgTable("subscriptions", {
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ── Notification channels ─────────────────────────────────────────────────────
+
+export const notificationChannelKindEnum = pgEnum("notification_channel_kind", ["webhook"]);
+
+export const notificationChannels = pgTable("notification_channels", {
+  id:              text("id").primaryKey(),
+  agentId:         text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  kind:            notificationChannelKindEnum("kind").notNull(),
+  // Shape depends on kind. For "webhook": { url: string, headers?: Record<string, string> }
+  config:          jsonb("config").notNull(),
+  // Cumulative metrics + last error, used by the circuit breaker.
+  failureCount:    integer("failure_count").notNull().default(0),
+  lastDeliveredAt: timestamp("last_delivered_at", { withTimezone: true }),
+  lastErrorAt:     timestamp("last_error_at",     { withTimezone: true }),
+  lastError:       text("last_error"),
+  // Set when the breaker trips. The channel stops receiving events until cleared.
+  disabledAt:      timestamp("disabled_at",       { withTimezone: true }),
+  createdAt:       timestamp("created_at",        { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ── Routing audit log ─────────────────────────────────────────────────────────
 
 export const routingLog = pgTable("routing_log", {

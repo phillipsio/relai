@@ -13,7 +13,9 @@ import { taskRoutes } from "./routes/tasks.js";
 import { threadRoutes } from "./routes/threads.js";
 import { messageRoutes } from "./routes/messages.js";
 import { routingLogRoutes } from "./routes/routing-log.js";
+import { notificationChannelRoutes } from "./routes/notification-channels.js";
 import { startRoutingScheduler } from "./lib/router/scheduler.js";
+import { startNotificationDelivery } from "./lib/notifications.js";
 
 export function buildServer({ logger = true, scheduler = true }: { logger?: boolean; scheduler?: boolean } = {}) {
   const db = createDb(process.env.DATABASE_URL!);
@@ -34,13 +36,15 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(threadRoutes, { db });
   fastify.register(messageRoutes, { db });
   fastify.register(routingLogRoutes, { db });
+  fastify.register(notificationChannelRoutes, { db });
 
   fastify.get("/health", async () => ({ ok: true }));
 
-  // Start background routing scheduler (disabled in tests)
+  // Start background routing scheduler + notification delivery (disabled in tests)
   if (scheduler) {
     fastify.addHook("onReady", async () => {
       startRoutingScheduler(db);
+      startNotificationDelivery(db);
     });
   }
 

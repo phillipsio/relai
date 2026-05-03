@@ -10,6 +10,7 @@ const createSchema = z.object({
   repoUrl: z.string().url().optional(),
   description: z.string().optional(),
   defaultAssignee: z.string().optional(),
+  context: z.string().optional(),
 });
 
 export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -28,6 +29,7 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       repoUrl: body.data.repoUrl,
       description: body.data.description,
       defaultAssignee: body.data.defaultAssignee ?? null,
+      context: body.data.context ?? null,
     }).returning();
 
     return reply.status(201).send({ data: project });
@@ -44,6 +46,7 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     description:     z.string().nullable().optional(),
     repoUrl:         z.string().url().nullable().optional(),
     defaultAssignee: z.string().nullable().optional(),
+    context:         z.string().nullable().optional(),
   });
 
   fastify.put<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {

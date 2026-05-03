@@ -125,6 +125,28 @@ describe("GET /projects/:id", () => {
   });
 });
 
+describe("PUT /projects/:id", () => {
+  it("updates the pinned context blob", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/projects/${projectId}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ context: "Local Postgres on 5433. Use the WSL venv. Don't run db:push during a rename." }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.context).toContain("Local Postgres on 5433");
+  });
+
+  it("clears context when set to null", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/projects/${projectId}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ context: null }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.context).toBeNull();
+  });
+});
+
 // ── agents ────────────────────────────────────────────────────────────────────
 describe("POST /agents", () => {
   it("creates an agent and stores agentId for later tests", async () => {

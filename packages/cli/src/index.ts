@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { tasksCommand, taskUpdateCommand, taskCreateCommand } from "./commands/tasks.js";
-import { projectsListCommand, projectShowCommand } from "./commands/projects.js";
+import { projectsListCommand, projectShowCommand, projectContextShowCommand, projectContextEditCommand } from "./commands/projects.js";
 import { agentsListCommand } from "./commands/agents.js";
 import { threadsCommand, threadNewCommand } from "./commands/threads.js";
 import { sendCommand } from "./commands/send.js";
@@ -139,6 +139,18 @@ project
   .command("show [id]")
   .description("Show a project's details (defaults to the current project)")
   .action(projectShowCommand);
+
+const projectContext = project.command("context").description("View or edit the project's pinned context (read by every agent on session start)");
+
+projectContext
+  .command("show")
+  .description("Print the current pinned context")
+  .action(projectContextShowCommand);
+
+projectContext
+  .command("edit")
+  .description("Open the pinned context in $EDITOR")
+  .action(projectContextEditCommand);
 
 project
   .command("invite")

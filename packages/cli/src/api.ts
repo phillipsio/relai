@@ -39,6 +39,10 @@ export class CliApiClient {
     return this.request<ProjectRow>("GET", `/projects/${id}`);
   }
 
+  updateProject(id: string, body: Partial<Pick<ProjectRow, "name" | "description" | "repoUrl" | "defaultAssignee" | "context">>) {
+    return this.request<ProjectRow>("PUT", `/projects/${id}`, body);
+  }
+
   createTask(body: {
     projectId: string;
     createdBy: string;
@@ -186,5 +190,6 @@ export interface ProjectRow {
   description?: string | null;
   repoUrl?: string | null;
   defaultAssignee?: string | null;
+  context?: string | null;
   createdAt: string;
 }

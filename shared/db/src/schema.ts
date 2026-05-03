@@ -26,6 +26,9 @@ export const projects = pgTable("projects", {
   //   - "@auto"                     — defer to the routing scheduler
   //   - null                        — leave the task unassigned
   defaultAssignee: text("default_assignee"),
+  // Free-form prose every agent reads on session start. Env quirks, current
+  // focus, dev setup commands — the "everyone knows this" blob.
+  context:     text("context"),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

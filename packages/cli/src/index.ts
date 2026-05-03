@@ -14,7 +14,7 @@ import { projectInviteCommand, loginCommand } from "./commands/invite.js";
 const program = new Command();
 
 program
-  .name("orch")
+  .name("relai")
   .description("ai-orchestrator CLI — coordinate agents from the terminal")
   .version("0.1.0");
 
@@ -22,7 +22,7 @@ program
 
 program
   .command("init")
-  .description("Register this machine as an agent and save config to ~/.config/orch/config.json")
+  .description("Register this machine as an agent and save config to ~/.config/relai/config.json")
   .action(initCommand);
 
 // ── status ───────────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ program
 program
   .command("login")
   .description("Log in to a project on this machine using an invite code")
-  .option("--invite <code>", "Invite code from `orch project invite`")
+  .option("--invite <code>", "Invite code from `relai project invite`")
   .option("--api <url>", "API URL (skips prompt)")
   .action(loginCommand);
 

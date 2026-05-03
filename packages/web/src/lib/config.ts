@@ -4,7 +4,7 @@ export interface WebConfig {
   projectId: string;
 }
 
-const KEY = "orch_config";
+const KEY = "relai_config";
 
 export function getConfig(): WebConfig | null {
   try {

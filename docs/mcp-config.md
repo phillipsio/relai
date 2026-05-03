@@ -9,12 +9,12 @@ Config format differs per client — the server code is identical.
 |---|---|---|
 | `API_URL` | No (default: `http://localhost:3010`) | URL of the running API server |
 | `API_SECRET` | **Yes** | Shared secret from your `.env` |
-| `AGENT_ID` | **Yes** | Your agent's ID (from the Agents page or `orch init`) |
+| `AGENT_ID` | **Yes** | Your agent's ID (from the Agents page or `relai init`) |
 | `PROJECT_ID` | **Yes** | The project this agent belongs to |
 | `TRANSPORT` | No (default: `stdio`) | `stdio` or `http` |
 | `MCP_PORT` | No (default: `3001`) | Port for HTTP transport only |
 
-The easiest way to get a pre-filled config snippet is to register an agent in the dashboard (**Agents → Add agent**) or run `orch init`.
+The easiest way to get a pre-filled config snippet is to register an agent in the dashboard (**Agents → Add agent**) or run `relai init`.
 
 ---
 

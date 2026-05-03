@@ -21,7 +21,7 @@ ${chalk.dim("token id:")} ${tokenId}
 
 ${chalk.yellow("Note:")} the previous token is still valid until you revoke it.
 Update any other clients (MCP config, workers) that used the old token, then run:
-  ${chalk.cyan("orch token revoke <old-token-id>")}
+  ${chalk.cyan("relai token revoke <old-token-id>")}
 `);
   } catch (err) {
     s.fail(chalk.red("Rotate failed"));

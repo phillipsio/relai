@@ -60,7 +60,7 @@ packages/
   orchestrator/   Optional self-hosted routing daemon (alternative to built-in scheduler)
   claude-worker/  Headless Claude Code worker loop
   copilot-worker/ Copilot agent worker loop
-  cli/            Commander.js CLI — the `orch` binary
+  cli/            Commander.js CLI — the `relai` binary
 ```
 
 ### Data model (shared/db)
@@ -146,37 +146,37 @@ Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
 ### CLI (packages/cli)
 
-The `orch` binary is the operator surface. It reads its config from `~/.config/orch/config.json` (override the dir with `ORCH_CONFIG_DIR` for solo multi-identity testing).
+The `relai` binary is the operator surface. It reads its config from `~/.config/relai/config.json` (override the dir with `RELAI_CONFIG_DIR` for solo multi-identity testing).
 
 **Setup**
-- `orch init` — interactive first-time setup: prompts for API URL + admin secret, creates a project (or accepts an existing project ID), registers an agent, saves the per-agent token, prints the `.mcp.json` snippet
-- `orch login --invite <code> [--api <url>]` — accept a project invite as a new agent (defaults `workerType: "human"`); refuses to clobber an existing config
-- `orch token rotate` / `orch token revoke <tokenId>`
+- `relai init` — interactive first-time setup: prompts for API URL + admin secret, creates a project (or accepts an existing project ID), registers an agent, saves the per-agent token, prints the `.mcp.json` snippet
+- `relai login --invite <code> [--api <url>]` — accept a project invite as a new agent (defaults `workerType: "human"`); refuses to clobber an existing config
+- `relai token rotate` / `relai token revoke <tokenId>`
 
 **Discovery**
-- `orch projects` — list projects on the server
-- `orch project show [id]` — show the current (or specified) project's details
-- `orch agents` — list agents in the current project (online indicator + you marker)
-- `orch status` — agent identity, online agents, task summary, unread count
+- `relai projects` — list projects on the server
+- `relai project show [id]` — show the current (or specified) project's details
+- `relai agents` — list agents in the current project (online indicator + you marker)
+- `relai status` — agent identity, online agents, task summary, unread count
 
 **Tasks**
-- `orch tasks [--all] [--status ...]` — list (default: your assigned + in_progress)
-- `orch task create [-t -d -p --to <agent|@auto> --domains --specialization]`
-- `orch task start|done|block|cancel <id> [--note ...]`
+- `relai tasks [--all] [--status ...]` — list (default: your assigned + in_progress)
+- `relai task create [-t -d -p --to <agent|@auto> --domains --specialization]`
+- `relai task start|done|block|cancel <id> [--note ...]`
 
 **Threads & messages**
-- `orch threads`, `orch thread new <title>`
-- `orch send <threadId> [-m -t --to <agent|@auto>]` — `--to` accepts agent name or ID
-- `orch inbox [-r]` — unread messages
+- `relai threads`, `relai thread new <title>`
+- `relai send <threadId> [-m -t --to <agent|@auto>]` — `--to` accepts agent name or ID
+- `relai inbox [-r]` — unread messages
 
 **Project ops**
-- `orch project invite [-n -s --ttl ...]` — issue a one-time invite code for `orch login`
+- `relai project invite [-n -s --ttl ...]` — issue a one-time invite code for `relai login`
 
 The `--to <name>` flag in both `task create` and `send` resolves through `packages/cli/src/lib/resolve.ts` (case-insensitive name match; passes through `agent_*` IDs and the literal `@auto`).
 
 ### MCP client configuration
 
-Add the snippet from `orch init` (or `orch login`) to `.mcp.json` in the project root (project-level) or `~/.claude.json` (global). Project-level is preferred — it keeps each project's agent identity isolated. The snippet wires the per-agent token into `API_SECRET` for the MCP server, which sends it as the bearer credential.
+Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the project root (project-level) or `~/.claude.json` (global). Project-level is preferred — it keeps each project's agent identity isolated. The snippet wires the per-agent token into `API_SECRET` for the MCP server, which sends it as the bearer credential.
 
 **Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with nine tools.
 
@@ -211,7 +211,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `TASK_POLL_MS` | `15000` | Routing scheduler interval (ms) |
 | `AGENT_ID` | — | Set after registering an agent |
 | `PROJECT_ID` | — | Set after creating a project |
-| `ORCH_CONFIG_DIR` | `~/.config/orch` | Override CLI config location (multi-identity testing) |
+| `RELAI_CONFIG_DIR` | `~/.config/relai` | Override CLI config location (multi-identity testing) |
 
 The `dev` scripts for `api` and `mcp-server` load `.env` automatically via `tsx watch --env-file=../../.env`. The `web` package (Vite) does not use server env vars.
 
@@ -234,7 +234,7 @@ pnpm --filter @relai/web dev        # terminal 3
 
 Then open http://localhost:5173, enter the API URL and secret.
 
-For a coworker joining an existing project, see `docs/two-person-test.md`: the host runs `orch project invite`, the coworker runs `orch login --invite <code>`.
+For a coworker joining an existing project, see `docs/two-person-test.md`: the host runs `relai project invite`, the coworker runs `relai login --invite <code>`.
 
 ## Critical rules
 

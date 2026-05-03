@@ -11,9 +11,9 @@ export interface Config {
   specialization?: string;
 }
 
-// ORCH_CONFIG_DIR lets you run multiple agent identities on one machine —
-// useful for solo testing of multi-agent flows. Defaults to ~/.config/orch.
-const CONFIG_DIR  = process.env.ORCH_CONFIG_DIR ?? join(homedir(), ".config", "orch");
+// RELAI_CONFIG_DIR lets you run multiple agent identities on one machine —
+// useful for solo testing of multi-agent flows. Defaults to ~/.config/relai.
+const CONFIG_DIR  = process.env.RELAI_CONFIG_DIR ?? join(homedir(), ".config", "relai");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
 export function readConfig(): Config | null {
@@ -41,7 +41,7 @@ export function configPath(): string {
 export function requireConfig(): Config {
   const config = readConfig();
   if (!config) {
-    console.error("Not initialized. Run `orch init` first.");
+    console.error("Not initialized. Run `relai init` first.");
     process.exit(1);
   }
   return config;

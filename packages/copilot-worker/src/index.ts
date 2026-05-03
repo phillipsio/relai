@@ -71,7 +71,7 @@ async function runIteration(client: CopilotClient, config: ReturnType<typeof loa
 function buildMcpServers(config: ReturnType<typeof loadConfig>): Record<string, MCPServerConfig> {
   const mcpServerPath = new URL("../../mcp-server/dist/index.js", import.meta.url).pathname;
   return {
-    orch: {
+    relai: {
       command: "node",
       args: [mcpServerPath],
       env: {

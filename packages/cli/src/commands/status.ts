@@ -47,7 +47,7 @@ export async function statusCommand() {
 
     if (unread.length > 0) {
       console.log();
-      console.log(chalk.yellow(`  ${unread.length} unread message${unread.length === 1 ? "" : "s"} — run \`orch inbox\``));
+      console.log(chalk.yellow(`  ${unread.length} unread message${unread.length === 1 ? "" : "s"} — run \`relai inbox\``));
     }
   } catch (err) {
     spinner.fail(chalk.red("Failed to fetch status"));

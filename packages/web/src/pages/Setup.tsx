@@ -122,7 +122,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-lg font-mono">orch</CardTitle>
+          <CardTitle className="text-lg font-mono">relai</CardTitle>
           <div className="flex items-center gap-2 mt-1">
             {STEPS.map((s, i) => (
               <div key={s} className="flex items-center gap-2">

@@ -14,7 +14,7 @@ export async function threadsCommand() {
     spinner.stop();
 
     if (threads.length === 0) {
-      console.log(chalk.dim("No threads yet. Create one with `orch thread new <title>`."));
+      console.log(chalk.dim("No threads yet. Create one with `relai thread new <title>`."));
       return;
     }
 

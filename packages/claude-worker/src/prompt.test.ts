@@ -25,14 +25,14 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("/workspace/myrepo");
   });
 
-  it("uses mcp__orch__ prefixed tool names throughout", () => {
+  it("uses mcp__relai__ prefixed tool names throughout", () => {
     const prompt = buildPrompt(config());
-    expect(prompt).toContain("mcp__orch__get_unread_messages");
-    expect(prompt).toContain("mcp__orch__get_my_tasks");
-    expect(prompt).toContain("mcp__orch__update_task_status");
-    expect(prompt).toContain("mcp__orch__send_message");
-    expect(prompt).toContain("mcp__orch__mark_thread_read");
-    expect(prompt).toContain("mcp__orch__create_thread");
+    expect(prompt).toContain("mcp__relai__get_unread_messages");
+    expect(prompt).toContain("mcp__relai__get_my_tasks");
+    expect(prompt).toContain("mcp__relai__update_task_status");
+    expect(prompt).toContain("mcp__relai__send_message");
+    expect(prompt).toContain("mcp__relai__mark_thread_read");
+    expect(prompt).toContain("mcp__relai__create_thread");
   });
 
   it("always includes the task chain rules block", () => {
@@ -142,12 +142,12 @@ describe("buildPrompt", () => {
 
     it("routes passing tests to reviewer", () => {
       const prompt = buildPrompt(config({ specialization: "tester" }));
-      expect(prompt).toContain("mcp__orch__create_task` → \"reviewer\"");
+      expect(prompt).toContain("mcp__relai__create_task` → \"reviewer\"");
     });
 
-    it("routes implementation bugs back to writer with mcp__orch__ prefix", () => {
+    it("routes implementation bugs back to writer with mcp__relai__ prefix", () => {
       const prompt = buildPrompt(config({ specialization: "tester" }));
-      expect(prompt).toContain("mcp__orch__create_task` → \"writer\"");
+      expect(prompt).toContain("mcp__relai__create_task` → \"writer\"");
     });
   });
 

@@ -36,7 +36,7 @@ export async function projectInviteCommand(opts: { name?: string; specialization
     console.log(`
 ${chalk.bold("Send this to the new agent:")}
 
-  ${chalk.cyan(`orch login --invite ${code}`)}
+  ${chalk.cyan(`relai login --invite ${code}`)}
 
 ${chalk.dim("expires:")}     ${invite.expiresAt}
 ${chalk.dim("invite id:")}   ${invite.id}
@@ -54,13 +54,13 @@ export async function loginCommand(opts: { invite?: string; api?: string }) {
   const existing = readConfig();
   if (existing) {
     console.log(chalk.yellow(`\nAlready logged in as ${chalk.bold(existing.agentName)} (${existing.agentId})`));
-    console.log(chalk.dim("Delete ~/.config/orch/config.json to re-login.\n"));
+    console.log(chalk.dim("Delete ~/.config/relai/config.json to re-login.\n"));
     return;
   }
 
   if (!opts.invite) {
-    console.error(chalk.red("orch login requires --invite <code>"));
-    console.error(chalk.dim("Ask a project member to run `orch project invite` and share the code."));
+    console.error(chalk.red("relai login requires --invite <code>"));
+    console.error(chalk.dim("Ask a project member to run `relai project invite` and share the code."));
     process.exit(1);
   }
 
@@ -112,7 +112,7 @@ ${chalk.bold("Add to your MCP config")} ${chalk.dim("(.mcp.json in your repo or 
 
 ${chalk.cyan(JSON.stringify({
   mcpServers: {
-    orch: {
+    relai: {
       command: "npx",
       args: ["@relai/mcp-server"],
       env: {

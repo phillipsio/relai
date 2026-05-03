@@ -22,7 +22,7 @@ async function heartbeat() {
 function writeMcpConfig(): string {
   const mcpConfig = {
     mcpServers: {
-      orch: {
+      relai: {
         command: "node",
         args: [mcpServerPath],
         env: {

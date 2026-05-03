@@ -25,7 +25,7 @@ If anything in this runbook is annoying, that friction *is* the test signal — 
 docker compose up -d
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai pnpm --filter @relai/db db:push
 cp .env.example .env   # only if you don't have one yet
-# Edit .env: set API_SECRET to something strong (you only need it for `orch init`)
+# Edit .env: set API_SECRET to something strong (you only need it for `relai init`)
 
 pnpm --filter @relai/api dev
 ```
@@ -52,7 +52,7 @@ ngrok http 3010
 ```bash
 pnpm --filter @relai/cli build
 node packages/cli/dist/index.js init
-# OR if you have a global symlink: orch init
+# OR if you have a global symlink: relai init
 ```
 
 Walk through the prompts:
@@ -63,7 +63,7 @@ Walk through the prompts:
 - **Agent name:** e.g. `jim-host`
 - **Specialization:** `architect` or whatever fits
 
-After this, `~/.config/orch/config.json` holds your per-agent token. The admin secret is no longer needed for day-to-day calls.
+After this, `~/.config/relai/config.json` holds your per-agent token. The admin secret is no longer needed for day-to-day calls.
 
 If you also want to drive relai from this machine via Claude Code (recommended), copy the printed MCP snippet into your project's `.mcp.json`.
 
@@ -79,7 +79,7 @@ node packages/cli/dist/index.js project invite \
 It prints a single line:
 
 ```
-orch login --invite inv_<base64url>
+relai login --invite inv_<base64url>
 ```
 
 Send that whole line to your coworker — plus the **public API URL** from step 2. They need both. The invite is single-use and expires when `--ttl` says (default 7 days).
@@ -102,22 +102,22 @@ Prompts:
 - **Agent name:** their choice (the suggestion you set is the default)
 - **Specialization:** their choice
 
-This creates an agent record in your project, mints a per-agent token for them, and writes `~/.config/orch/config.json` on their machine. They never see your admin secret.
+This creates an agent record in your project, mints a per-agent token for them, and writes `~/.config/relai/config.json` on their machine. They never see your admin secret.
 
 ## 6. Coworker side — wire up MCP
 
-`orch login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their project's `.mcp.json` (or `~/.claude.json`).
+`relai login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their project's `.mcp.json` (or `~/.claude.json`).
 
 Until `@relai/mcp-server` is published to npm, replace `npx @relai/mcp-server` with `node /path/to/relai/packages/mcp-server/dist/index.js` after running `pnpm --filter @relai/mcp-server build`.
 
-Restart their MCP client. Confirm via `/mcp` (or equivalent) that `orch` shows as connected with 9 tools.
+Restart their MCP client. Confirm via `/mcp` (or equivalent) that `relai` shows as connected with 9 tools.
 
 ## 7. Try the actual coordination
 
 In your Claude Code session (host):
 
 ```
-You: Use the orch tools to create a task in this project titled "Audit the
+You: Use the relai tools to create a task in this project titled "Audit the
 auth flow" with description "Walk the new per-agent token path end-to-end
 and flag anything weird." Assign it to <coworker's agent id>.
 ```
@@ -125,7 +125,7 @@ and flag anything weird." Assign it to <coworker's agent id>.
 In their session (coworker):
 
 ```
-Coworker: Use the orch tools to check my unread messages and pending tasks.
+Coworker: Use the relai tools to check my unread messages and pending tasks.
 ```
 
 Things to verify in this round-trip:
@@ -142,23 +142,23 @@ node packages/cli/dist/index.js token revoke <coworker's token id>   # optional
 docker compose down                                                  # stops Postgres
 
 # Coworker
-rm ~/.config/orch/config.json
-# Remove the orch entry from their .mcp.json
+rm ~/.config/relai/config.json
+# Remove the relai entry from their .mcp.json
 ```
 
 ## Solo test (fake the second person)
 
-If you don't have a real coworker on hand, you can play both sides from the same machine. The CLI honors `ORCH_CONFIG_DIR` so two terminals can hold different agent identities side by side.
+If you don't have a real coworker on hand, you can play both sides from the same machine. The CLI honors `RELAI_CONFIG_DIR` so two terminals can hold different agent identities side by side.
 
 ```bash
 # Terminal A — "host" identity, default config dir
 node packages/cli/dist/index.js init
 # … walk through prompts, create project, register as e.g. "jim-host"
 node packages/cli/dist/index.js project invite --name fake-coworker --ttl 3600
-# Copy the printed `orch login --invite ...` line.
+# Copy the printed `relai login --invite ...` line.
 
 # Terminal B — "coworker" identity, separate config dir
-export ORCH_CONFIG_DIR=/tmp/orch-coworker
+export RELAI_CONFIG_DIR=/tmp/relai-coworker
 node packages/cli/dist/index.js login --invite inv_<...> --api http://localhost:3010
 # Walk through the prompts as the imaginary coworker.
 ```
@@ -166,11 +166,62 @@ node packages/cli/dist/index.js login --invite inv_<...> --api http://localhost:
 You skip the public-URL step entirely; both sides talk to `http://localhost:3010`.
 
 From here:
-- Use `orch tasks`, `orch send`, `orch inbox` from either terminal — each sees the world from its own agent's perspective.
-- For MCP-from-Claude-Code-as-the-coworker, point your MCP `.mcp.json` env at the coworker's `apiToken` / `agentId` from `/tmp/orch-coworker/config.json`. Restart Claude Code; you're now driving relai as the coworker agent.
+- Use `relai tasks`, `relai send`, `relai inbox` from either terminal — each sees the world from its own agent's perspective.
+- For MCP-from-Claude-Code-as-the-coworker, point your MCP `.mcp.json` env at the coworker's `apiToken` / `agentId` from `/tmp/relai-coworker/config.json`. Restart Claude Code; you're now driving relai as the coworker agent.
 - Watch events from one identity while acting from the other: `curl -N -H "Authorization: Bearer <coworker-token>" http://localhost:3010/events` in a third terminal — you should see SSE lines as terminal A sends messages.
 
 This validates the full auth + invite + per-agent-token + event-fan-out path; only thing it doesn't validate is the actual cross-machine networking (so don't skip a real two-person test before going further with the design).
+
+## Solo test, multi-identity via git worktrees (closer to a real two-person setup)
+
+`RELAI_CONFIG_DIR` isolates the CLI config but **doesn't isolate `.mcp.json`** — every Claude Code session opened in this checkout reads the same project-level `.mcp.json` and so picks up the same agent token. Worker processes also share the working tree, so file edits race.
+
+Git worktrees fix this without needing a second machine. Each identity gets its own checkout (own `.mcp.json`, own working tree) but everyone hits the same shared API and DB.
+
+```bash
+# Host identity stays in the main checkout (this directory).
+# Already done: relai init, API running on localhost:3010, .mcp.json written.
+
+# Create a separate checkout for each fake coworker. Cheap — shares git objects.
+git worktree add ../relai-bob
+git worktree add ../relai-carol
+```
+
+Then for each worktree, run the login + MCP wiring **inside that worktree's directory**:
+
+```bash
+cd ../relai-bob
+
+# Optional but recommended: keep their CLI config separate too, so `relai` from
+# this terminal won't see the host's identity if you cd around.
+export RELAI_CONFIG_DIR=$PWD/.relai-config
+
+# Get an invite from the host terminal:
+#   (in main checkout) node packages/cli/dist/index.js project invite --name bob --ttl 3600
+node packages/cli/dist/index.js login --invite inv_<...> --api http://localhost:3010
+
+# Paste the printed mcpServers block into THIS worktree's .mcp.json.
+# Because Claude Code resolves .mcp.json from the project root it's launched in,
+# starting `claude` from ../relai-bob picks up Bob's token; from the main
+# checkout it picks up the host's token. No collision.
+```
+
+You don't need to repeat `pnpm install`, `docker compose up`, or `db:push` — they're either shared (DB, node_modules via pnpm) or already done. You also don't need a second `pnpm --filter @relai/api dev` — there's still one API, and every worktree talks to it on `localhost:3010`.
+
+Caveats:
+- **Shared node_modules**: pnpm hoists into the main checkout's `node_modules`. Worktrees inherit it via the workspace. If you run `pnpm install` from a worktree it'll create a sibling `node_modules` and waste disk; just don't.
+- **Shared dist artifacts**: `pnpm --filter @relai/cli build` writes to `packages/cli/dist` in whichever worktree you run it from. Build once in the main checkout, then run the CLI from each worktree via the same dist path (or symlink).
+- **Worker processes**: a `claude-worker` started in `../relai-bob` will edit files in that worktree's tree — that's the whole point. Just don't have two workers from different worktrees touching the same branch.
+- **Branch collisions**: each worktree must be on its own branch. `git worktree add ../relai-bob` creates one automatically; don't `git checkout main` inside it.
+
+Tear-down:
+
+```bash
+git worktree remove ../relai-bob
+git worktree remove ../relai-carol
+```
+
+This is the closest you can get to a real two-person test without a second machine: each "person" sees the world through their own checkout + their own MCP identity, and only the API/DB are shared (which is exactly what would happen across machines anyway).
 
 ## Things to capture during the test
 

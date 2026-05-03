@@ -31,7 +31,7 @@ export async function initCommand() {
     return;
   }
 
-  console.log(chalk.bold("\norch init — register this agent\n"));
+  console.log(chalk.bold("\nrelai init — register this agent\n"));
 
   // ── Connection ──────────────────────────────────────────────────────────────
 
@@ -141,7 +141,7 @@ ${chalk.bold("Add to your Claude Code MCP config")} ${chalk.dim("(~/.claude/mcp.
 
 ${chalk.cyan(JSON.stringify({
   mcpServers: {
-    orch: {
+    relai: {
       command: "npx",
       args: ["@relai/mcp-server"],
       env: {

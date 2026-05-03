@@ -6,11 +6,11 @@ A coordination layer for multi-agent AI development teams. Any MCP-compatible ag
 
 Relai is mid-redesign. The current code (described below) still works, but the system is moving toward a different shape:
 
-- **CLI-first, not dashboard-first.** Agents and humans use the same `orch` commands (renaming to `aio` later); the web becomes a read-only window into the same state. New capabilities ship as commands, not forms.
-- **Per-agent tokens, not a shared secret.** Each agent has its own credential, scoped to a project. The shared `API_SECRET` is now a deprecated fallback. *(Done — issued at registration and via `orch token rotate`.)*
+- **CLI-first, not dashboard-first.** Agents and humans use the same `relai` commands; the web becomes a read-only window into the same state. New capabilities ship as commands, not forms.
+- **Per-agent tokens, not a shared secret.** Each agent has its own credential, scoped to a project. The shared `API_SECRET` is now a deprecated fallback. *(Done — issued at registration and via `relai token rotate`.)*
 - **Agents as peers, not workers in a queue.** Any agent can create tasks, delegate to peers, spawn sub-agents, and open threads with other agents directly. Routing is per-task opt-in: `assignedTo: "@auto"` tells the scheduler to pick. Projects can set `defaultAssignee` (an agent ID, `"@auto"`, or null) as the fallback when no assignee is given. The old `automated`/`manual` mode is gone. *(Done.)*
 - **Humans optional, not central.** A human is an agent with `workerType: human` who *subscribes* to threads/tasks they care about. The SSE event stream (`GET /events`) and `subscriptions` table are in; webhook/email notification channels are still ahead. *(Subscriptions + SSE done; channels next.)*
-- **Internet-native.** Project invites (`orch project invite` → `orch login --invite`) and per-agent local clones (`git`/`gh` shelled out by the worker) make multi-machine coordination the default rather than a special case. *(Invites done.)*
+- **Internet-native.** Project invites (`relai project invite` → `relai login --invite`) and per-agent local clones (`git`/`gh` shelled out by the worker) make multi-machine coordination the default rather than a special case. *(Invites done.)*
 
 Project remains the trust and repo boundary: joining a project grants visibility to all of its tasks, threads, and messages. There are no per-thread ACLs.
 
@@ -22,7 +22,7 @@ The full design is tracked in `~/.claude/projects/-Users-jim-PhpstormProjects-re
 - **Task routing** — create tasks with an explicit assignee, or use `@auto` (per-task or as a project default) to let the built-in scheduler route via rules with Claude as a fallback
 - **Threads** — typed message passing between agents and humans (`handoff`, `finding`, `decision`, `question`, `escalation`, `reply`)
 - **Plans** — collaborative planning discussions where any agent or human can contribute before work begins
-- **Project invites** — host runs `orch project invite`, coworker runs `orch login --invite <code>`; per-agent tokens are issued automatically
+- **Project invites** — host runs `relai project invite`, coworker runs `relai login --invite <code>`; per-agent tokens are issued automatically
 - **Event stream** — `GET /events` is an SSE stream filtered to each agent's subscriptions (auto-subscribed on message/task creation)
 - **Web dashboard** — read-only-ish view of projects, agents, tasks, threads, and plans
 
@@ -52,7 +52,7 @@ The routing scheduler runs inside the API process — no separate daemon needed.
 | `packages/orchestrator`  | Optional self-hosted routing daemon                                  |
 | `packages/claude-worker` | Headless Claude Code worker loop                                     |
 | `packages/copilot-worker`| Copilot agent worker loop                                            |
-| `packages/cli`           | `orch` CLI — register agents, init config                            |
+| `packages/cli`           | `relai` CLI — register agents, init config                            |
 | `shared/db`              | Drizzle ORM schema + Postgres client                                 |
 | `shared/types`           | Shared TypeScript types                                              |
 
@@ -115,13 +115,13 @@ Open the dashboard, enter your API URL (`http://localhost:3010`) and secret. The
 
 The seed in step 5 already created your first agent. To add more, you have three paths:
 
-**`orch login --invite <code>`** (preferred for coworkers / extra identities)
+**`relai login --invite <code>`** (preferred for coworkers / extra identities)
 
 ```bash
 # On the host:
-orch project invite                                 # prints an `orch login` snippet
-# On the new machine (or `ORCH_CONFIG_DIR=/tmp/agent2` on the same box):
-orch login --invite <code>                          # exchanges code for a per-agent token
+relai project invite                                 # prints an `relai login` snippet
+# On the new machine (or `RELAI_CONFIG_DIR=/tmp/agent2` on the same box):
+relai login --invite <code>                          # exchanges code for a per-agent token
 ```
 
 This is the only path that issues a per-agent token without exposing the admin secret.
@@ -143,8 +143,8 @@ For an interactive session, drop the `.mcp.json` snippet into your project root 
 
 Tasks default to `pending` with no assignee. Three ways to get them moving:
 
-- **Explicit assignee** — `orch task create --to <agent-name>` or set `assignedTo` in `POST /tasks`. The task goes to `assigned` immediately.
-- **Per-task auto-routing** — `orch task create --to @auto` (or `assignedTo: "@auto"`). The scheduler picks an agent on the next tick.
+- **Explicit assignee** — `relai task create --to <agent-name>` or set `assignedTo` in `POST /tasks`. The task goes to `assigned` immediately.
+- **Per-task auto-routing** — `relai task create --to @auto` (or `assignedTo: "@auto"`). The scheduler picks an agent on the next tick.
 - **Project default** — set `defaultAssignee` (an agent ID, `"@auto"`, or null) when creating the project. Tasks created without an explicit assignee inherit it.
 
 ## Routing
@@ -176,10 +176,10 @@ Set `ANTHROPIC_API_KEY` to enable Claude fallback. Without it, unresolvable task
 | ------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`      | `postgresql://relai:relai@localhost:5433/relai` |                                                                                                                                                             |
 | `API_PORT`          | `3010`                                          |                                                                                                                                                             |
-| `API_SECRET`        | —                                               | Deprecated shared fallback. Used by seed scripts and pre-token clients; new work should use per-agent tokens issued at registration or via `orch token rotate`. |
+| `API_SECRET`        | —                                               | Deprecated shared fallback. Used by seed scripts and pre-token clients; new work should use per-agent tokens issued at registration or via `relai token rotate`. |
 | `ANTHROPIC_API_KEY` | —                                               | Enables Claude fallback routing                                                                                                                             |
 | `ROUTING_MODEL`     | `claude-haiku-4-5-20251001`                     | Model for routing decisions                                                                                                                                 |
 | `TASK_POLL_MS`      | `15000`                                         | Routing scheduler interval (ms)                                                                                                                             |
 | `AGENT_ID`          | —                                               | Set after registering an agent                                                                                                                              |
 | `PROJECT_ID`        | —                                               | Set after creating a project                                                                                                                                |
-| `ORCH_CONFIG_DIR`   | `~/.config/orch`                                | Override CLI config location (multi-identity testing)                                                                                                       |
+| `RELAI_CONFIG_DIR`   | `~/.config/relai`                                | Override CLI config location (multi-identity testing)                                                                                                       |

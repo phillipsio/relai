@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "orch-mcp": "./src/index.ts"
+    "relai-mcp": "./src/index.ts"
   },
   "scripts": {
     "dev": "tsx watch --env-file=../../.env src/index.ts",

@@ -116,6 +116,9 @@ export const tasks = pgTable("tasks", {
   autoAssign:     boolean("auto_assign").notNull().default(false),
   createdBy:      text("created_by").notNull(),
   metadata:    jsonb("metadata").default({}).notNull(),
+  // Set by the scheduler when a task has been `in_progress` longer than the
+  // stall threshold without any update. Cleared on any subsequent PUT /tasks/:id.
+  stalledAt:   timestamp("stalled_at", { withTimezone: true }),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

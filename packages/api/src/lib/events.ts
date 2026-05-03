@@ -7,6 +7,7 @@ export type EventKind =
   | "message.posted"
   | "task.created"
   | "task.updated"
+  | "task.stalled"
   | "thread.created"
   | "thread.concluded";
 

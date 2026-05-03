@@ -1,13 +1,18 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull, lt } from "drizzle-orm";
 import { agents, tasks, routingLog, messages } from "@relai/db";
 import type { Db } from "@relai/db";
 import { newId } from "../id.js";
+import { publish } from "../events.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
 
-const TASK_POLL_MS    = Number(process.env.TASK_POLL_MS    ?? 15_000);
-const BLOCKED_POLL_MS = Number(process.env.BLOCKED_POLL_MS ?? 15_000);
+const TASK_POLL_MS         = Number(process.env.TASK_POLL_MS         ?? 15_000);
+const BLOCKED_POLL_MS      = Number(process.env.BLOCKED_POLL_MS      ?? 15_000);
+// A task is considered stalled when it's been `in_progress` longer than this
+// without any update. Cleared on the next PUT /tasks/:id. Read lazily so tests
+// can override via env at runtime.
+const stallThresholdMs = () => Number(process.env.STALL_THRESHOLD_MS ?? 4 * 60 * 60 * 1000);
 
 let anthropic: Anthropic | null = null;
 
@@ -130,6 +135,38 @@ async function watchBlockedTasks(db: Db, projectId: string): Promise<void> {
   }
 }
 
+// ── Stall detection ───────────────────────────────────────────────────────────
+
+export async function detectStalls(db: Db, projectId: string): Promise<void> {
+  const thresholdMs = stallThresholdMs();
+  const cutoff = new Date(Date.now() - thresholdMs);
+
+  const stalled = await db
+    .update(tasks)
+    .set({ stalledAt: new Date() })
+    .where(and(
+      eq(tasks.projectId, projectId),
+      eq(tasks.status, "in_progress"),
+      isNull(tasks.stalledAt),
+      lt(tasks.updatedAt, cutoff),
+    ))
+    .returning();
+
+  for (const task of stalled) {
+    console.warn(`[scheduler] task ${task.id} stalled — in_progress since ${task.updatedAt.toISOString()}`);
+    publish({
+      id:         newId("evt"),
+      kind:       "task.stalled",
+      projectId:  task.projectId,
+      targetType: "task",
+      targetId:   task.id,
+      alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+      payload:    { task, stalledAt: task.stalledAt!.toISOString(), thresholdMs },
+      createdAt:  task.stalledAt!.toISOString(),
+    });
+  }
+}
+
 // ── Project-scoped cycle ──────────────────────────────────────────────────────
 
 async function runCycle(db: Db, projectId: string): Promise<void> {
@@ -139,6 +176,9 @@ async function runCycle(db: Db, projectId: string): Promise<void> {
     ),
     watchBlockedTasks(db, projectId).catch((err) =>
       console.error(`[scheduler] blocked-watch error project=${projectId}:`, err)
+    ),
+    detectStalls(db, projectId).catch((err) =>
+      console.error(`[scheduler] stall-detect error project=${projectId}:`, err)
     ),
   ]);
 }
@@ -161,9 +201,15 @@ export function startRoutingScheduler(db: Db): void {
         .from(tasks)
         .where(eq(tasks.status, "blocked"));
 
+      const inProgress = await db
+        .selectDistinct({ projectId: tasks.projectId })
+        .from(tasks)
+        .where(and(eq(tasks.status, "in_progress"), isNull(tasks.stalledAt)));
+
       const projectIds = Array.from(new Set([
         ...auto.map((r) => r.projectId),
         ...blocked.map((r) => r.projectId),
+        ...inProgress.map((r) => r.projectId),
       ]));
 
       await Promise.all(projectIds.map((id) => runCycle(db, id)));

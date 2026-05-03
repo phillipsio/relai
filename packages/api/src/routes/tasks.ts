@@ -105,9 +105,10 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const body = updateSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    // Clear stalledAt on any update — the row is moving again.
     const [task] = await db
       .update(tasks)
-      .set({ ...body.data, updatedAt: new Date() })
+      .set({ ...body.data, updatedAt: new Date(), stalledAt: null })
       .where(eq(tasks.id, request.params.id))
       .returning();
 

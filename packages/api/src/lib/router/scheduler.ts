@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { eq, and, inArray, isNull, lt } from "drizzle-orm";
-import { agents, tasks, routingLog, messages } from "@relai/db";
-import type { Db } from "@relai/db";
+import { agents, tasks, routingLog, messages } from "@getrelai/db";
+import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
 import { publish } from "../events.js";
 import { tryRulesRouting } from "./rules.js";

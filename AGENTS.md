@@ -13,7 +13,7 @@ docker compose up -d
 
 # Push Drizzle schema to the database (run once after clone, and after schema changes)
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @relai/db db:push
+  pnpm --filter @getrelai/db db:push
 
 # Seed a fresh database (creates project + orchestrator agent, patches .env)
 # API must be running first
@@ -23,15 +23,15 @@ API_SECRET=changeme tsx scripts/add-agent.ts <project-id> <agent-name> <preset>
 # Presets: claude, copilot, architect, writer, reviewer, tester, devops
 
 # Start individual packages (each in its own terminal)
-pnpm --filter @relai/api dev          # REST API → :3010
-pnpm --filter @relai/web dev          # Web UI  → :5173
-pnpm --filter @relai/mcp-server dev   # MCP stdio server (optional — for development)
+pnpm --filter @getrelai/api dev          # REST API → :3010
+pnpm --filter @getrelai/web dev          # Web UI  → :5173
+pnpm --filter @getrelai/mcp-server dev   # MCP stdio server (optional — for development)
 
 # Run tests
 pnpm test                             # all packages
-pnpm --filter @relai/api test
-pnpm --filter @relai/orchestrator test
-pnpm --filter @relai/mcp-server test
+pnpm --filter @getrelai/api test
+pnpm --filter @getrelai/orchestrator test
+pnpm --filter @getrelai/mcp-server test
 
 # Typecheck all packages
 pnpm typecheck
@@ -225,11 +225,11 @@ cp .env.example .env
 pnpm install
 docker compose up -d
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @relai/db db:push
-pnpm --filter @relai/api dev        # terminal 1 — must be running before seed
+  pnpm --filter @getrelai/db db:push
+pnpm --filter @getrelai/api dev        # terminal 1 — must be running before seed
 # In a second terminal:
 API_SECRET=<your-secret> tsx scripts/seed.ts my-project my-agent orchestrator
-pnpm --filter @relai/web dev        # terminal 3
+pnpm --filter @getrelai/web dev        # terminal 3
 ```
 
 Then open http://localhost:5173, enter the API URL and secret.

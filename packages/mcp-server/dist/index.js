@@ -106,11 +106,11 @@ async function main() {
             }
         });
         httpServer.listen(port, () => {
-            console.error(`[orch-mcp] HTTP/SSE transport listening on port ${port}`);
+            console.error(`[relai-mcp] HTTP/SSE transport listening on port ${port}`);
         });
     }
     else {
-        console.error(`[orch-mcp] Unknown TRANSPORT: ${TRANSPORT}. Use 'stdio' or 'http'.`);
+        console.error(`[relai-mcp] Unknown TRANSPORT: ${TRANSPORT}. Use 'stdio' or 'http'.`);
         process.exit(1);
     }
 }

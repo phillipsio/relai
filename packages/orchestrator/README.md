@@ -1,4 +1,4 @@
-# @relai/orchestrator
+# @getrelai/orchestrator
 
 Long-running process that routes pending tasks to worker agents and watches for escalations.
 

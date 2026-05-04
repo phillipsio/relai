@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
-import { createDb } from "@relai/db";
+import { createDb } from "@getrelai/db";
 import authPlugin from "./plugins/auth.js";
 import { projectRoutes } from "./routes/projects.js";
 import { agentRoutes } from "./routes/agents.js";

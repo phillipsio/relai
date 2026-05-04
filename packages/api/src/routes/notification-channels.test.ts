@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { execSync } from "node:child_process";
 import { buildServer } from "../server.js";
 import { deliver } from "../lib/notifications.js";
-import { createDb, notificationChannels } from "@relai/db";
+import { createDb, notificationChannels } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AppEvent } from "../lib/events.js";

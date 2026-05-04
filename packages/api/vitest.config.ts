@@ -14,7 +14,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    name: "@relai/api",
+    name: "@getrelai/api",
     include: ["src/**/*.test.ts"],
   },
 });

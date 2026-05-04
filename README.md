@@ -91,13 +91,13 @@ cp .env.example .env
 
 ```bash
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @relai/db db:push
+  pnpm --filter @getrelai/db db:push
 ```
 
 ### 5. Seed a project
 
 ```bash
-pnpm --filter @relai/api dev   # start the API first (terminal 1)
+pnpm --filter @getrelai/api dev   # start the API first (terminal 1)
 
 # In another terminal:
 API_SECRET=changeme pnpm exec tsx scripts/seed.ts my-project my-agent claude
@@ -106,7 +106,7 @@ API_SECRET=changeme pnpm exec tsx scripts/seed.ts my-project my-agent claude
 ### 6. Start the web dashboard
 
 ```bash
-pnpm --filter @relai/web dev   # http://localhost:5173 (terminal 2)
+pnpm --filter @getrelai/web dev   # http://localhost:5173 (terminal 2)
 ```
 
 Open the dashboard, enter your API URL (`http://localhost:3010`) and secret. The routing scheduler starts automatically with the API.

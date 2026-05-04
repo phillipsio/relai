@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { eq } from "drizzle-orm";
-import { tokens } from "@relai/db";
-import type { Db } from "@relai/db";
+import { tokens } from "@getrelai/db";
+import type { Db } from "@getrelai/db";
 
 export const tokenRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.delete<{ Params: { id: string } }>("/tokens/:id", async (request, reply) => {

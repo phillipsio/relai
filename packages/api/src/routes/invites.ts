@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { agents, invites, projects, tokens } from "@relai/db";
-import type { Db } from "@relai/db";
+import { agents, invites, projects, tokens } from "@getrelai/db";
+import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js";
 

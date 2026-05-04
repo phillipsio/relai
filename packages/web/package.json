@@ -1,5 +1,5 @@
 {
-  "name": "@relai/web",
+  "name": "@getrelai/web",
   "type": "module",
   "version": "0.1.0",
   "private": true,
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@relai/types": "workspace:*",
+    "@getrelai/types": "workspace:*",
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-label": "^2.0.2",
     "@radix-ui/react-select": "^2.0.0",

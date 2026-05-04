@@ -23,11 +23,11 @@ If anything in this runbook is annoying, that friction *is* the test signal — 
 ```bash
 # In the relai repo
 docker compose up -d
-DATABASE_URL=postgresql://relai:relai@localhost:5433/relai pnpm --filter @relai/db db:push
+DATABASE_URL=postgresql://relai:relai@localhost:5433/relai pnpm --filter @getrelai/db db:push
 cp .env.example .env   # only if you don't have one yet
 # Edit .env: set API_SECRET to something strong (you only need it for `relai init`)
 
-pnpm --filter @relai/api dev
+pnpm --filter @getrelai/api dev
 ```
 
 Confirm with `curl -H "Authorization: Bearer $API_SECRET" http://localhost:3010/health` → `{"ok":true}`.
@@ -50,7 +50,7 @@ ngrok http 3010
 ## 3. Host side — register yourself as the first agent
 
 ```bash
-pnpm --filter @relai/cli build
+pnpm --filter @getrelai/cli build
 node packages/cli/dist/index.js init
 # OR if you have a global symlink: relai init
 ```
@@ -90,7 +90,7 @@ Send that whole line to your coworker — plus the **public API URL** from step 
 git clone <repo-url> relai
 cd relai
 pnpm install
-pnpm --filter @relai/cli build
+pnpm --filter @getrelai/cli build
 
 # Run the line you sent them
 node packages/cli/dist/index.js login \
@@ -106,9 +106,7 @@ This creates an agent record in your project, mints a per-agent token for them, 
 
 ## 6. Coworker side — wire up MCP
 
-`relai login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their project's `.mcp.json` (or `~/.claude.json`).
-
-Until `@relai/mcp-server` is published to npm, replace `npx @relai/mcp-server` with `node /path/to/relai/packages/mcp-server/dist/index.js` after running `pnpm --filter @relai/mcp-server build`.
+`relai login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their project's `.mcp.json` (or `~/.claude.json`). The `npx @getrelai/mcp-server` command pulls the package from npm — no clone required for the MCP server itself.
 
 Restart their MCP client. Confirm via `/mcp` (or equivalent) that `relai` shows as connected with 9 tools.
 
@@ -206,11 +204,11 @@ node packages/cli/dist/index.js login --invite inv_<...> --api http://localhost:
 # checkout it picks up the host's token. No collision.
 ```
 
-You don't need to repeat `pnpm install`, `docker compose up`, or `db:push` — they're either shared (DB, node_modules via pnpm) or already done. You also don't need a second `pnpm --filter @relai/api dev` — there's still one API, and every worktree talks to it on `localhost:3010`.
+You don't need to repeat `pnpm install`, `docker compose up`, or `db:push` — they're either shared (DB, node_modules via pnpm) or already done. You also don't need a second `pnpm --filter @getrelai/api dev` — there's still one API, and every worktree talks to it on `localhost:3010`.
 
 Caveats:
 - **Shared node_modules**: pnpm hoists into the main checkout's `node_modules`. Worktrees inherit it via the workspace. If you run `pnpm install` from a worktree it'll create a sibling `node_modules` and waste disk; just don't.
-- **Shared dist artifacts**: `pnpm --filter @relai/cli build` writes to `packages/cli/dist` in whichever worktree you run it from. Build once in the main checkout, then run the CLI from each worktree via the same dist path (or symlink).
+- **Shared dist artifacts**: `pnpm --filter @getrelai/cli build` writes to `packages/cli/dist` in whichever worktree you run it from. Build once in the main checkout, then run the CLI from each worktree via the same dist path (or symlink).
 - **Worker processes**: a `claude-worker` started in `../relai-bob` will edit files in that worktree's tree — that's the whole point. Just don't have two workers from different worktrees touching the same branch.
 - **Branch collisions**: each worktree must be on its own branch. `git worktree add ../relai-bob` creates one automatically; don't `git checkout main` inside it.
 

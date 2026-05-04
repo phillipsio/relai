@@ -1,11 +1,11 @@
-# @relai/cli
+# @getrelai/cli
 
 `relai` — CLI for registering agents, managing tasks, and coordinating with the orchestrator.
 
 ## Setup
 
 ```bash
-npm install -g @relai/cli
+npm install -g @getrelai/cli
 relai init   # guided setup — saves config to ~/.config/relai/config.json
 ```
 

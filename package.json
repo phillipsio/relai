@@ -11,11 +11,11 @@
   },
   "scripts": {
     "dev": "pnpm --parallel -r dev",
-    "dev:ui": "pnpm --parallel --filter @relai/api --filter @relai/web dev",
+    "dev:ui": "pnpm --parallel --filter @getrelai/api --filter @getrelai/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --workspace=vitest.workspace.ts",
-    "demo": "pnpm --filter @relai/orchestrator exec tsx ../../scripts/demo.ts",
+    "demo": "pnpm --filter @getrelai/orchestrator exec tsx ../../scripts/demo.ts",
     "start-worker": "node_modules/.pnpm/node_modules/.bin/tsx scripts/start-worker.ts"
   },
   "devDependencies": {

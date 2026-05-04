@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { eq, or, and } from "drizzle-orm";
-import { subscriptions, type Db } from "@relai/db";
+import { subscriptions, type Db } from "@getrelai/db";
 import { newId } from "./id.js";
 
 export type EventKind =

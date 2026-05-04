@@ -1,4 +1,4 @@
-# @relai/api
+# @getrelai/api
 
 Fastify REST API. The single source of truth — all packages communicate through this.
 

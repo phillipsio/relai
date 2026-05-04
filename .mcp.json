@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "relai": {
-      "command": "node",
-      "args": ["./packages/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["@getrelai/mcp-server"],
       "env": {
         "API_URL": "http://localhost:3010",
         "API_SECRET": "your-secret",

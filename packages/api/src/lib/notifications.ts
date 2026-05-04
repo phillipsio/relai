@@ -1,5 +1,5 @@
 import { eq, and, inArray, isNull } from "drizzle-orm";
-import { notificationChannels, type Db } from "@relai/db";
+import { notificationChannels, type Db } from "@getrelai/db";
 import { bus, resolveSubscribers, type AppEvent } from "./events.js";
 
 // Trip the breaker after this many consecutive failures. Cleared on success or

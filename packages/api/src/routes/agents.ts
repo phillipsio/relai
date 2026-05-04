@@ -1,10 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
-import { agents, tokens } from "@relai/db";
+import { agents, tokens } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
-import type { Db } from "@relai/db";
+import type { Db } from "@getrelai/db";
 
 const registerSchema = z.object({
   projectId:      z.string(),

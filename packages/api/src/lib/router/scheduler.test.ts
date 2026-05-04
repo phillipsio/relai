@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { buildServer } from "../../server.js";
 import { detectStalls } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
-import { createDb, tasks } from "@relai/db";
+import { createDb, tasks } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 

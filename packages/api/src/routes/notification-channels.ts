@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
-import { notificationChannels, type Db } from "@relai/db";
+import { notificationChannels, type Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 
 const webhookConfigSchema = z.object({

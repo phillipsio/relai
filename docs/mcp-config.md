@@ -1,6 +1,6 @@
 # MCP Server Configuration
 
-The `@relai/mcp-server` package works with any MCP-compatible client.
+The `@getrelai/mcp-server` package works with any MCP-compatible client.
 Config format differs per client — the server code is identical.
 
 ## Required environment variables

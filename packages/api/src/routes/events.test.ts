@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync } from "node:child_process";
 import { buildServer } from "../server.js";
 import { bus, resolveSubscribers, type AppEvent } from "../lib/events.js";
-import { createDb, subscriptions } from "@relai/db";
+import { createDb, subscriptions } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 

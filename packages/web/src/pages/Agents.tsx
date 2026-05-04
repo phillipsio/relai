@@ -311,7 +311,7 @@ export function Agents({ api }: { api: WebApiClient }) {
           <div className="rounded-lg border border-dashed border-zinc-700 px-4 py-3 text-sm text-zinc-500">
             No lead agent running.{" "}
             <span className="text-zinc-400">
-              Start the routing daemon (<code className="text-zinc-300">pnpm --filter @relai/orchestrator dev</code>)
+              Start the routing daemon (<code className="text-zinc-300">pnpm --filter @getrelai/orchestrator dev</code>)
               or <Link to="/tasks" className="text-zinc-300 underline underline-offset-2">do this manually</Link>.
             </span>
           </div>

@@ -143,7 +143,7 @@ ${chalk.cyan(JSON.stringify({
   mcpServers: {
     relai: {
       command: "npx",
-      args: ["@relai/mcp-server"],
+      args: ["@getrelai/mcp-server"],
       env: {
         API_URL: apiUrl,
         API_SECRET: token,

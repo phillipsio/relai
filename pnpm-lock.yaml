@@ -26,10 +26,10 @@ importers:
       '@fastify/sensible':
         specifier: ^5.5.0
         version: 5.6.0
-      '@relai/db':
+      '@getrelai/db':
         specifier: workspace:*
         version: link:../../shared/db
-      '@relai/types':
+      '@getrelai/types':
         specifier: workspace:*
         version: link:../../shared/types
       drizzle-orm:
@@ -78,7 +78,7 @@ importers:
       '@inquirer/prompts':
         specifier: ^5.0.0
         version: 5.5.0
-      '@relai/types':
+      '@getrelai/types':
         specifier: workspace:*
         version: link:../../shared/types
       chalk:
@@ -119,9 +119,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.6.0
         version: 1.6.0
-      '@relai/types':
-        specifier: workspace:*
-        version: link:../../shared/types
       nanoid:
         specifier: ^5.0.0
         version: 5.1.9
@@ -129,6 +126,9 @@ importers:
         specifier: ^3.22.0
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
       tsx:
         specifier: ^4.7.0
         version: 4.21.0
@@ -144,10 +144,10 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
-      '@relai/db':
+      '@getrelai/db':
         specifier: workspace:*
         version: link:../../shared/db
-      '@relai/types':
+      '@getrelai/types':
         specifier: workspace:*
         version: link:../../shared/types
       nanoid:
@@ -184,7 +184,7 @@ importers:
       '@radix-ui/react-tabs':
         specifier: ^1.0.4
         version: 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@relai/types':
+      '@getrelai/types':
         specifier: workspace:*
         version: link:../../shared/types
       '@tanstack/react-query':

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { bus, resolveSubscribers, type AppEvent } from "../lib/events.js";
-import type { Db } from "@relai/db";
+import type { Db } from "@getrelai/db";
 
 const HEARTBEAT_MS = 25_000;
 

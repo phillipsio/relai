@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import fp from "fastify-plugin";
 import { eq, and, isNull } from "drizzle-orm";
-import { tokens, agents, type Db } from "@relai/db";
+import { tokens, agents, type Db } from "@getrelai/db";
 import { hashToken, looksLikeAgentToken } from "../lib/tokens.js";
 
 type Agent = typeof agents.$inferSelect;

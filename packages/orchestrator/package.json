@@ -1,5 +1,5 @@
 {
-  "name": "@relai/orchestrator",
+  "name": "@getrelai/orchestrator",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,8 +10,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@relai/db": "workspace:*",
-    "@relai/types": "workspace:*",
+    "@getrelai/db": "workspace:*",
+    "@getrelai/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
     "nanoid": "^5.0.0"
   },

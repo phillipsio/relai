@@ -1,36 +1,35 @@
 # MCP Server Configuration
 
-The `@getrelai/mcp-server` package works with any MCP-compatible client.
-Config format differs per client — the server code is identical.
+The [`@getrelai/mcp-server`](https://www.npmjs.com/package/@getrelai/mcp-server) package works with any MCP-compatible client. Config format differs per client — the server code is identical.
 
 ## Required environment variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `API_URL` | No (default: `http://localhost:3010`) | URL of the running API server |
-| `API_SECRET` | **Yes** | Shared secret from your `.env` |
-| `AGENT_ID` | **Yes** | Your agent's ID (from the Agents page or `relai init`) |
-| `PROJECT_ID` | **Yes** | The project this agent belongs to |
+| `API_URL` | **Yes** | URL of the running relai API (e.g. `http://localhost:3010` or your deployed instance) |
+| `API_SECRET` | **Yes** | Your per-agent bearer token (issued by `relai init` or `relai login`) |
+| `AGENT_ID` | **Yes** | Your agent's ID (`agent_*`) |
+| `PROJECT_ID` | **Yes** | The project's ID (`proj_*`) |
 | `TRANSPORT` | No (default: `stdio`) | `stdio` or `http` |
 | `MCP_PORT` | No (default: `3001`) | Port for HTTP transport only |
 
-The easiest way to get a pre-filled config snippet is to register an agent in the dashboard (**Agents → Add agent**) or run `relai init`.
+The easiest way to get a pre-filled snippet is to run `relai init` (or `relai login --invite <code>` for invited agents) — it prints a ready-to-paste `mcpServers` block.
 
 ---
 
 ## Claude Code
 
-Add to `.mcp.json` in your project root (project-scoped) or `~/.claude.json` (global):
+Add to `.mcp.json` in your project root (project-scoped — preferred so each project's agent identity is isolated) or `~/.claude.json` (global):
 
 ```json
 {
   "mcpServers": {
     "relai": {
-      "command": "node",
-      "args": ["/path/to/relai/packages/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["@getrelai/mcp-server"],
       "env": {
         "API_URL": "http://localhost:3010",
-        "API_SECRET": "your-secret",
+        "API_SECRET": "your-per-agent-token",
         "AGENT_ID": "agent_yourAgentId",
         "PROJECT_ID": "proj_yourProjectId"
       }
@@ -39,7 +38,7 @@ Add to `.mcp.json` in your project root (project-scoped) or `~/.claude.json` (gl
 }
 ```
 
-Replace `/path/to/relai` with the absolute path to your local clone. The dashboard generates this snippet with the correct values after agent registration.
+Restart Claude Code. Confirm via `/mcp` that `relai` shows as connected with 9 tools.
 
 ---
 
@@ -52,11 +51,11 @@ Add to `.vscode/mcp.json` in your repo root:
   "servers": {
     "relai": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/path/to/relai/packages/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["@getrelai/mcp-server"],
       "env": {
         "API_URL": "http://localhost:3010",
-        "API_SECRET": "your-secret",
+        "API_SECRET": "your-per-agent-token",
         "AGENT_ID": "agent_yourAgentId",
         "PROJECT_ID": "proj_yourProjectId"
       }
@@ -69,7 +68,7 @@ Add to `.vscode/mcp.json` in your repo root:
 
 ## Cursor, Windsurf, and other MCP clients
 
-Any client that supports stdio MCP servers works with the same pattern — point `command` at `node` and `args` at the compiled `dist/index.js`. Check your client's docs for the exact config file location.
+Any client that supports stdio MCP servers works with the same pattern — `command: "npx"`, `args: ["@getrelai/mcp-server"]`, plus the four env vars above. Check your client's docs for the exact config file location.
 
 ---
 
@@ -80,11 +79,11 @@ When the API server is hosted remotely, run the MCP server in HTTP mode:
 ```bash
 TRANSPORT=http \
 API_URL=https://your-api-host \
-API_SECRET=your-secret \
+API_SECRET=your-per-agent-token \
 AGENT_ID=agent_yourAgentId \
 PROJECT_ID=proj_yourProjectId \
 MCP_PORT=3001 \
-node packages/mcp-server/dist/index.js
+npx @getrelai/mcp-server
 ```
 
 Then configure clients to point at the SSE endpoint:

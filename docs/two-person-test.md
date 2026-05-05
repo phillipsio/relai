@@ -14,9 +14,9 @@ If anything in this runbook is annoying, that friction *is* the test signal — 
   - **Cloud VM:** if you want this to outlive the test session
 
 **On your coworker's machine:**
-- Node.js 20+ and pnpm 9+
+- Node.js 20+ (npm comes with it)
 - An MCP-capable client (Claude Code, Cursor, Windsurf, etc.)
-- The relai repo cloned (until we publish to npm — see `project_cli_design.md` for the deferred work)
+- No clone, no pnpm — `relai` and the MCP server are both on npm
 
 ## 1. Host side — bring the API up
 
@@ -50,9 +50,8 @@ ngrok http 3010
 ## 3. Host side — register yourself as the first agent
 
 ```bash
-pnpm --filter @getrelai/cli build
-node packages/cli/dist/index.js init
-# OR if you have a global symlink: relai init
+npm install -g @getrelai/cli   # if you don't have it yet
+relai init
 ```
 
 Walk through the prompts:
@@ -70,7 +69,7 @@ If you also want to drive relai from this machine via Claude Code (recommended),
 ## 4. Host side — invite your coworker
 
 ```bash
-node packages/cli/dist/index.js project invite \
+relai project invite \
   --name <coworker-suggested-name> \
   --specialization writer \
   --ttl 86400
@@ -87,15 +86,10 @@ Send that whole line to your coworker — plus the **public API URL** from step 
 ## 5. Coworker side — install + log in
 
 ```bash
-git clone <repo-url> relai
-cd relai
-pnpm install
-pnpm --filter @getrelai/cli build
+npm install -g @getrelai/cli
 
 # Run the line you sent them
-node packages/cli/dist/index.js login \
-  --invite inv_<...> \
-  --api <PUBLIC_API_URL>
+relai login --invite inv_<...> --api <PUBLIC_API_URL>
 ```
 
 Prompts:
@@ -136,7 +130,7 @@ Things to verify in this round-trip:
 
 ```bash
 # Host
-node packages/cli/dist/index.js token revoke <coworker's token id>   # optional
+relai token revoke <coworker's token id>   # optional
 docker compose down                                                  # stops Postgres
 
 # Coworker
@@ -150,14 +144,14 @@ If you don't have a real coworker on hand, you can play both sides from the same
 
 ```bash
 # Terminal A — "host" identity, default config dir
-node packages/cli/dist/index.js init
+relai init
 # … walk through prompts, create project, register as e.g. "jim-host"
-node packages/cli/dist/index.js project invite --name fake-coworker --ttl 3600
+relai project invite --name fake-coworker --ttl 3600
 # Copy the printed `relai login --invite ...` line.
 
 # Terminal B — "coworker" identity, separate config dir
 export RELAI_CONFIG_DIR=/tmp/relai-coworker
-node packages/cli/dist/index.js login --invite inv_<...> --api http://localhost:3010
+relai login --invite inv_<...> --api http://localhost:3010
 # Walk through the prompts as the imaginary coworker.
 ```
 
@@ -195,8 +189,8 @@ cd ../relai-bob
 export RELAI_CONFIG_DIR=$PWD/.relai-config
 
 # Get an invite from the host terminal:
-#   (in main checkout) node packages/cli/dist/index.js project invite --name bob --ttl 3600
-node packages/cli/dist/index.js login --invite inv_<...> --api http://localhost:3010
+#   (in main checkout) relai project invite --name bob --ttl 3600
+relai login --invite inv_<...> --api http://localhost:3010
 
 # Paste the printed mcpServers block into THIS worktree's .mcp.json.
 # Because Claude Code resolves .mcp.json from the project root it's launched in,

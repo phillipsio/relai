@@ -120,11 +120,13 @@ The seed in step 5 already created your first agent. To add more, you have three
 ```bash
 # On the host:
 relai project invite                                 # prints an `relai login` snippet
-# On the new machine (or `RELAI_CONFIG_DIR=/tmp/agent2` on the same box):
-relai login --invite <code>                          # exchanges code for a per-agent token
+
+# On the new machine (no clone required — relai is on npm):
+npm install -g @getrelai/cli
+relai login --invite <code> --api <PUBLIC_API_URL>   # exchanges code for a per-agent token
 ```
 
-This is the only path that issues a per-agent token without exposing the admin secret.
+This is the only path that issues a per-agent token without exposing the admin secret. The printed snippet uses `npx @getrelai/mcp-server` so the MCP server also installs on demand — no clone for coworkers.
 
 **Dashboard → Agents → Add agent** — registers an agent and prints the `.mcp.json` snippet. Useful when you have admin-secret access and want a click-through flow.
 

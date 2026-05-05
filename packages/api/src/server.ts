@@ -14,6 +14,7 @@ import { threadRoutes } from "./routes/threads.js";
 import { messageRoutes } from "./routes/messages.js";
 import { routingLogRoutes } from "./routes/routing-log.js";
 import { notificationChannelRoutes } from "./routes/notification-channels.js";
+import { sessionRoutes } from "./routes/session.js";
 import { startRoutingScheduler } from "./lib/router/scheduler.js";
 import { startNotificationDelivery } from "./lib/notifications.js";
 
@@ -37,6 +38,7 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(messageRoutes, { db });
   fastify.register(routingLogRoutes, { db });
   fastify.register(notificationChannelRoutes, { db });
+  fastify.register(sessionRoutes, { db });
 
   fastify.get("/health", async () => ({ ok: true }));
 

@@ -79,3 +79,32 @@ export interface Project {
   description?: string;
   createdAt: Date;
 }
+
+// User-facing task label — verb-first, framed as "what does the human need to do
+// next" rather than the agent-state framing of TaskStatus. Derived from status
+// plus a couple of flags; intended for CLI/UI surfaces, never persisted.
+export type TaskHumanLabel =
+  | "Queued"          // pending, autoAssign true — awaiting routing
+  | "Unassigned"      // pending, no assignee and no autoAssign
+  | "Starting"        // assigned, not yet picked up
+  | "Running"         // in_progress
+  | "Stalled"         // in_progress with stalledAt set
+  | "Input required"  // blocked
+  | "Done"            // completed
+  | "Cancelled";      // cancelled
+
+export function humanizeTaskStatus(task: {
+  status: TaskStatus;
+  autoAssign?: boolean;
+  assignedTo?: string | null;
+  stalledAt?: Date | string | null;
+}): TaskHumanLabel {
+  switch (task.status) {
+    case "pending":     return task.autoAssign ? "Queued" : "Unassigned";
+    case "assigned":    return "Starting";
+    case "in_progress": return task.stalledAt ? "Stalled" : "Running";
+    case "blocked":     return "Input required";
+    case "completed":   return "Done";
+    case "cancelled":   return "Cancelled";
+  }
+}

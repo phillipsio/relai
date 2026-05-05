@@ -52,6 +52,8 @@ export class CliApiClient {
     assignedTo?: string;
     domains?: string[];
     specialization?: string;
+    verifyCommand?: string;
+    verifyCwd?: string;
   }) {
     return this.request<TaskRow>("POST", "/tasks", body);
   }

@@ -72,7 +72,7 @@ Nine tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`, `
 - `tokens` is the per-agent bearer-credential store: hashed token, `lastUsedAt`, `revokedAt`. Issued at agent registration and via `POST /agents/:id/tokens`
 - `invites` is the project-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`
-- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb)
+- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional `verifyCommand` / `verifyCwd` predicate. When `verifyCommand` is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the shell predicate (60s timeout, 8KB stdout/stderr cap, written to `verification_log`). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. Stuck claims older than 5 min are reaped as crashed runs.
 - `subscriptions` records which agents want event notifications for a given thread/task/agent target
 
 ### Auth (packages/api/src/plugins/auth.ts)

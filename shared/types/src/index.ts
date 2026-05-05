@@ -13,7 +13,7 @@ export interface Agent {
 }
 
 // Task lifecycle
-export type TaskStatus = "pending" | "assigned" | "in_progress" | "completed" | "blocked" | "cancelled";
+export type TaskStatus = "pending" | "assigned" | "in_progress" | "pending_verification" | "completed" | "blocked" | "cancelled";
 
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
 
@@ -89,6 +89,7 @@ export type TaskHumanLabel =
   | "Starting"        // assigned, not yet picked up
   | "Running"         // in_progress
   | "Stalled"         // in_progress with stalledAt set
+  | "Verifying"       // pending_verification — predicate scheduled
   | "Input required"  // blocked
   | "Done"            // completed
   | "Cancelled";      // cancelled
@@ -103,6 +104,7 @@ export function humanizeTaskStatus(task: {
     case "pending":     return task.autoAssign ? "Queued" : "Unassigned";
     case "assigned":    return "Starting";
     case "in_progress": return task.stalledAt ? "Stalled" : "Running";
+    case "pending_verification": return "Verifying";
     case "blocked":     return "Input required";
     case "completed":   return "Done";
     case "cancelled":   return "Cancelled";

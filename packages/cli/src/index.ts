@@ -44,7 +44,7 @@ program
   .command("tasks")
   .description("List tasks assigned to you (default: assigned + in_progress)")
   .option("-a, --all", "Show all tasks in the project, not just yours")
-  .option("-s, --status <status>", "Filter by status (comma-separated: pending,assigned,in_progress,completed,blocked)")
+  .option("-s, --status <status>", "Filter by status (comma-separated: pending,assigned,in_progress,pending_verification,completed,blocked)")
   .action(tasksCommand);
 
 // ── task subcommands ──────────────────────────────────────────────────────────
@@ -60,6 +60,8 @@ task
   .option("--to <agent>", "Assign to an agent (id or name)")
   .option("--domains <list>", "Comma-separated domain tags")
   .option("--specialization <s>", "Required specialization")
+  .option("-v, --verify <cmd>", "Shell command that must exit 0 to gate the `completed` transition")
+  .option("--verify-cwd <path>", "Working directory for --verify (defaults to API server cwd)")
   .action(taskCreateCommand);
 
 task

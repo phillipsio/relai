@@ -3,7 +3,7 @@ import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean }
 export const agentRoleEnum = pgEnum("agent_role", ["orchestrator", "worker"]);
 
 export const taskStatusEnum = pgEnum("task_status", [
-  "pending", "assigned", "in_progress", "completed", "blocked", "cancelled",
+  "pending", "assigned", "in_progress", "pending_verification", "completed", "blocked", "cancelled",
 ]);
 
 export const taskPriorityEnum = pgEnum("task_priority", ["low", "normal", "high", "urgent"]);
@@ -116,6 +116,14 @@ export const tasks = pgTable("tasks", {
   autoAssign:     boolean("auto_assign").notNull().default(false),
   createdBy:      text("created_by").notNull(),
   metadata:    jsonb("metadata").default({}).notNull(),
+  // Optional shell predicate gating the `completed` transition. When set,
+  // PUT /tasks/:id { status: "completed" } rewrites to `pending_verification`
+  // and the scheduler runs the command; exit 0 promotes to `completed`,
+  // anything else returns the task to `assigned` for retry.
+  verifyCommand: text("verify_command"),
+  verifyCwd:     text("verify_cwd"),
+  // Atomic-claim marker for the verification poller. Cleared on completion.
+  verifyingAt:   timestamp("verifying_at", { withTimezone: true }),
   // Set by the scheduler when a task has been `in_progress` longer than the
   // stall threshold without any update. Cleared on any subsequent PUT /tasks/:id.
   stalledAt:   timestamp("stalled_at", { withTimezone: true }),
@@ -156,6 +164,18 @@ export const notificationChannels = pgTable("notification_channels", {
 });
 
 // ── Routing audit log ─────────────────────────────────────────────────────────
+
+export const verificationLog = pgTable("verification_log", {
+  id:         text("id").primaryKey(),
+  taskId:     text("task_id").references(() => tasks.id).notNull(),
+  command:    text("command").notNull(),
+  exitCode:   integer("exit_code"),  // null on timeout
+  stdout:     text("stdout").notNull().default(""),
+  stderr:     text("stderr").notNull().default(""),
+  durationMs: integer("duration_ms").notNull(),
+  timedOut:   boolean("timed_out").notNull().default(false),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const routingLog = pgTable("routing_log", {
   id:         text("id").primaryKey(),

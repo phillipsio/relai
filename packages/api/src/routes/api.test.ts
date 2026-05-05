@@ -42,6 +42,7 @@ afterAll(async () => {
       execSync(
         `psql "${DB_URL}" -c "` +
         `DELETE FROM routing_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id = '${projectId}'); ` +
+        `DELETE FROM verification_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id = '${projectId}'); ` +
         `DELETE FROM tasks WHERE project_id = '${projectId}'; ` +
         `DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE project_id = '${projectId}'); ` +
         `DELETE FROM threads WHERE project_id = '${projectId}'; ` +
@@ -396,6 +397,52 @@ describe("PUT /tasks/:id", () => {
       body: JSON.stringify({ status: "completed" }),
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it("rewrites completed → pending_verification when verifyCommand is set", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        createdBy: agentId,
+        title: "verified task",
+        description: "needs predicate",
+        verifyCommand: "true",
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const id = create.json().data.id;
+    expect(create.json().data.verifyCommand).toBe("true");
+
+    const done = await app.inject({
+      method: "PUT", url: `/tasks/${id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(done.statusCode).toBe(200);
+    expect(done.json().data.status).toBe("pending_verification");
+  });
+
+  it("leaves completed alone when no verifyCommand", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        createdBy: agentId,
+        title: "ungated task",
+        description: "no predicate",
+      }),
+    });
+    const id = create.json().data.id;
+
+    const done = await app.inject({
+      method: "PUT", url: `/tasks/${id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(done.json().data.status).toBe("completed");
   });
 });
 

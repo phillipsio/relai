@@ -1,11 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { eq, and, inArray, isNull, lt } from "drizzle-orm";
-import { agents, tasks, routingLog, messages } from "@getrelai/db";
+import { eq, and, inArray, isNull, lt, or } from "drizzle-orm";
+import { agents, tasks, routingLog, messages, verificationLog } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
 import { publish } from "../events.js";
+import { runVerification } from "../verify.js";
+import type { VerificationResult } from "../verify.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
+
+const VERIFY_STUCK_MS = 5 * 60 * 1000;
 
 const TASK_POLL_MS         = Number(process.env.TASK_POLL_MS         ?? 15_000);
 const BLOCKED_POLL_MS      = Number(process.env.BLOCKED_POLL_MS      ?? 15_000);
@@ -167,6 +171,148 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
   }
 }
 
+// ── Verification ──────────────────────────────────────────────────────────────
+
+type VerifyExec = (command: string, cwd?: string | null) => Promise<VerificationResult>;
+
+export async function verifyPending(
+  db: Db,
+  projectId: string,
+  exec: VerifyExec = runVerification,
+): Promise<void> {
+  const stuckCutoff = new Date(Date.now() - VERIFY_STUCK_MS);
+
+  // Identify candidates: unverified `pending_verification` rows, plus any
+  // whose claim marker is older than the stuck threshold (treat as crashed).
+  const candidates = await db
+    .select()
+    .from(tasks)
+    .where(and(
+      eq(tasks.projectId, projectId),
+      eq(tasks.status, "pending_verification"),
+      or(isNull(tasks.verifyingAt), lt(tasks.verifyingAt, stuckCutoff)),
+    ));
+
+  for (const candidate of candidates) {
+    const wasStuck = candidate.verifyingAt !== null && candidate.verifyingAt < stuckCutoff;
+    // Conditional claim: only succeed if verifyingAt is still what we observed.
+    // Prevents another scheduler instance racing on the same row.
+    const [task] = await db
+      .update(tasks)
+      .set({ verifyingAt: new Date() })
+      .where(and(
+        eq(tasks.id, candidate.id),
+        eq(tasks.status, "pending_verification"),
+        candidate.verifyingAt === null
+          ? isNull(tasks.verifyingAt)
+          : eq(tasks.verifyingAt, candidate.verifyingAt),
+      ))
+      .returning();
+    if (!task) continue;
+
+    if (!task.verifyCommand) {
+      // Misconfigured row — clear claim and revert to assigned.
+      await db.update(tasks)
+        .set({ status: "assigned", verifyingAt: null, updatedAt: new Date() })
+        .where(eq(tasks.id, task.id));
+      continue;
+    }
+
+    let result: VerificationResult;
+    if (wasStuck) {
+      result = {
+        exitCode: null,
+        stdout: "",
+        stderr: `[scheduler] previous verification claim exceeded ${VERIFY_STUCK_MS}ms — treated as crashed`,
+        durationMs: 0,
+        timedOut: true,
+      };
+    } else {
+      try {
+        result = await exec(task.verifyCommand, task.verifyCwd);
+      } catch (err) {
+        result = {
+          exitCode: null,
+          stdout: "",
+          stderr: `[scheduler] verification crashed: ${(err as Error).message}`,
+          durationMs: 0,
+          timedOut: false,
+        };
+      }
+    }
+
+    const [logRow] = await db.insert(verificationLog).values({
+      id:         newId("verif"),
+      taskId:     task.id,
+      command:    task.verifyCommand,
+      exitCode:   result.exitCode,
+      stdout:     result.stdout,
+      stderr:     result.stderr,
+      durationMs: result.durationMs,
+      timedOut:   result.timedOut,
+    }).returning();
+
+    const passed = result.exitCode === 0 && !result.timedOut;
+    if (passed) {
+      const [updated] = await db.update(tasks)
+        .set({ status: "completed", verifyingAt: null, updatedAt: new Date() })
+        .where(eq(tasks.id, task.id))
+        .returning();
+
+      console.log(`[scheduler] verified ${task.id} → completed (${result.durationMs}ms)`);
+      publish({
+        id:         newId("evt"),
+        kind:       "task.verified",
+        projectId:  task.projectId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: updated.assignedTo ? [{ targetType: "agent", targetId: updated.assignedTo }] : [],
+        payload:    { task: updated, verification: { logId: logRow.id, durationMs: result.durationMs } },
+        createdAt:  updated.updatedAt.toISOString(),
+      });
+    } else {
+      const meta = (task.metadata ?? {}) as Record<string, unknown>;
+      const [updated] = await db.update(tasks)
+        .set({
+          status:     "assigned",
+          verifyingAt: null,
+          metadata:   {
+            ...meta,
+            lastVerification: {
+              exitCode:   result.exitCode,
+              timedOut:   result.timedOut,
+              durationMs: result.durationMs,
+              logId:      logRow.id,
+            },
+          },
+          updatedAt:  new Date(),
+        })
+        .where(eq(tasks.id, task.id))
+        .returning();
+
+      console.warn(`[scheduler] verification failed for ${task.id} (exit=${result.exitCode}, timeout=${result.timedOut})`);
+      publish({
+        id:         newId("evt"),
+        kind:       "task.verification_failed",
+        projectId:  task.projectId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: updated.assignedTo ? [{ targetType: "agent", targetId: updated.assignedTo }] : [],
+        payload:    {
+          task:         updated,
+          verification: {
+            logId:      logRow.id,
+            exitCode:   result.exitCode,
+            timedOut:   result.timedOut,
+            durationMs: result.durationMs,
+          },
+        },
+        createdAt:  updated.updatedAt.toISOString(),
+      });
+    }
+  }
+}
+
 // ── Project-scoped cycle ──────────────────────────────────────────────────────
 
 async function runCycle(db: Db, projectId: string): Promise<void> {
@@ -179,6 +325,9 @@ async function runCycle(db: Db, projectId: string): Promise<void> {
     ),
     detectStalls(db, projectId).catch((err) =>
       console.error(`[scheduler] stall-detect error project=${projectId}:`, err)
+    ),
+    verifyPending(db, projectId).catch((err) =>
+      console.error(`[scheduler] verify error project=${projectId}:`, err)
     ),
   ]);
 }
@@ -206,10 +355,16 @@ export function startRoutingScheduler(db: Db): void {
         .from(tasks)
         .where(and(eq(tasks.status, "in_progress"), isNull(tasks.stalledAt)));
 
+      const verifying = await db
+        .selectDistinct({ projectId: tasks.projectId })
+        .from(tasks)
+        .where(eq(tasks.status, "pending_verification"));
+
       const projectIds = Array.from(new Set([
         ...auto.map((r) => r.projectId),
         ...blocked.map((r) => r.projectId),
         ...inProgress.map((r) => r.projectId),
+        ...verifying.map((r) => r.projectId),
       ]));
 
       await Promise.all(projectIds.map((id) => runCycle(db, id)));

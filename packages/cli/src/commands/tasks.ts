@@ -6,12 +6,13 @@ import { CliApiClient } from "../api.js";
 import { resolveAgentRef } from "../lib/resolve.js";
 
 const STATUS_COLOR: Record<string, (s: string) => string> = {
-  pending:     chalk.dim,
-  assigned:    chalk.cyan,
-  in_progress: chalk.yellow,
-  completed:   chalk.green,
-  blocked:     chalk.red,
-  cancelled:   chalk.dim,
+  pending:              chalk.dim,
+  assigned:             chalk.cyan,
+  in_progress:          chalk.yellow,
+  pending_verification: chalk.magenta,
+  completed:            chalk.green,
+  blocked:              chalk.red,
+  cancelled:            chalk.dim,
 };
 
 const PRIORITY_COLOR: Record<string, (s: string) => string> = {
@@ -67,6 +68,8 @@ export async function taskCreateCommand(options: {
   to?: string;
   domains?: string;
   specialization?: string;
+  verify?: string;
+  verifyCwd?: string;
 }) {
   const config = requireConfig();
   const client = new CliApiClient(config);
@@ -113,10 +116,13 @@ export async function taskCreateCommand(options: {
       assignedTo,
       domains,
       specialization: options.specialization,
+      verifyCommand: options.verify,
+      verifyCwd:     options.verifyCwd,
     });
     spinner.succeed(chalk.green(`Created ${chalk.bold(task.id)}`));
     console.log(chalk.dim(`  ${task.title}`));
     if (assignedTo) console.log(chalk.dim(`  assigned: ${assignedTo}`));
+    if (options.verify) console.log(chalk.dim(`  verify:   ${options.verify}`));
   } catch (err) {
     spinner.fail(chalk.red("Create failed"));
     console.error(chalk.dim(String(err)));
@@ -139,8 +145,13 @@ export async function taskUpdateCommand(
       status,
       metadata: options.note ? { note: options.note } : undefined,
     });
-    spinner.succeed(`${chalk.bold(id)} → ${STATUS_COLOR[status]?.(status) ?? status}`);
+    const actual = task.status;
+    const colored = STATUS_COLOR[actual]?.(actual) ?? actual;
+    spinner.succeed(`${chalk.bold(id)} → ${colored}`);
     console.log(chalk.dim(`  ${task.title}`));
+    if (status === "completed" && actual === "pending_verification") {
+      console.log(chalk.magenta(`  pending verification — scheduler will run the predicate shortly`));
+    }
   } catch (err) {
     spinner.fail(chalk.red("Update failed"));
     console.error(chalk.dim(String(err)));

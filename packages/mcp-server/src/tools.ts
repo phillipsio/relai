@@ -39,7 +39,9 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
         "Update the status of a task you are working on. Call this when you start work on a task " +
         "(set to 'in_progress'), finish it (set to 'completed'), or hit a blocker (set to 'blocked'). " +
         "Always update status when it changes — the orchestrator uses this to track progress and " +
-        "route follow-on work.",
+        "route follow-on work. Note: tasks with a verifyCommand have completion gated — the server " +
+        "may return status 'pending_verification' while a predicate runs; if it fails the task is " +
+        "returned to 'assigned' with details on metadata.lastVerification.",
       inputSchema: z.object({
         taskId: z.string().describe("The ID of the task to update."),
         status: z

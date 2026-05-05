@@ -8,6 +8,7 @@ import { threadsCommand, threadNewCommand } from "./commands/threads.js";
 import { sendCommand } from "./commands/send.js";
 import { inboxCommand } from "./commands/inbox.js";
 import { statusCommand } from "./commands/status.js";
+import { startCommand } from "./commands/start.js";
 import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
 import { projectInviteCommand, loginCommand } from "./commands/invite.js";
 
@@ -31,6 +32,11 @@ program
   .command("status")
   .description("Show your agent info, online agents, task summary, and unread count")
   .action(statusCommand);
+
+program
+  .command("start")
+  .description("Show your session orientation: project context, your open tasks, unread messages, open threads")
+  .action(startCommand);
 
 // ── tasks ─────────────────────────────────────────────────────────────────────
 

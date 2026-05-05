@@ -141,6 +141,33 @@ export class CliApiClient {
   heartbeat(agentId: string) {
     return this.request<unknown>("PUT", `/agents/${agentId}/heartbeat`, {});
   }
+
+  getSessionStart(projectId?: string) {
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    return this.request<SessionStart>("GET", `/session/start${qs}`);
+  }
+}
+
+export interface SessionStart {
+  agent: {
+    id: string;
+    name: string;
+    specialization: string | null;
+    workerType: string | null;
+    repoPath: string | null;
+  };
+  project: {
+    id: string;
+    name: string;
+    context: string | null;
+    defaultAssignee: string | null;
+  };
+  tasks: Array<TaskRow & {
+    humanLabel: "Queued" | "Unassigned" | "Starting" | "Running" | "Stalled" | "Input required" | "Done" | "Cancelled";
+    stalledAt?: string | null;
+  }>;
+  unreadMessages: MessageRow[];
+  openThreads: ThreadRow[];
 }
 
 // Minimal row types for display

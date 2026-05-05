@@ -198,6 +198,23 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
     },
 
     {
+      name: "session_start",
+      description:
+        "Get a single bundled snapshot of your current state in this project: your identity, the " +
+        "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +
+        "human-readable label like 'Running' / 'Stalled' / 'Input required'), unread messages " +
+        "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
+        "start of every session — it replaces the get_my_tasks + get_unread_messages + list_threads " +
+        "calls you would otherwise need to orient yourself, and includes context those tools don't " +
+        "expose. Read the project context carefully before doing any work.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const session = await client.getSessionStart(projectId);
+        return { content: [{ type: "text" as const, text: JSON.stringify(session, null, 2) }] };
+      },
+    },
+
+    {
       name: "list_all_tasks",
       description:
         "List tasks across the project, optionally filtered by status. Use this to get a full " +

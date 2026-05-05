@@ -20,6 +20,11 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     listAgents: vi.fn().mockResolvedValue([]),
     createThread: vi.fn().mockResolvedValue({ id: "thread_1", title: "test" }),
     listThreads: vi.fn().mockResolvedValue([]),
+    getSessionStart: vi.fn().mockResolvedValue({
+      agent: { id: AGENT_ID, name: "test", specialization: null, workerType: null, repoPath: null },
+      project: { id: PROJECT_ID, name: "test", context: null, defaultAssignee: null },
+      tasks: [], unreadMessages: [], openThreads: [],
+    }),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -31,9 +36,9 @@ function getHandler(tools: ReturnType<typeof buildTools>, name: string) {
 }
 
 describe("buildTools", () => {
-  it("returns all 9 tools", () => {
+  it("returns all 10 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, PROJECT_ID);
-    expect(tools).toHaveLength(9);
+    expect(tools).toHaveLength(10);
     const names = tools.map((t) => t.name);
     expect(names).toContain("get_my_tasks");
     expect(names).toContain("update_task_status");
@@ -44,6 +49,20 @@ describe("buildTools", () => {
     expect(names).toContain("create_thread");
     expect(names).toContain("conclude_plan");
     expect(names).toContain("list_all_tasks");
+    expect(names).toContain("session_start");
+  });
+});
+
+describe("session_start", () => {
+  it("calls getSessionStart with the configured projectId and returns text content", async () => {
+    const client = mockClient();
+    const handler = getHandler(buildTools(client, AGENT_ID, PROJECT_ID), "session_start");
+    const result = await (handler as Function)({});
+    expect(client.getSessionStart).toHaveBeenCalledWith(PROJECT_ID);
+    expect(result.content[0].type).toBe("text");
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.agent.id).toBe(AGENT_ID);
+    expect(parsed.project.id).toBe(PROJECT_ID);
   });
 });
 

@@ -112,4 +112,10 @@ export class ApiClient {
   concludePlan(threadId: string, summary?: string) {
     return this.request<unknown>("PUT", `/threads/${threadId}/conclude`, { summary });
   }
+
+  // Session
+  getSessionStart(projectId?: string) {
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    return this.request<unknown>("GET", `/session/start${qs}`);
+  }
 }

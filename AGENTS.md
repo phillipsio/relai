@@ -80,7 +80,7 @@ Twelve tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`,
 
 Per-agent bearer tokens. Every route — including `GET /health` — runs through the auth plugin in `onRequest` before the handler. The plugin:
 
-1. Hashes the incoming `Authorization: Bearer <token>`, looks it up in `tokens`, and on hit attaches the resolved agent to `request.agent`. Updates `lastUsedAt`.
+1. Hashes the incoming `Authorization: Bearer <token>`, looks it up in `tokens`, and on hit attaches the resolved agent to `request.agent`. Fire-and-forget bumps both `tokens.lastUsedAt` and `agents.lastSeenAt` — the latter is what the routing scheduler's "online" filter (10-min window) reads, so any authenticated request keeps the agent visible to the router, not just explicit `/heartbeat` calls.
 2. Falls back to comparing against `API_SECRET` if no token matches. This path is **deprecated** — kept so the seed scripts and any pre-token clients keep working — and logs a one-time warning. Do not introduce new code that depends on the shared secret.
 3. Whitelists `POST /auth/accept-invite` (no token required; the invite code is the credential).
 
@@ -130,7 +130,7 @@ Every published event is also persisted to the `events` table on write, so `/ses
 Runs inside the API process — no separate daemon needed. On startup and every `TASK_POLL_MS` (default 15s), the scheduler:
 
 1. Scans for `pending` tasks with `autoAssign = true` (and any project with blocked tasks for the resume-watcher), groups by project, and runs one cycle per affected project.
-2. Per task: tries **Rules** routing (`rules.ts`) — domain match, specialization match, load balancing.
+2. Per task: tries **Rules** routing (`rules.ts`) — domain match, specialization match, load balancing. Candidates are pre-filtered to "online" agents (`lastSeenAt` within 10 min); see the auth section for what bumps that field.
 3. Falls back to **Claude routing** only when rules can't resolve. Requires `ANTHROPIC_API_KEY`; defaults to `claude-haiku-4-5-20251001` (override via `ROUTING_MODEL`).
 
 The blocked-task watcher detects human replies on threads referenced by `task.metadata.blockedThreadId` and resumes those tasks back to `assigned`.

@@ -115,6 +115,11 @@ Fastify v4 with Zod validation throughout.
 - `POST /subscriptions`, `GET /subscriptions?agentId=`, `DELETE /subscriptions/:id`
 - `GET /events` — Server-Sent Events stream filtered to the caller's subscriptions; auto-subscribes the caller on message/task creation
 
+Every published event is also persisted to the `events` table on write, so `/session/start` can return what an agent missed since their last read. SSE remains the live channel; the table is history.
+
+**Session**
+- `GET /session/start?projectId=` — bundled snapshot for a fresh agent: agent + project + my open tasks + unread messages + open subscribed threads + `recentEvents` (last 50 the agent is subscribed to or directly notified about, newest first). Requires a per-agent token; the deprecated `API_SECRET` fallback is rejected.
+
 **Other**
 - `POST /routing-log`, `GET /routing-log?taskId=&assignedTo=` (audit)
 - `GET /health`

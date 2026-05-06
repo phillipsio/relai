@@ -28,7 +28,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       type: body.data.type ?? null,
     }).returning();
 
-    publish({
+    await publish(db, {
       id:         newId("evt"),
       kind:       "thread.created",
       projectId:  thread.projectId,
@@ -97,7 +97,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
 
     if (!thread) return reply.status(404).send({ error: { code: "not_found", message: "Thread not found" } });
 
-    publish({
+    await publish(db, {
       id:         newId("evt"),
       kind:       "thread.concluded",
       projectId:  thread.projectId,

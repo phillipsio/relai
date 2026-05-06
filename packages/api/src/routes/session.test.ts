@@ -144,6 +144,13 @@ describe("GET /session/start", () => {
     // Message addressed to me, not yet marked read.
     expect(data.unreadMessages.length).toBe(1);
     expect(data.unreadMessages[0].body).toBe("hello");
+
+    // Persisted events: at minimum, the message.posted I'm subscribed to.
+    // Newest first; capped at 50.
+    expect(Array.isArray(data.recentEvents)).toBe(true);
+    expect(data.recentEvents.length).toBeGreaterThanOrEqual(1);
+    expect(data.recentEvents[0].kind).toBe("message.posted");
+    expect(data.recentEvents[0].targetId).toBe(threadId);
   });
 
   it("defaults projectId to the agent's own project", async () => {

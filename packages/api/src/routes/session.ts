@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import {
-  projects, tasks, threads, messages, subscriptions,
+  projects, tasks, threads, messages, subscriptions, events,
   type Db,
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
@@ -74,6 +74,27 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       ))
       .where(and(eq(threads.projectId, projectId), eq(threads.status, "open")));
 
+    // Recent events the agent should care about: anything in this project
+    // whose primary target matches one of their subscriptions, or whose
+    // alsoNotify list names them directly. Caps at 50 newest first.
+    const recentEvents = await db
+      .select()
+      .from(events)
+      .where(sql`
+        ${events.projectId} = ${projectId}
+        AND (
+          EXISTS (
+            SELECT 1 FROM ${subscriptions}
+            WHERE ${subscriptions.agentId} = ${agent.id}
+              AND ${subscriptions.targetType}::text = ${events.targetType}
+              AND ${subscriptions.targetId} = ${events.targetId}
+          )
+          OR ${events.alsoNotify} @> ${JSON.stringify([{ targetType: "agent", targetId: agent.id }])}::jsonb
+        )
+      `)
+      .orderBy(desc(events.createdAt))
+      .limit(50);
+
     return {
       data: {
         agent: {
@@ -92,6 +113,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         tasks:          tasksWithLabels,
         unreadMessages,
         openThreads,
+        recentEvents,
       },
     };
   });

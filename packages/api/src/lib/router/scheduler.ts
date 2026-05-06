@@ -158,7 +158,7 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
 
   for (const task of stalled) {
     console.warn(`[scheduler] task ${task.id} stalled — in_progress since ${task.updatedAt.toISOString()}`);
-    publish({
+    await publish(db, {
       id:         newId("evt"),
       kind:       "task.stalled",
       projectId:  task.projectId,
@@ -260,7 +260,7 @@ export async function verifyPending(
         .returning();
 
       console.log(`[scheduler] verified ${task.id} → completed (${result.durationMs}ms)`);
-      publish({
+      await publish(db, {
         id:         newId("evt"),
         kind:       "task.verified",
         projectId:  task.projectId,
@@ -291,7 +291,7 @@ export async function verifyPending(
         .returning();
 
       console.warn(`[scheduler] verification failed for ${task.id} (exit=${result.exitCode}, timeout=${result.timedOut})`);
-      publish({
+      await publish(db, {
         id:         newId("evt"),
         kind:       "task.verification_failed",
         projectId:  task.projectId,

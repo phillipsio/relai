@@ -177,6 +177,23 @@ export const verificationLog = pgTable("verification_log", {
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ── Events ────────────────────────────────────────────────────────────────────
+
+// Persisted mirror of the in-process event bus. Written on publish so that
+// `/session/start` (and future audit/replay use cases) can show what an agent
+// missed since their last read. SSE remains the live channel; this is history.
+export const events = pgTable("events", {
+  id:         text("id").primaryKey(),
+  projectId:  text("project_id").references(() => projects.id, { onDelete: "cascade" }).notNull(),
+  kind:       text("kind").notNull(),
+  targetType: text("target_type").notNull(),  // "thread" | "task" | "agent"
+  targetId:   text("target_id").notNull(),
+  // Mirrors AppEvent.alsoNotify — secondary subjects matched during fan-out.
+  alsoNotify: jsonb("also_notify").notNull().default([]),
+  payload:    jsonb("payload").notNull().default({}),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const routingLog = pgTable("routing_log", {
   id:         text("id").primaryKey(),
   taskId:     text("task_id").references(() => tasks.id).notNull(),

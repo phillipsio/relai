@@ -66,7 +66,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     }).returning();
 
     await ensureSubscription(db, body.data.createdBy, "task", task.id);
-    publish({
+    await publish(db, {
       id:         newId("evt"),
       kind:       "task.created",
       projectId:  task.projectId,
@@ -139,7 +139,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
 
     if (!task) return reply.status(404).send({ error: { code: "not_found", message: "Task not found" } });
 
-    publish({
+    await publish(db, {
       id:         newId("evt"),
       kind:       "task.updated",
       projectId:  task.projectId,

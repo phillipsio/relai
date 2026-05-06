@@ -149,6 +149,17 @@ Tasks default to `pending` with no assignee. Three ways to get them moving:
 - **Per-task auto-routing** — `relai task create --to @auto` (or `assignedTo: "@auto"`). The scheduler picks an agent on the next tick.
 - **Project default** — set `defaultAssignee` (an agent ID, `"@auto"`, or null) when creating the project. Tasks created without an explicit assignee inherit it.
 
+### Behavior-grounded completion
+
+Add `--verify <cmd>` (and optionally `--verify-cwd <path>`) to gate the `completed` transition on a shell predicate. When set:
+
+- An agent calling `update_task_status` with `completed` (or `relai task done <id>`) sees the status rewritten to `pending_verification`.
+- The scheduler runs the predicate on the next tick (60s timeout, 8KB stdout/stderr cap; full transcript stored in `verification_log`).
+- Exit `0` promotes to `completed` and emits `task.verified`. Anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`, so the agent retries.
+- Stuck claims older than 5 min are reaped as crashed runs.
+
+Example: `relai task create -t "fix tests" -d "..." --verify "pnpm --filter @getrelai/api test"` — the task can't be self-marked done unless the test command exits 0.
+
 ## Routing
 
 The scheduler runs every 15 seconds. It picks up `pending` tasks flagged for auto-assignment (`autoAssign = true`) — set either by `assignedTo: "@auto"` on the task or by inheriting a project's `defaultAssignee = "@auto"` — and routes each:

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { eq, or, and } from "drizzle-orm";
-import { subscriptions, type Db } from "@getrelai/db";
+import { events, subscriptions, type Db } from "@getrelai/db";
 import { newId } from "./id.js";
 
 export type EventKind =
@@ -32,8 +32,25 @@ export interface AppEvent {
 export const bus = new EventEmitter();
 bus.setMaxListeners(0); // SSE clients accumulate; don't trip the warning.
 
-export function publish(event: AppEvent) {
+// Persist + emit. The bus emit is synchronous so SSE fan-out happens
+// immediately; the persistence write is awaited so callers (and tests) can
+// rely on the row being readable once publish resolves.
+export async function publish(db: Db, event: AppEvent): Promise<void> {
   bus.emit("event", event);
+  try {
+    await db.insert(events).values({
+      id:         event.id,
+      projectId:  event.projectId,
+      kind:       event.kind,
+      targetType: event.targetType,
+      targetId:   event.targetId,
+      alsoNotify: event.alsoNotify ?? [],
+      payload:    event.payload,
+      createdAt:  new Date(event.createdAt),
+    });
+  } catch (err) {
+    console.error(`[events] failed to persist ${event.id} (${event.kind}):`, err);
+  }
 }
 
 // Resolve which agents should receive an event, based on currently-stored

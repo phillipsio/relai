@@ -58,7 +58,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     }
 
     const [thread] = await db.select().from(threads).where(eq(threads.id, request.params.id));
-    publish({
+    await publish(db, {
       id:         newId("evt"),
       kind:       "message.posted",
       projectId:  thread?.projectId ?? "",

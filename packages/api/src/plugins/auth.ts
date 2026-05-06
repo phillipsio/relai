@@ -41,8 +41,13 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
         return reply.status(401).send({ error: { code: "unauthorized", message: "Invalid or revoked token" } });
       }
       request.agent = row.agent;
-      // Fire-and-forget last-used update; don't block the request.
-      void db.update(tokens).set({ lastUsedAt: new Date() }).where(eq(tokens.id, row.token.id));
+      // Fire-and-forget activity stamps; don't block the request. Bumping
+      // agents.lastSeenAt here (not just on /heartbeat) keeps the routing
+      // scheduler's "online" filter accurate for any agent driving the API
+      // — CLI, MCP, or HTTP — not only ones that send explicit heartbeats.
+      const now = new Date();
+      void db.update(tokens).set({ lastUsedAt: now }).where(eq(tokens.id, row.token.id));
+      void db.update(agents).set({ lastSeenAt: now }).where(eq(agents.id, row.agent.id));
       return;
     }
 

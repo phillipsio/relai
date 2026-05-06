@@ -119,12 +119,17 @@ export function tryRulesRouting(
   }
 
   // Rule 3: specialization match — works when task has no domain constraints,
-  // or when domain rules couldn't resolve. workingSet is already spec-filtered above
-  // so this catches the no-domain case cleanly.
+  // or when domain rules couldn't resolve. If specFiltered was empty above,
+  // workingSet is the unfiltered onlineAgents — say so in the rationale instead
+  // of claiming a specialization match that didn't happen.
+  const matchedSpec = specFiltered.length > 0;
+  const specPrefix = matchedSpec
+    ? `Specialization match: ${task.specialization}`
+    : `No online agent with specialization '${task.specialization}' — load balanced among online agents`;
   if (task.specialization && workingSet.length === 1) {
     return {
       agentId: workingSet[0].id,
-      rationale: `Specialization match: ${task.specialization}`,
+      rationale: specPrefix,
       method: "rules",
     };
   }
@@ -133,13 +138,17 @@ export function tryRulesRouting(
     if (winner) {
       return {
         agentId: winner.id,
-        rationale: `Specialization match + load balance: ${task.specialization}`,
+        rationale: matchedSpec
+          ? `Specialization match + load balance: ${task.specialization}`
+          : specPrefix,
         method: "rules",
       };
     }
     return {
       agentId: workingSet.slice().sort((a, b) => a.id.localeCompare(b.id))[0].id,
-      rationale: `Specialization match + deterministic tiebreak: ${task.specialization}`,
+      rationale: matchedSpec
+        ? `Specialization match + deterministic tiebreak: ${task.specialization}`
+        : specPrefix,
       method: "rules",
     };
   }

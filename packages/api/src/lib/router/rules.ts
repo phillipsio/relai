@@ -73,7 +73,11 @@ export function tryRulesRouting(
   if (task.specialization && workingSet.length >= 1) {
     const w = loadBalanceTiebreak(workingSet, taskCounts) ??
               workingSet.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
-    return { agentId: w.id, rationale: `Specialization match: ${task.specialization}`, method: "rules" };
+    const matchedSpec = specFiltered.length > 0;
+    const rationale = matchedSpec
+      ? `Specialization match: ${task.specialization}`
+      : `No online agent with specialization '${task.specialization}' — load balanced among online agents`;
+    return { agentId: w.id, rationale, method: "rules" };
   }
 
   if (task.domains.length === 0) {

@@ -86,6 +86,25 @@ describe("tryRulesRouting", () => {
       // No spec match → falls back to all online → deterministic tiebreak
       expect(result).toMatchObject({ agentId: "a1", method: "rules" });
     });
+
+    it("logs an honest rationale when the spec filter empties out and the spec-fallback path resolves", () => {
+      // No task domains → Rule 1/2 (domain-match) skipped.
+      // Task wants "tester" but no agent is one → specFiltered empty,
+      // workingSet falls back to all online agents, Rule 3 fires.
+      // The rationale must NOT claim "Specialization match: tester" — that
+      // would be a lie. The routing log is the only post-hoc explanation
+      // for a decision; it has to tell the truth.
+      const result = tryRulesRouting(
+        task("t1", [], "tester"),
+        [
+          agent("a1", ["typescript"], { specialization: "writer" }),
+          agent("a2", ["typescript"], { specialization: "reviewer" }),
+        ],
+      );
+      expect(result?.method).toBe("rules");
+      expect(result?.rationale).toContain("No online agent with specialization 'tester'");
+      expect(result?.rationale).not.toContain("Specialization match: tester");
+    });
   });
 
   describe("Rule 2: partial domain match", () => {

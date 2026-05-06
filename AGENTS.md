@@ -65,7 +65,7 @@ packages/
 
 ### Data model (shared/db)
 
-Nine tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`, `tasks`, `subscriptions`, `routing_log`. All IDs are prefixed strings (`proj_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`, `tok_`, `inv_`, `sub_`). Enums are Postgres-native (`pgEnum`).
+Twelve tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`, `tasks`, `subscriptions`, `notification_channels`, `verification_log`, `events`, `routing_log`. All IDs are prefixed strings (`proj_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`, `tok_`, `inv_`, `sub_`, `evt_`, `verif_`). Enums are Postgres-native (`pgEnum`).
 
 - `projects` has `defaultAssignee` (agent ID, the literal `"@auto"`, or null) — applied when a task is created without an explicit assignee
 - `agents` has `specialization`, `workerType` (`claude` | `copilot` | `cursor` | `windsurf` | `gemini` | `gpt` | `mcp` | `human`), `repoPath`
@@ -74,6 +74,7 @@ Nine tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`, `
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`
 - `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional `verifyCommand` / `verifyCwd` predicate. When `verifyCommand` is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the shell predicate (60s timeout, 8KB stdout/stderr cap, written to `verification_log`). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. Stuck claims older than 5 min are reaped as crashed runs.
 - `subscriptions` records which agents want event notifications for a given thread/task/agent target
+- `events` is the persisted mirror of the in-process bus; written on every `publish()` so `/session/start` can show what an agent missed. SSE stays live; this table is history.
 
 ### Auth (packages/api/src/plugins/auth.ts)
 
@@ -138,8 +139,8 @@ The `scheduler` option on `buildServer()` is `false` in tests to avoid backgroun
 
 ### MCP server (packages/mcp-server)
 
-Nine tools with model-agnostic descriptions (work with any MCP-compatible client):
-`get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`.
+Ten tools with model-agnostic descriptions (work with any MCP-compatible client):
+`get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`.
 
 Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
@@ -183,7 +184,7 @@ The `--to <name>` flag in both `task create` and `send` resolves through `packag
 
 Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the project root (project-level) or `~/.claude.json` (global). Project-level is preferred — it keeps each project's agent identity isolated. The snippet wires the per-agent token into `API_SECRET` for the MCP server, which sends it as the bearer credential.
 
-**Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with nine tools.
+**Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with ten tools.
 
 **Repo path**: Relai stores `repoPath` on the agent record and shows it in setup instructions, but cannot enforce it for interactive sessions. Always start your agent session from the correct directory — the agent will work in whatever directory it was launched from.
 
@@ -195,12 +196,17 @@ Currently tested:
 - `packages/api/src/routes/api.test.ts` — full route coverage with `app.inject()` against a real Postgres
 - `packages/api/src/routes/auth.test.ts` — token resolution, deprecated-secret fallback, whitelist
 - `packages/api/src/routes/invites.test.ts` — invite create + accept + expiry
-- `packages/api/src/routes/events.test.ts` — SSE subscription fan-out
+- `packages/api/src/routes/events.test.ts` — SSE subscription fan-out + persisted-event side effects
+- `packages/api/src/routes/session.test.ts` — `/session/start` bundle (tasks, unread, threads, recentEvents)
+- `packages/api/src/routes/notification-channels.test.ts` — webhook fan-out + circuit breaker
+- `packages/api/src/lib/router/scheduler.test.ts` — stall detection
+- `packages/api/src/lib/router/verify-scheduler.test.ts` — verification predicate execution and stuck-claim recovery
+- `packages/api/src/lib/verify.test.ts` — predicate executor (timeout, stdout/stderr cap)
 - `packages/orchestrator/src/router/rules.test.ts` — rules-based routing logic
 - `packages/orchestrator/src/message-loop.test.ts` — handoff/finding/decision/question/escalation handling
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~163 tests at last count. When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~200 tests across the workspace (api alone: 103). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 

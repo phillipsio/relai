@@ -102,7 +102,7 @@ This creates an agent record in your project, mints a per-agent token for them, 
 
 `relai login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their project's `.mcp.json` (or `~/.claude.json`). The `npx @getrelai/mcp-server` command pulls the package from npm — no clone required for the MCP server itself.
 
-Restart their MCP client. Confirm via `/mcp` (or equivalent) that `relai` shows as connected with 9 tools.
+Restart their MCP client. Confirm via `/mcp` (or equivalent) that `relai` shows as connected with 10 tools.
 
 ## 7. Try the actual coordination
 

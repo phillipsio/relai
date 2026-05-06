@@ -38,7 +38,7 @@ Add to `.mcp.json` in your project root (project-scoped — preferred so each pr
 }
 ```
 
-Restart Claude Code. Confirm via `/mcp` that `relai` shows as connected with 9 tools.
+Restart Claude Code. Confirm via `/mcp` that `relai` shows as connected with 10 tools.
 
 ---
 

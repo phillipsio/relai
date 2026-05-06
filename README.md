@@ -182,6 +182,7 @@ Set `ANTHROPIC_API_KEY` to enable Claude fallback. Without it, unresolvable task
 | `create_thread`       | Create a thread or planning discussion                      |
 | `list_all_tasks`      | View all project tasks                                      |
 | `conclude_plan`       | Mark a planning discussion concluded                        |
+| `session_start`       | Bundled "where am I" snapshot for a fresh session           |
 
 ## Environment variables
 

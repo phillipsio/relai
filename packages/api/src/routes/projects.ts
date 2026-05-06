@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, inArray } from "drizzle-orm";
-import { projects, agents, threads, messages, tasks, routingLog } from "@getrelai/db";
+import { projects, agents, threads, messages, tasks, routingLog, verificationLog, invites } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import type { Db } from "@getrelai/db";
 
@@ -74,9 +74,15 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     await db.delete(threads).where(eq(threads.projectId, id));
 
     const taskIds = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.projectId, id))).map((t) => t.id);
-    if (taskIds.length > 0) await db.delete(routingLog).where(inArray(routingLog.taskId, taskIds));
+    if (taskIds.length > 0) {
+      await db.delete(routingLog).where(inArray(routingLog.taskId, taskIds));
+      await db.delete(verificationLog).where(inArray(verificationLog.taskId, taskIds));
+    }
     await db.delete(tasks).where(eq(tasks.projectId, id));
 
+    // invites.createdBy → agents.id has no FK cascade, so invites must be cleared
+    // before agents to avoid blocking the agent delete.
+    await db.delete(invites).where(eq(invites.projectId, id));
     await db.delete(agents).where(eq(agents.projectId, id));
     await db.delete(projects).where(eq(projects.id, id));
 

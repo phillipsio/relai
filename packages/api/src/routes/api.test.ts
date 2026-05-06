@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync } from "node:child_process";
 import { buildServer } from "../server.js";
 import type { FastifyInstance } from "fastify";
 
@@ -36,23 +35,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Clean up via psql — avoids importing drizzle-orm which is not a direct dep of this package.
   if (projectId) {
-    try {
-      execSync(
-        `psql "${DB_URL}" -c "` +
-        `DELETE FROM routing_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM verification_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM tasks WHERE project_id = '${projectId}'; ` +
-        `DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM threads WHERE project_id = '${projectId}'; ` +
-        `DELETE FROM agents WHERE project_id = '${projectId}'; ` +
-        `DELETE FROM projects WHERE id = '${projectId}';"`,
-        { stdio: "pipe" },
-      );
-    } catch {
-      // Best-effort — dev DB; leftover rows are harmless.
-    }
+    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: AUTH });
   }
   await app?.close();
 });

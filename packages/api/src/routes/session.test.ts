@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync } from "node:child_process";
 import { buildServer } from "../server.js";
 import type { FastifyInstance } from "fastify";
 
@@ -100,19 +99,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const pid of [projectId, otherProjectId]) {
     if (!pid) continue;
-    try {
-      execSync(
-        `psql "${DB_URL}" -c "` +
-        `DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE project_id = '${pid}'); ` +
-        `DELETE FROM threads WHERE project_id = '${pid}'; ` +
-        `DELETE FROM tasks WHERE project_id = '${pid}'; ` +
-        `DELETE FROM subscriptions WHERE agent_id IN (SELECT id FROM agents WHERE project_id = '${pid}'); ` +
-        `DELETE FROM tokens WHERE agent_id IN (SELECT id FROM agents WHERE project_id = '${pid}'); ` +
-        `DELETE FROM agents WHERE project_id = '${pid}'; ` +
-        `DELETE FROM projects WHERE id = '${pid}';"`,
-        { stdio: "pipe" },
-      );
-    } catch { /* best-effort */ }
+    await app.inject({ method: "DELETE", url: `/projects/${pid}`, headers: ADMIN });
   }
   await app?.close();
 });

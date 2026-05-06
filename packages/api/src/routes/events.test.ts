@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync } from "node:child_process";
 import { buildServer } from "../server.js";
 import { bus, resolveSubscribers, type AppEvent } from "../lib/events.js";
 import { createDb, subscriptions } from "@getrelai/db";
@@ -44,20 +43,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (projectId) {
-    try {
-      execSync(
-        `psql "${DB_URL}" -c "` +
-        `DELETE FROM subscriptions WHERE agent_id IN (SELECT id FROM agents WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM tokens WHERE agent_id IN (SELECT id FROM agents WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM threads WHERE project_id = '${projectId}'; ` +
-        `DELETE FROM routing_log WHERE task_id IN (SELECT id FROM tasks WHERE project_id = '${projectId}'); ` +
-        `DELETE FROM tasks WHERE project_id = '${projectId}'; ` +
-        `DELETE FROM agents WHERE project_id = '${projectId}'; ` +
-        `DELETE FROM projects WHERE id = '${projectId}';"`,
-        { stdio: "pipe" },
-      );
-    } catch { /* best-effort */ }
+    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
   }
   await app?.close();
 });

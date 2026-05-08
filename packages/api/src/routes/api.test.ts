@@ -447,6 +447,70 @@ describe("PUT /tasks/:id", () => {
     expect(tooLong.statusCode).toBe(400);
   });
 
+  it("accepts kind=file_exists with verifyPath", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId,
+        title: "build artifact", description: "must produce dist/index.js",
+        verifyKind: "file_exists",
+        verifyPath: "dist/index.js",
+        verifyCwd:  "/tmp",
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const data = create.json().data;
+    expect(data.verifyKind).toBe("file_exists");
+    expect(data.verifyPath).toBe("dist/index.js");
+
+    // Completion gate fires for file_exists too.
+    const done = await app.inject({
+      method: "PUT", url: `/tasks/${data.id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(done.json().data.status).toBe("pending_verification");
+  });
+
+  it("rejects kind=file_exists without verifyPath", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyKind: "file_exists",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects kind=shell without verifyCommand", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyKind: "shell",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects kind=file_exists mixed with verifyCommand", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyKind:    "file_exists",
+        verifyPath:    "/tmp/x",
+        verifyCommand: "echo no",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("leaves completed alone when no verifyCommand", async () => {
     const create = await app.inject({
       method: "POST", url: "/tasks",

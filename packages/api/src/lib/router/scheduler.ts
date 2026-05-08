@@ -6,6 +6,7 @@ import { newId } from "../id.js";
 import { publish } from "../events.js";
 import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
+import { runFileExistsVerification } from "../verify-file-exists.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
 
@@ -210,7 +211,14 @@ export async function verifyPending(
       .returning();
     if (!task) continue;
 
-    if (!task.verifyCommand) {
+    // Resolve effective predicate. Legacy rows (null kind + verifyCommand)
+    // behave as kind="shell".
+    const kind = task.verifyKind ?? (task.verifyCommand ? "shell" : null);
+    const misconfigured =
+      (kind === "shell"       && !task.verifyCommand) ||
+      (kind === "file_exists" && !task.verifyPath)    ||
+      kind === null;
+    if (misconfigured) {
       // Misconfigured row — clear claim and revert to assigned.
       await db.update(tasks)
         .set({ status: "assigned", verifyingAt: null, updatedAt: new Date() })
@@ -229,7 +237,11 @@ export async function verifyPending(
       };
     } else {
       try {
-        result = await exec(task.verifyCommand, task.verifyCwd, task.verifyTimeoutMs ?? undefined);
+        if (kind === "file_exists") {
+          result = await runFileExistsVerification(task.verifyPath!, task.verifyCwd);
+        } else {
+          result = await exec(task.verifyCommand!, task.verifyCwd, task.verifyTimeoutMs ?? undefined);
+        }
       } catch (err) {
         result = {
           exitCode: null,
@@ -241,10 +253,16 @@ export async function verifyPending(
       }
     }
 
+    // Synthesize a human-readable command label for the log row. file_exists
+    // doesn't have a shell command — record the predicate shape instead.
+    const logCommand = kind === "file_exists"
+      ? `file_exists:${task.verifyPath}`
+      : task.verifyCommand!;
+
     const [logRow] = await db.insert(verificationLog).values({
       id:         newId("verif"),
       taskId:     task.id,
-      command:    task.verifyCommand,
+      command:    logCommand,
       exitCode:   result.exitCode,
       stdout:     result.stdout,
       stderr:     result.stderr,

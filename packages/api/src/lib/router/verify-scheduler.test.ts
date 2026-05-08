@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildServer } from "../../server.js";
 import { verifyPending } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
@@ -137,6 +140,77 @@ describe("verifyPending", () => {
     const [d] = await db.select().from(tasks).where(eq(tasks.id, defaultTaskId));
     expect(c.status).toBe("completed");
     expect(d.status).toBe("completed");
+  });
+
+  it("dispatches kind=file_exists without invoking the shell exec; passes when the file exists", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "relai-fxv-sched-"));
+    try {
+      await writeFile(join(dir, "artifact.txt"), "ok");
+
+      const create = await app.inject({
+        method: "POST", url: "/tasks", headers: ADMIN,
+        body: JSON.stringify({
+          projectId, createdBy: agentId, title: "fx", description: "x",
+          assignedTo: agentId,
+          verifyKind: "file_exists",
+          verifyPath: "artifact.txt",
+          verifyCwd:  dir,
+        }),
+      });
+      const taskId = create.json().data.id;
+      await app.inject({
+        method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+        body: JSON.stringify({ status: "completed" }),
+      });
+
+      const db = createDb(DB_URL);
+      let shellExecCalled = false;
+      await verifyPending(db, projectId, async () => {
+        shellExecCalled = true;
+        return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
+      });
+
+      expect(shellExecCalled).toBe(false);
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("completed");
+      const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+      expect(logs[0].command).toBe(`file_exists:artifact.txt`);
+      expect(logs[0].exitCode).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("kind=file_exists fails verification when the file is missing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "relai-fxv-miss-"));
+    try {
+      const create = await app.inject({
+        method: "POST", url: "/tasks", headers: ADMIN,
+        body: JSON.stringify({
+          projectId, createdBy: agentId, title: "fx-miss", description: "x",
+          assignedTo: agentId,
+          verifyKind: "file_exists",
+          verifyPath: "ghost.txt",
+          verifyCwd:  dir,
+        }),
+      });
+      const taskId = create.json().data.id;
+      await app.inject({
+        method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+        body: JSON.stringify({ status: "completed" }),
+      });
+
+      const db = createDb(DB_URL);
+      await verifyPending(db, projectId);
+
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("assigned");
+      const meta = row.metadata as Record<string, unknown>;
+      const last = meta.lastVerification as { exitCode: number };
+      expect(last.exitCode).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("recovers stuck claims older than the threshold", async () => {

@@ -18,16 +18,35 @@ const createSchema = z.object({
   domains:        z.array(z.string()).default([]),
   specialization: z.string().optional(),
   metadata:       z.record(z.unknown()).default({}),
-  // Optional shell predicate. When set, the `completed` transition is gated:
-  // the API rewrites status to `pending_verification` and the scheduler runs
-  // the command. Exit 0 promotes to `completed`; anything else returns to
-  // `assigned`. The predicate is fixed at create time and cannot be changed.
+  // Optional verification predicate. When set, the `completed` transition is
+  // gated: the API rewrites status to `pending_verification` and the
+  // scheduler runs the predicate. Exit 0 promotes to `completed`; anything
+  // else returns to `assigned`. The predicate is fixed at create time.
+  // Two kinds:
+  //   - "shell"       — runs `verifyCommand` (legacy default; kept for
+  //                     back-compat when only `verifyCommand` is sent).
+  //   - "file_exists" — checks `verifyPath`; no shell exec.
+  verifyKind:      z.enum(["shell", "file_exists"]).optional(),
   verifyCommand:   z.string().min(1).optional(),
   verifyCwd:       z.string().optional(),
+  verifyPath:      z.string().min(1).optional(),
   // Per-task override for the predicate timeout. Bounded at [1s, 10min];
   // null/undefined falls back to the executor default of 60s.
   verifyTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
-});
+})
+.refine(
+  (v) => {
+    // Resolve effective kind: explicit verifyKind wins; otherwise infer from
+    // verifyCommand (legacy back-compat) or none.
+    if (v.verifyKind === "shell" && !v.verifyCommand) return false;
+    if (v.verifyKind === "file_exists" && !v.verifyPath) return false;
+    // file_exists never uses verifyCommand; reject mixed config to avoid
+    // ambiguity later if someone reads the row back.
+    if (v.verifyKind === "file_exists" && v.verifyCommand) return false;
+    return true;
+  },
+  { message: "verify config mismatch: kind=shell requires verifyCommand; kind=file_exists requires verifyPath and forbids verifyCommand" },
+);
 
 const updateSchema = z.object({
   title:          z.string().min(1).optional(),
@@ -114,20 +133,28 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const body = updateSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    // Verification gate: if the task has a verifyCommand and the caller is
-    // trying to mark it completed (and it isn't already verifying / completed),
-    // rewrite the transition to pending_verification. The scheduler will run
-    // the predicate on the next tick.
+    // Verification gate: if the task has any verification predicate configured
+    // and the caller is trying to mark it completed (and it isn't already
+    // verifying / completed), rewrite the transition to pending_verification.
+    // The scheduler will run the predicate on the next tick.
     const updates: Record<string, unknown> = { ...body.data };
     if (updates.status === "completed") {
       const [existing] = await db
-        .select({ verifyCommand: tasks.verifyCommand, status: tasks.status })
+        .select({
+          verifyKind:    tasks.verifyKind,
+          verifyCommand: tasks.verifyCommand,
+          verifyPath:    tasks.verifyPath,
+          status:        tasks.status,
+        })
         .from(tasks)
         .where(eq(tasks.id, request.params.id));
+      const hasVerify =
+        existing?.verifyKind === "file_exists" ? !!existing.verifyPath
+        : !!existing?.verifyCommand;  // shell (or legacy null+command)
       if (
-        existing?.verifyCommand &&
-        existing.status !== "pending_verification" &&
-        existing.status !== "completed"
+        hasVerify &&
+        existing!.status !== "pending_verification" &&
+        existing!.status !== "completed"
       ) {
         updates.status = "pending_verification";
       }

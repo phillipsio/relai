@@ -6,10 +6,12 @@
  * Usage:
  *   API_SECRET=changeme tsx scripts/seed.ts [project-name] [agent-name] [preset]
  *
- * Presets:
- *   claude    (default) — tier-2 implementer; writes code, handles escalations
- *   copilot              — tier-1 worker; review, docs, tickets, PRs
- *   architect / writer / reviewer / tester / devops — specialization aliases
+ * Presets (role-based; pick by what you want the agent to do, not the model):
+ *   architect (default) — tier-2; designs systems, takes ambiguous work
+ *   writer              — tier-2; implements features end-to-end
+ *   reviewer            — tier-1; reviews PRs and code quality
+ *   tester              — tier-1; writes and maintains tests
+ *   devops              — tier-1; CI, infra, deployments
  *
  * Requires the API server to be running (pnpm --filter @getrelai/api dev).
  */
@@ -58,8 +60,8 @@ async function main() {
   }
 
   const projectName = process.argv[2] ?? "my-project";
-  const agentName   = process.argv[3] ?? "claude";
-  const presetKey   = process.argv[4] ?? "claude";
+  const agentName   = process.argv[3] ?? "lead";
+  const presetKey   = process.argv[4] ?? "architect";
 
   const preset = ROLE_PRESETS[presetKey];
   if (!preset) {

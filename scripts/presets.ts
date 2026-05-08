@@ -1,24 +1,19 @@
+/**
+ * Role presets used by seed scripts. Each preset bundles a default
+ * `specialization`, `domains`, and `tier` for a common agent role.
+ *
+ * Tier is operator-defined seniority for escalation routing — independent
+ * of the agent's model or runtime (`workerType`). Tier 2 takes escalations
+ * and ambiguous work; tier 1 follows a clearer brief. Pick the preset that
+ * matches the *role* you want the agent to play; the model running it is
+ * orthogonal.
+ */
 export const ROLE_PRESETS: Record<string, {
   specialization: string;
   domains: string[];
   role: "worker";
   tier?: number;
 }> = {
-  // Primary agents
-  claude: {
-    role: "worker",
-    specialization: "architect",
-    tier: 2,
-    domains: ["architecture", "design", "implementation", "planning"],
-  },
-  copilot: {
-    role: "worker",
-    specialization: "reviewer",
-    tier: 1,
-    domains: ["review", "docs", "tickets", "pr", "code-quality"],
-  },
-
-  // Specialization aliases
   architect: {
     role: "worker",
     specialization: "architect",

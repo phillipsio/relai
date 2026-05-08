@@ -20,7 +20,7 @@ DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
 API_SECRET=changeme tsx scripts/seed.ts [project-name] [agent-name] [preset]
 # Add more agents to an existing project
 API_SECRET=changeme tsx scripts/add-agent.ts <project-id> <agent-name> <preset>
-# Presets: claude, copilot, architect, writer, reviewer, tester, devops
+# Presets: architect, writer, reviewer, tester, devops (role-based, model-agnostic)
 
 # Start individual packages (each in its own terminal)
 pnpm --filter @getrelai/api dev          # REST API → :3010
@@ -68,7 +68,7 @@ packages/
 Twelve tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`, `tasks`, `subscriptions`, `notification_channels`, `verification_log`, `events`, `routing_log`. All IDs are prefixed strings (`proj_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`, `tok_`, `inv_`, `sub_`, `evt_`, `verif_`). Enums are Postgres-native (`pgEnum`).
 
 - `projects` has `defaultAssignee` (agent ID, the literal `"@auto"`, or null) — applied when a task is created without an explicit assignee
-- `agents` has `specialization`, `workerType` (`claude` | `copilot` | `cursor` | `windsurf` | `gemini` | `gpt` | `mcp` | `human`), `repoPath`
+- `agents` has `specialization`, `tier` (operator-defined seniority for escalation routing — 1=clear-brief, 2=takes-escalations, null=untiered; orthogonal to model), `workerType` (`claude` | `copilot` | `cursor` | `windsurf` | `gemini` | `gpt` | `mcp` | `human`), `repoPath`
 - `tokens` is the per-agent bearer-credential store: hashed token, `lastUsedAt`, `revokedAt`. Issued at agent registration and via `POST /agents/:id/tokens`
 - `invites` is the project-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`

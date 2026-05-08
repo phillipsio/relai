@@ -42,9 +42,15 @@ export const agents = pgTable("agents", {
   name:           text("name").notNull(),
   role:           agentRoleEnum("role").notNull(),
   specialization: text("specialization"),   // e.g. "architect", "writer", "reviewer" — user-defined, nullable
-  tier:           integer("tier"),           // 1 = junior (Copilot), 2 = senior (Claude); null = untiered
+  // Coarse seniority for escalation routing — operator-defined, model-agnostic.
+  // 1 = follows a clear brief; 2 = takes escalations / handles ambiguity; null = untiered.
+  // The orchestrator's escalation path filters on tier === 2 to find seniors.
+  tier:           integer("tier"),
   domains:        text("domains").array().notNull().default([]),
-  workerType:     text("worker_type"),  // "claude" | "copilot" | "human" | null (lead/orchestrator)
+  // "claude" | "copilot" | "cursor" | "windsurf" | "gemini" | "gpt" | "mcp" | "human" | null.
+  // Identifies the agent's runtime, independent of seniority (`tier`) or
+  // function (`specialization`).
+  workerType:     text("worker_type"),
   repoPath:       text("repo_path"),
   connectedAt:    timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
   lastSeenAt:     timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),

@@ -64,6 +64,21 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const body = createSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    // Authoring a shell predicate runs arbitrary commands inside the API
+    // process. Restrict to orchestrators and the deprecated admin-secret
+    // path. Structured kinds (file_exists, thread_concluded) are unrestricted.
+    const authorsShell =
+      body.data.verifyKind === "shell" ||
+      (body.data.verifyKind === undefined && !!body.data.verifyCommand);
+    if (authorsShell && request.agent && request.agent.role !== "orchestrator") {
+      return reply.status(403).send({
+        error: {
+          code: "forbidden",
+          message: "Only orchestrator agents may author shell verifyCommand. Use verifyKind=file_exists or verifyKind=thread_concluded for structured predicates.",
+        },
+      });
+    }
+
     // Resolve effective assignee: explicit value wins, else the project's default.
     let effective = body.data.assignedTo;
     if (effective === undefined) {

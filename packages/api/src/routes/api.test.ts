@@ -540,6 +540,59 @@ describe("PUT /tasks/:id", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("workers cannot author shell verifyCommand (403); orchestrators can", async () => {
+    // Register an orchestrator and a worker, each with their own token.
+    const orchRes = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "lead", role: "orchestrator", specialization: "architect" }),
+    });
+    const orchToken = orchRes.json().token as string;
+    const orchId    = orchRes.json().data.id as string;
+
+    const workerRes = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "shell-worker", role: "worker", specialization: "tester" }),
+    });
+    const workerToken = workerRes.json().token as string;
+    const workerId    = workerRes.json().data.id as string;
+
+    // Worker tries to author a shell verifyCommand → 403.
+    const denied = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: workerId, title: "x", description: "x",
+        verifyCommand: "rm -rf /",
+      }),
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe("forbidden");
+
+    // Worker can still author structured kinds (no shell exec).
+    const okFx = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: workerId, title: "fx", description: "x",
+        verifyKind: "file_exists", verifyPath: "/tmp/x",
+      }),
+    });
+    expect(okFx.statusCode).toBe(201);
+
+    // Orchestrator may author shell verifyCommand.
+    const okShell = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: orchId, title: "shell", description: "x",
+        verifyCommand: "true",
+      }),
+    });
+    expect(okShell.statusCode).toBe(201);
+  });
+
   it("rejects kind=file_exists mixed with verifyCommand", async () => {
     const res = await app.inject({
       method: "POST", url: "/tasks",

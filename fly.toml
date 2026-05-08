@@ -1,0 +1,54 @@
+# Fly.io config for the Relai API.
+#
+# Bootstrap:
+#   fly launch --no-deploy --copy-config       # uses this file as a template
+#   fly postgres create --name relai-db        # managed Postgres
+#   fly postgres attach relai-db               # sets DATABASE_URL secret
+#   fly secrets set API_SECRET=$(openssl rand -hex 32)
+#   fly secrets set ANTHROPIC_API_KEY=...      # optional, enables Claude routing
+#   fly deploy
+#
+# Replace `app` with a unique name before first launch.
+
+app = "relai-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Run drizzle-kit push before each deploy. This is safe for additive schema
+# changes; renames must be applied manually first (see AGENTS.md).
+[deploy]
+  release_command = "pnpm --filter @getrelai/db db:push"
+
+[env]
+  API_PORT = "3010"
+  TASK_POLL_MS = "15000"
+
+[http_service]
+  internal_port = 3010
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0   # demo-friendly: scales to zero when idle
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 100
+
+# /health is auth-gated, so a bare HTTP probe would 401. A TCP check is enough
+# to know the process is up. Swap for an HTTP probe once an unauthed /livez
+# route exists.
+[[services]]
+  internal_port = 3010
+  protocol = "tcp"
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

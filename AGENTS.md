@@ -247,6 +247,12 @@ Then open http://localhost:5173, enter the API URL and secret.
 
 For a coworker joining an existing project, see `docs/two-person-test.md`: the host runs `relai project invite`, the coworker runs `relai login --invite <code>`.
 
+## Deploy
+
+The repo ships a production `Dockerfile` + `fly.toml` targeting Fly.io. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). Schema migrations run automatically via the `[deploy] release_command` in `fly.toml` (`pnpm --filter @getrelai/db db:push`); column renames must still be applied manually via raw SQL first. See `docs/deploy-fly.md` for the full walkthrough.
+
+`/health` is auth-gated, so the Fly health probe is a TCP check today. The web dashboard isn't deployed by this config — host it separately or skip for CLI/MCP-only setups.
+
 ## Critical rules
 
 - **All routes require auth** — there is no public endpoint except `POST /auth/accept-invite` (whitelisted). Even `GET /health` requires a valid bearer token (per-agent token or the deprecated `API_SECRET` fallback).

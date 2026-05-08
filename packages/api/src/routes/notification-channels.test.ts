@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
+import { createHmac } from "node:crypto";
 import { buildServer } from "../server.js";
 import { deliver } from "../lib/notifications.js";
 import { createDb, notificationChannels } from "@getrelai/db";
@@ -68,7 +69,24 @@ describe("notification-channels CRUD", () => {
     expect(data.kind).toBe("webhook");
     expect(data.disabledAt).toBeNull();
     expect(data.failureCount).toBe(0);
+    expect(data.secret).toMatch(/^whsec_[0-9a-f]{64}$/);
     channelId = data.id;
+  });
+
+  it("PUT regenerateSecret rotates the HMAC secret", async () => {
+    const before = await app.inject({
+      method: "GET", url: `/notification-channels?agentId=${agentAId}`, headers: ADMIN,
+    });
+    const original = (before.json().data as Array<{ id: string; secret: string }>).find((r) => r.id === channelId)!;
+
+    const res = await app.inject({
+      method: "PUT", url: `/notification-channels/${channelId}`, headers: ADMIN,
+      body: JSON.stringify({ regenerateSecret: true }),
+    });
+    expect(res.statusCode).toBe(200);
+    const rotated = res.json().data;
+    expect(rotated.secret).toMatch(/^whsec_[0-9a-f]{64}$/);
+    expect(rotated.secret).not.toBe(original.secret);
   });
 
   it("rejects invalid URL", async () => {
@@ -179,7 +197,7 @@ describe("webhook delivery", () => {
     fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
     const db = createDb(DB_URL);
 
-    await deliver(db, event());
+    await deliver(db, event(), { retries: 0 });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -193,11 +211,91 @@ describe("webhook delivery", () => {
     expect(row.failureCount).toBe(0);
   });
 
+  it("signs the request with HMAC-SHA256 over `${timestamp}.${body}`", async () => {
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+    const db = createDb(DB_URL);
+
+    await deliver(db, event(), { retries: 0 });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    const body    = (init as RequestInit).body    as string;
+
+    expect(headers["X-Relai-Timestamp"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(headers["X-Relai-Signature"]).toMatch(/^sha256=[0-9a-f]{64}$/);
+
+    const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
+    const expected = createHmac("sha256", row.secret!).update(`${headers["X-Relai-Timestamp"]}.${body}`).digest("hex");
+    expect(headers["X-Relai-Signature"]).toBe(`sha256=${expected}`);
+  });
+
+  it("lazy-generates a secret for legacy channels with secret=null", async () => {
+    const db = createDb(DB_URL);
+    await db.update(notificationChannels)
+      .set({ secret: null })
+      .where(eq(notificationChannels.id, channelId));
+
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+    await deliver(db, event(), { retries: 0 });
+
+    const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
+    expect(row.secret).toMatch(/^whsec_[0-9a-f]{64}$/);
+  });
+
+  it("retries on 5xx with exponential backoff (then counts as one failure)", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("err", { status: 500 }))
+      .mockResolvedValueOnce(new Response("err", { status: 503 }))
+      .mockResolvedValueOnce(new Response("ok",  { status: 200 }));
+    const db = createDb(DB_URL);
+
+    await deliver(db, event(), { retries: 2, baseDelayMs: 1 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
+    expect(row.failureCount).toBe(0);
+    expect(row.lastDeliveredAt).not.toBeNull();
+  });
+
+  it("retries on 429 (rate limit)", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("slow", { status: 429 }))
+      .mockResolvedValueOnce(new Response("ok",   { status: 200 }));
+    const db = createDb(DB_URL);
+
+    await deliver(db, event(), { retries: 2, baseDelayMs: 1 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry on 4xx other than 429", async () => {
+    fetchMock.mockResolvedValue(new Response("nope", { status: 404 }));
+    const db = createDb(DB_URL);
+
+    await deliver(db, event(), { retries: 2, baseDelayMs: 1 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
+    expect(row.failureCount).toBe(1);
+    expect(row.lastError).toContain("404");
+  });
+
+  it("retries on network errors", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    const db = createDb(DB_URL);
+
+    await deliver(db, event(), { retries: 2, baseDelayMs: 1 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("records failure and increments failureCount on non-2xx", async () => {
     fetchMock.mockResolvedValue(new Response("nope", { status: 500 }));
     const db = createDb(DB_URL);
 
-    await deliver(db, event());
+    await deliver(db, event(), { retries: 0 });
 
     const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
     expect(row.failureCount).toBe(1);
@@ -209,7 +307,7 @@ describe("webhook delivery", () => {
     fetchMock.mockResolvedValue(new Response("nope", { status: 500 }));
     const db = createDb(DB_URL);
 
-    for (let i = 0; i < 5; i++) await deliver(db, event());
+    for (let i = 0; i < 5; i++) await deliver(db, event(), { retries: 0 });
 
     const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
     expect(row.failureCount).toBe(5);
@@ -223,7 +321,7 @@ describe("webhook delivery", () => {
       .where(eq(notificationChannels.id, channelId));
 
     fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
-    await deliver(db, event());
+    await deliver(db, event(), { retries: 0 });
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -235,7 +333,7 @@ describe("webhook delivery", () => {
       .where(eq(notificationChannels.id, channelId));
 
     fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
-    await deliver(db, event());
+    await deliver(db, event(), { retries: 0 });
 
     const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
     expect(row.failureCount).toBe(0);

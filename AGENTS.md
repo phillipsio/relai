@@ -198,7 +198,7 @@ Currently tested:
 - `packages/api/src/routes/invites.test.ts` — invite create + accept + expiry
 - `packages/api/src/routes/events.test.ts` — SSE subscription fan-out + persisted-event side effects
 - `packages/api/src/routes/session.test.ts` — `/session/start` bundle (tasks, unread, threads, recentEvents)
-- `packages/api/src/routes/notification-channels.test.ts` — webhook fan-out + circuit breaker
+- `packages/api/src/routes/notification-channels.test.ts` — webhook fan-out, HMAC signing, retry/backoff, circuit breaker
 - `packages/api/src/lib/router/scheduler.test.ts` — stall detection
 - `packages/api/src/lib/router/verify-scheduler.test.ts` — verification predicate execution and stuck-claim recovery
 - `packages/api/src/lib/verify.test.ts` — predicate executor (timeout, stdout/stderr cap)
@@ -206,7 +206,7 @@ Currently tested:
 - `packages/orchestrator/src/message-loop.test.ts` — handoff/finding/decision/question/escalation handling
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~200 tests across the workspace (api alone: 103). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~206 tests across the workspace (api alone: 110). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 

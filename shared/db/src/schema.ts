@@ -153,6 +153,11 @@ export const notificationChannels = pgTable("notification_channels", {
   kind:            notificationChannelKindEnum("kind").notNull(),
   // Shape depends on kind. For "webhook": { url: string, headers?: Record<string, string> }
   config:          jsonb("config").notNull(),
+  // Per-channel HMAC secret. Used to sign outgoing webhook deliveries so the
+  // receiver can verify the request originated from this Relai instance.
+  // Lazy-generated on first delivery for any row created before this field
+  // existed; auto-generated for new rows.
+  secret:          text("secret"),
   // Cumulative metrics + last error, used by the circuit breaker.
   failureCount:    integer("failure_count").notNull().default(0),
   lastDeliveredAt: timestamp("last_delivered_at", { withTimezone: true }),

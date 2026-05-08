@@ -213,6 +213,80 @@ describe("verifyPending", () => {
     }
   });
 
+  it("kind=thread_concluded passes when the referenced thread is concluded", async () => {
+    const t = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ projectId, title: "plan" }),
+    });
+    const threadId = t.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "tc", description: "x",
+        assignedTo: agentId,
+        verifyKind:     "thread_concluded",
+        verifyThreadId: threadId,
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    // Conclude the thread.
+    await app.inject({
+      method: "PUT", url: `/threads/${threadId}/conclude`, headers: ADMIN,
+      body: JSON.stringify({ summary: "all good" }),
+    });
+
+    const db = createDb(DB_URL);
+    let shellExecCalled = false;
+    await verifyPending(db, projectId, async () => {
+      shellExecCalled = true;
+      return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
+    });
+
+    expect(shellExecCalled).toBe(false);
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("completed");
+    const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+    expect(logs[0].command).toBe(`thread_concluded:${threadId}`);
+    expect(logs[0].exitCode).toBe(0);
+  });
+
+  it("kind=thread_concluded fails when the thread is still open", async () => {
+    const t = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ projectId, title: "open-plan" }),
+    });
+    const threadId = t.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "tc-open", description: "x",
+        assignedTo: agentId,
+        verifyKind:     "thread_concluded",
+        verifyThreadId: threadId,
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+    await verifyPending(db, projectId);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("assigned");
+    const meta = row.metadata as Record<string, unknown>;
+    expect((meta.lastVerification as { exitCode: number }).exitCode).toBe(1);
+  });
+
   it("recovers stuck claims older than the threshold", async () => {
     const taskId = await makePendingVerificationTask("noop-stuck");
     const db = createDb(DB_URL);

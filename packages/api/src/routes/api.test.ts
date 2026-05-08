@@ -497,6 +497,49 @@ describe("PUT /tasks/:id", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("accepts kind=thread_concluded with verifyThreadId", async () => {
+    const t = await app.inject({
+      method: "POST", url: "/threads",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, title: "plan-thread" }),
+    });
+    const threadId = t.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId,
+        title: "ship it", description: "after the plan concludes",
+        verifyKind:     "thread_concluded",
+        verifyThreadId: threadId,
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const data = create.json().data;
+    expect(data.verifyKind).toBe("thread_concluded");
+    expect(data.verifyThreadId).toBe(threadId);
+
+    const done = await app.inject({
+      method: "PUT", url: `/tasks/${data.id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(done.json().data.status).toBe("pending_verification");
+  });
+
+  it("rejects kind=thread_concluded without verifyThreadId", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyKind: "thread_concluded",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("rejects kind=file_exists mixed with verifyCommand", async () => {
     const res = await app.inject({
       method: "POST", url: "/tasks",

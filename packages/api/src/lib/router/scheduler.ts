@@ -7,6 +7,7 @@ import { publish } from "../events.js";
 import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
 import { runFileExistsVerification } from "../verify-file-exists.js";
+import { runThreadConcludedVerification } from "../verify-thread-concluded.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
 
@@ -215,8 +216,9 @@ export async function verifyPending(
     // behave as kind="shell".
     const kind = task.verifyKind ?? (task.verifyCommand ? "shell" : null);
     const misconfigured =
-      (kind === "shell"       && !task.verifyCommand) ||
-      (kind === "file_exists" && !task.verifyPath)    ||
+      (kind === "shell"            && !task.verifyCommand)  ||
+      (kind === "file_exists"      && !task.verifyPath)     ||
+      (kind === "thread_concluded" && !task.verifyThreadId) ||
       kind === null;
     if (misconfigured) {
       // Misconfigured row — clear claim and revert to assigned.
@@ -239,6 +241,8 @@ export async function verifyPending(
       try {
         if (kind === "file_exists") {
           result = await runFileExistsVerification(task.verifyPath!, task.verifyCwd);
+        } else if (kind === "thread_concluded") {
+          result = await runThreadConcludedVerification(db, task.verifyThreadId!);
         } else {
           result = await exec(task.verifyCommand!, task.verifyCwd, task.verifyTimeoutMs ?? undefined);
         }
@@ -253,11 +257,12 @@ export async function verifyPending(
       }
     }
 
-    // Synthesize a human-readable command label for the log row. file_exists
-    // doesn't have a shell command — record the predicate shape instead.
-    const logCommand = kind === "file_exists"
-      ? `file_exists:${task.verifyPath}`
-      : task.verifyCommand!;
+    // Synthesize a human-readable command label for the log row. Non-shell
+    // kinds don't have a shell command — record the predicate shape instead.
+    const logCommand =
+      kind === "file_exists"      ? `file_exists:${task.verifyPath}`           :
+      kind === "thread_concluded" ? `thread_concluded:${task.verifyThreadId}`  :
+      task.verifyCommand!;
 
     const [logRow] = await db.insert(verificationLog).values({
       id:         newId("verif"),

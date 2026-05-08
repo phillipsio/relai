@@ -22,30 +22,31 @@ const createSchema = z.object({
   // gated: the API rewrites status to `pending_verification` and the
   // scheduler runs the predicate. Exit 0 promotes to `completed`; anything
   // else returns to `assigned`. The predicate is fixed at create time.
-  // Two kinds:
-  //   - "shell"       — runs `verifyCommand` (legacy default; kept for
-  //                     back-compat when only `verifyCommand` is sent).
-  //   - "file_exists" — checks `verifyPath`; no shell exec.
-  verifyKind:      z.enum(["shell", "file_exists"]).optional(),
+  // Three kinds:
+  //   - "shell"            — runs `verifyCommand` (legacy default; kept for
+  //                          back-compat when only `verifyCommand` is sent).
+  //   - "file_exists"      — checks `verifyPath`; no shell exec.
+  //   - "thread_concluded" — passes when `verifyThreadId`'s status is
+  //                          "concluded"; useful for plan-driven flows.
+  verifyKind:      z.enum(["shell", "file_exists", "thread_concluded"]).optional(),
   verifyCommand:   z.string().min(1).optional(),
   verifyCwd:       z.string().optional(),
   verifyPath:      z.string().min(1).optional(),
+  verifyThreadId:  z.string().min(1).optional(),
   // Per-task override for the predicate timeout. Bounded at [1s, 10min];
   // null/undefined falls back to the executor default of 60s.
   verifyTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
 })
 .refine(
   (v) => {
-    // Resolve effective kind: explicit verifyKind wins; otherwise infer from
-    // verifyCommand (legacy back-compat) or none.
-    if (v.verifyKind === "shell" && !v.verifyCommand) return false;
-    if (v.verifyKind === "file_exists" && !v.verifyPath) return false;
-    // file_exists never uses verifyCommand; reject mixed config to avoid
-    // ambiguity later if someone reads the row back.
-    if (v.verifyKind === "file_exists" && v.verifyCommand) return false;
+    if (v.verifyKind === "shell"            && !v.verifyCommand)  return false;
+    if (v.verifyKind === "file_exists"      && !v.verifyPath)     return false;
+    if (v.verifyKind === "thread_concluded" && !v.verifyThreadId) return false;
+    // Non-shell kinds never use verifyCommand — reject mixed config.
+    if ((v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded") && v.verifyCommand) return false;
     return true;
   },
-  { message: "verify config mismatch: kind=shell requires verifyCommand; kind=file_exists requires verifyPath and forbids verifyCommand" },
+  { message: "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId) and non-shell kinds forbid verifyCommand" },
 );
 
 const updateSchema = z.object({
@@ -141,16 +142,18 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     if (updates.status === "completed") {
       const [existing] = await db
         .select({
-          verifyKind:    tasks.verifyKind,
-          verifyCommand: tasks.verifyCommand,
-          verifyPath:    tasks.verifyPath,
-          status:        tasks.status,
+          verifyKind:     tasks.verifyKind,
+          verifyCommand:  tasks.verifyCommand,
+          verifyPath:     tasks.verifyPath,
+          verifyThreadId: tasks.verifyThreadId,
+          status:         tasks.status,
         })
         .from(tasks)
         .where(eq(tasks.id, request.params.id));
       const hasVerify =
-        existing?.verifyKind === "file_exists" ? !!existing.verifyPath
-        : !!existing?.verifyCommand;  // shell (or legacy null+command)
+        existing?.verifyKind === "file_exists"      ? !!existing.verifyPath     :
+        existing?.verifyKind === "thread_concluded" ? !!existing.verifyThreadId :
+        !!existing?.verifyCommand;  // shell (or legacy null+command)
       if (
         hasVerify &&
         existing!.status !== "pending_verification" &&

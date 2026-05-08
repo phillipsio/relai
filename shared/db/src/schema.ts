@@ -14,7 +14,7 @@ export const messageTypeEnum = pgEnum("message_type", [
 
 export const routingMethodEnum = pgEnum("routing_method", ["rules", "claude"]);
 
-export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists"]);
+export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded"]);
 
 // ── Projects ────────────────────────────────────────────────────────────────
 
@@ -131,6 +131,9 @@ export const tasks = pgTable("tasks", {
   verifyCwd:       text("verify_cwd"),
   // kind="file_exists" — path is resolved against verifyCwd (or process cwd).
   verifyPath:      text("verify_path"),
+  // kind="thread_concluded" — passes once the referenced thread reaches
+  // status="concluded". No FK constraint here (declared after threads).
+  verifyThreadId:  text("verify_thread_id"),
   // Optional per-task override for the verification predicate timeout. Null
   // means use the executor default (60_000 ms). Stored as ms; Zod clamps to
   // [1_000, 600_000] (1s..10min) at the route layer.

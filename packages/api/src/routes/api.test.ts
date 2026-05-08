@@ -408,6 +408,45 @@ describe("PUT /tasks/:id", () => {
     expect(done.json().data.status).toBe("pending_verification");
   });
 
+  it("persists verifyTimeoutMs on POST /tasks within bounds", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        createdBy: agentId,
+        title: "timed verify",
+        description: "long-running predicate",
+        verifyCommand:   "true",
+        verifyTimeoutMs: 120_000,
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    expect(create.json().data.verifyTimeoutMs).toBe(120_000);
+  });
+
+  it("rejects verifyTimeoutMs outside [1s, 10min]", async () => {
+    const tooShort = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyCommand: "true", verifyTimeoutMs: 500,
+      }),
+    });
+    expect(tooShort.statusCode).toBe(400);
+
+    const tooLong = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyCommand: "true", verifyTimeoutMs: 700_000,
+      }),
+    });
+    expect(tooLong.statusCode).toBe(400);
+  });
+
   it("leaves completed alone when no verifyCommand", async () => {
     const create = await app.inject({
       method: "POST", url: "/tasks",

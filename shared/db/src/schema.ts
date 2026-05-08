@@ -120,8 +120,12 @@ export const tasks = pgTable("tasks", {
   // PUT /tasks/:id { status: "completed" } rewrites to `pending_verification`
   // and the scheduler runs the command; exit 0 promotes to `completed`,
   // anything else returns the task to `assigned` for retry.
-  verifyCommand: text("verify_command"),
-  verifyCwd:     text("verify_cwd"),
+  verifyCommand:   text("verify_command"),
+  verifyCwd:       text("verify_cwd"),
+  // Optional per-task override for the verification predicate timeout. Null
+  // means use the executor default (60_000 ms). Stored as ms; Zod clamps to
+  // [1_000, 600_000] (1s..10min) at the route layer.
+  verifyTimeoutMs: integer("verify_timeout_ms"),
   // Atomic-claim marker for the verification poller. Cleared on completion.
   verifyingAt:   timestamp("verifying_at", { withTimezone: true }),
   // Set by the scheduler when a task has been `in_progress` longer than the

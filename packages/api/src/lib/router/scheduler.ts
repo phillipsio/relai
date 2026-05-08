@@ -173,7 +173,7 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
 
 // ── Verification ──────────────────────────────────────────────────────────────
 
-type VerifyExec = (command: string, cwd?: string | null) => Promise<VerificationResult>;
+type VerifyExec = (command: string, cwd?: string | null, timeoutMs?: number) => Promise<VerificationResult>;
 
 export async function verifyPending(
   db: Db,
@@ -229,7 +229,7 @@ export async function verifyPending(
       };
     } else {
       try {
-        result = await exec(task.verifyCommand, task.verifyCwd);
+        result = await exec(task.verifyCommand, task.verifyCwd, task.verifyTimeoutMs ?? undefined);
       } catch (err) {
         result = {
           exitCode: null,

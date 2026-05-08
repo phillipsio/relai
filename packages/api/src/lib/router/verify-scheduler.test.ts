@@ -42,12 +42,13 @@ afterAll(async () => {
   await app?.close();
 });
 
-async function makePendingVerificationTask(verifyCommand: string): Promise<string> {
+async function makePendingVerificationTask(verifyCommand: string, verifyTimeoutMs?: number): Promise<string> {
   const create = await app.inject({
     method: "POST", url: "/tasks", headers: ADMIN,
     body: JSON.stringify({
       projectId, createdBy: agentId, title: "verify-test", description: "x",
       assignedTo: agentId, verifyCommand,
+      ...(verifyTimeoutMs !== undefined ? { verifyTimeoutMs } : {}),
     }),
   });
   const taskId = create.json().data.id;
@@ -113,6 +114,29 @@ describe("verifyPending", () => {
 
     const failed = events.find((e) => e.kind === "task.verification_failed" && e.targetId === taskId);
     expect(failed).toBeDefined();
+  });
+
+  it("passes per-task verifyTimeoutMs through to the executor; falls back to default when null", async () => {
+    const customTaskId  = await makePendingVerificationTask("noop-custom", 5_000);
+    const defaultTaskId = await makePendingVerificationTask("noop-default");
+    const db = createDb(DB_URL);
+
+    const observed: Array<{ command: string; timeoutMs: number | undefined }> = [];
+    await verifyPending(db, projectId, async (command, _cwd, timeoutMs) => {
+      observed.push({ command, timeoutMs });
+      return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+    });
+
+    const custom  = observed.find((o) => o.command === "noop-custom");
+    const dflt    = observed.find((o) => o.command === "noop-default");
+    expect(custom?.timeoutMs).toBe(5_000);
+    expect(dflt?.timeoutMs).toBeUndefined();   // executor's own default applies
+
+    // Sanity: both tasks completed.
+    const [c] = await db.select().from(tasks).where(eq(tasks.id, customTaskId));
+    const [d] = await db.select().from(tasks).where(eq(tasks.id, defaultTaskId));
+    expect(c.status).toBe("completed");
+    expect(d.status).toBe("completed");
   });
 
   it("recovers stuck claims older than the threshold", async () => {

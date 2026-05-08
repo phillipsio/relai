@@ -72,7 +72,7 @@ Twelve tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`,
 - `tokens` is the per-agent bearer-credential store: hashed token, `lastUsedAt`, `revokedAt`. Issued at agent registration and via `POST /agents/:id/tokens`
 - `invites` is the project-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`
-- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional `verifyCommand` / `verifyCwd` predicate. When `verifyCommand` is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the shell predicate (60s timeout, 8KB stdout/stderr cap, written to `verification_log`). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. Stuck claims older than 5 min are reaped as crashed runs.
+- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional `verifyCommand` / `verifyCwd` predicate plus optional `verifyTimeoutMs` (per-task override, bounded `[1_000, 600_000]`; default 60s). When `verifyCommand` is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the shell predicate (8KB stdout/stderr cap, written to `verification_log`). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. Stuck claims older than 5 min are reaped as crashed runs.
 - `subscriptions` records which agents want event notifications for a given thread/task/agent target
 - `events` is the persisted mirror of the in-process bus; written on every `publish()` so `/session/start` can show what an agent missed. SSE stays live; this table is history.
 
@@ -206,7 +206,7 @@ Currently tested:
 - `packages/orchestrator/src/message-loop.test.ts` — handoff/finding/decision/question/escalation handling
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~206 tests across the workspace (api alone: 110). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~209 tests across the workspace (api alone: 113). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 

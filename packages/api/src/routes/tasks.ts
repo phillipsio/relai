@@ -22,8 +22,11 @@ const createSchema = z.object({
   // the API rewrites status to `pending_verification` and the scheduler runs
   // the command. Exit 0 promotes to `completed`; anything else returns to
   // `assigned`. The predicate is fixed at create time and cannot be changed.
-  verifyCommand:  z.string().min(1).optional(),
-  verifyCwd:      z.string().optional(),
+  verifyCommand:   z.string().min(1).optional(),
+  verifyCwd:       z.string().optional(),
+  // Per-task override for the predicate timeout. Bounded at [1s, 10min];
+  // null/undefined falls back to the executor default of 60s.
+  verifyTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
 });
 
 const updateSchema = z.object({

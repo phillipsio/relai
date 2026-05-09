@@ -68,6 +68,12 @@ describe("buildPrompt", () => {
       expect(prompt).toContain("gh pr create");
     });
 
+    it("documents a git-push fallback when gh is not available", () => {
+      const prompt = buildPrompt(config({ specialization: "writer" }));
+      expect(prompt).toContain("git push -u origin");
+      expect(prompt).toMatch(/command -v gh|gh.*not available|fall back/i);
+    });
+
     it("routes completed work to reviewer", () => {
       const prompt = buildPrompt(config({ specialization: "writer" }));
       expect(prompt).toContain('"reviewer"');

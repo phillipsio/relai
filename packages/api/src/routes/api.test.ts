@@ -737,12 +737,36 @@ describe("POST /tasks/:id/review", () => {
     expect(review.note).toBe("lgtm");
   });
 
-  it("rejects when the caller is not the named reviewer", async () => {
-    const { id } = await setupReviewTask("rev-endpoint-2");
-    // Re-use the test agentToken (different identity from the reviewer).
+  it("admin-secret callers can submit on behalf of the named reviewer (dashboard path)", async () => {
+    const { id, reviewerId } = await setupReviewTask("rev-endpoint-admin");
     const res = await app.inject({
       method: "POST", url: `/tasks/${id}/review`,
       headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve", note: "shipped via dashboard" }),
+    });
+    expect(res.statusCode).toBe(200);
+    const review = (res.json().data.metadata as { review: { decision: string; reviewerId: string; submittedBy?: string } }).review;
+    expect(review.decision).toBe("approve");
+    // Decision is recorded as belonging to the named reviewer; submittedBy
+    // marks the override path so audits can tell admin-driven decisions apart
+    // from agent-driven ones.
+    expect(review.reviewerId).toBe(reviewerId);
+    expect(review.submittedBy).toBe("admin");
+  });
+
+  it("rejects when a per-agent token belongs to a different agent than the named reviewer", async () => {
+    const { id } = await setupReviewTask("rev-endpoint-2");
+    // Register a different worker, get its token, try to submit with it.
+    const other = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "rev-endpoint-2-imposter", role: "worker" }),
+    });
+    const otherToken = other.json().token as string;
+
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { Authorization: `Bearer ${otherToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ decision: "approve" }),
     });
     expect(res.statusCode).toBe(403);

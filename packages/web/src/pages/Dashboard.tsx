@@ -1,11 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Circle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, Circle, CheckCircle2, Eye } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import type { WebApiClient } from "../lib/api";
 
-const STATUS_ORDER = ["pending", "assigned", "in_progress", "blocked", "completed", "cancelled"];
+const STATUS_ORDER = [
+  "pending",
+  "assigned",
+  "in_progress",
+  "pending_verification",
+  "blocked",
+  "completed",
+  "cancelled",
+];
 
 export function Dashboard({ api }: { api: WebApiClient }) {
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.getAgents(), refetchInterval: 10_000 });
@@ -21,10 +29,42 @@ export function Dashboard({ api }: { api: WebApiClient }) {
     (a) => now - new Date(a.lastSeenAt).getTime() < 10 * 60 * 1000
   );
   const escalations = (tasks.data ?? []).filter((t) => t.status === "blocked");
+  const awaitingReview = (tasks.data ?? []).filter(
+    (t) => t.status === "pending_verification" && t.verifyKind === "reviewer_agent"
+  );
+  const reviewerName = (id?: string | null) =>
+    (agents.data ?? []).find((a) => a.id === id)?.name ?? id ?? "?";
 
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold font-mono">Dashboard</h1>
+
+      {awaitingReview.length > 0 && (
+        <Link
+          to="/tasks?status=pending_verification"
+          className="block rounded-lg border border-purple-800 bg-purple-950/50 p-4 hover:bg-purple-950/70 transition-colors"
+        >
+          <div className="flex items-start gap-3">
+            <Eye className="h-5 w-5 text-purple-300 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-purple-200">
+                {awaitingReview.length} task{awaitingReview.length > 1 ? "s" : ""} awaiting review
+              </p>
+              <div className="mt-1 space-y-1">
+                {awaitingReview.slice(0, 5).map((t) => (
+                  <div key={t.id} className="flex items-center gap-2 text-xs text-purple-300">
+                    <span className="truncate">{t.title}</span>
+                    <span className="text-purple-400/70 shrink-0">→ {reviewerName(t.verifyReviewerId)}</span>
+                  </div>
+                ))}
+                {awaitingReview.length > 5 && (
+                  <p className="text-xs text-purple-400/70">+ {awaitingReview.length - 5} more</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </Link>
+      )}
 
       {escalations.length > 0 && (
         <div className="rounded-lg border border-red-800 bg-red-950/50 p-4 flex items-start gap-3">

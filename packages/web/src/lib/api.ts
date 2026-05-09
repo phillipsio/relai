@@ -9,6 +9,9 @@ export interface TaskRow {
   status: string; priority: string; domains: string[];
   specialization?: string | null;
   assignedTo?: string; createdAt: string; updatedAt: string;
+  verifyKind?: string | null;
+  verifyReviewerId?: string | null;
+  metadata?: Record<string, unknown>;
 }
 export interface AgentRow {
   id: string; name: string; role: string; specialization?: string | null;
@@ -65,6 +68,9 @@ export class WebApiClient {
   }
   updateTask(id: string, body: { status?: string; assignedTo?: string | null }) {
     return this.request<TaskRow>("PUT", `/tasks/${id}`, body);
+  }
+  submitReview(id: string, body: { decision: "approve" | "reject"; note?: string }) {
+    return this.request<TaskRow>("POST", `/tasks/${id}/review`, body);
   }
 
   getAgents()  { return this.request<AgentRow[]>("GET", `/agents?projectId=${encodeURIComponent(this.projectId)}`); }

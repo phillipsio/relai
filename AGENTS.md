@@ -30,7 +30,6 @@ pnpm --filter @getrelai/mcp-server dev   # MCP stdio server (optional — for de
 # Run tests
 pnpm test                             # all packages
 pnpm --filter @getrelai/api test
-pnpm --filter @getrelai/orchestrator test
 pnpm --filter @getrelai/mcp-server test
 
 # Typecheck all packages
@@ -54,10 +53,9 @@ shared/
   db/       Drizzle ORM schema + createDb() factory; re-exports all tables
 
 packages/
-  api/            Fastify REST API — all state lives here; includes routing scheduler
+  api/            Fastify REST API — all state lives here; includes routing scheduler and (opt-in) message loop
   web/            React + Vite + TanStack Query dashboard
   mcp-server/     MCP server — the integration point for any MCP-compatible agent
-  orchestrator/   Optional self-hosted routing daemon (alternative to built-in scheduler)
   claude-worker/  Headless Claude Code worker loop
   copilot-worker/ Copilot agent worker loop
   cli/            Commander.js CLI — the `relai` binary
@@ -136,6 +134,14 @@ Runs inside the API process — no separate daemon needed. On startup and every 
 
 The blocked-task watcher detects human replies on threads referenced by `task.metadata.blockedThreadId` and resumes those tasks back to `assigned`.
 
+**Message loop (opt-in):** when `ENABLE_MESSAGE_ROUTING=true`, the same scheduler runs `message-loop.ts` per project per tick. For each project's `role="orchestrator"` agent, it processes the agent's project-wide unread feed:
+- `status`/`reply` — mark read, no other action
+- `escalation` — find an online tier-2 senior (or `architect` specialization fallback), create a `high`-priority task assigned directly to them, post a reply on the originating thread
+- `decision` — broadcast to every online worker on the same thread
+- `handoff`/`question`/`finding` — call Claude with the `route_message` tool to choose between `create_task` / `forward` / `broadcast` / `reply` / `log_only` and execute
+
+The Claude classifier costs one model call per `handoff`/`question`/`finding`, which is why the loop is opt-in. When the flag is on, `POST /threads/:id/messages` skips its legacy escalation-task auto-create — the loop owns the full lifecycle to avoid duplicate tasks. When the flag is off, the route's fallback continues to create a parked `pending` escalation task as before.
+
 The `scheduler` option on `buildServer()` is `false` in tests to avoid background polling during test runs.
 
 ### MCP server (packages/mcp-server)
@@ -209,11 +215,11 @@ Currently tested:
 - `packages/api/src/lib/verify-file-exists.test.ts` — file_exists predicate (absolute, missing, relative-to-cwd)
 - `packages/api/src/lib/verify-thread-concluded.test.ts` — thread_concluded predicate (concluded, open, missing)
 - `packages/api/src/lib/verify-reviewer-agent.test.ts` — reviewer_agent predicate (approve, reject)
-- `packages/orchestrator/src/router/rules.test.ts` — rules-based routing logic
-- `packages/orchestrator/src/message-loop.test.ts` — handoff/finding/decision/question/escalation handling
+- `packages/api/src/lib/router/rules.test.ts` — rules-based routing logic
+- `packages/api/src/lib/router/message-loop.test.ts` — handoff/finding/decision/question/escalation handling in the API's in-process loop
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~238 tests across the workspace (api alone: 141). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~279 tests across the workspace (api alone: 182). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 
@@ -227,6 +233,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `ANTHROPIC_API_KEY` | — | Enables Claude fallback routing; optional |
 | `ROUTING_MODEL` | `claude-haiku-4-5-20251001` | Model used for routing decisions |
 | `TASK_POLL_MS` | `15000` | Routing scheduler interval (ms) |
+| `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
 | `AGENT_ID` | — | Set after registering an agent |
 | `PROJECT_ID` | — | Set after creating a project |
 | `RELAI_CONFIG_DIR` | `~/.config/relai` | Override CLI config location (multi-identity testing) |

@@ -29,8 +29,14 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       metadata:  body.data.metadata,
     }).returning();
 
-    // Escalations: auto-create a high-priority pending task — the scheduler will route it
-    if (body.data.type === "escalation") {
+    // Escalations: auto-create a high-priority pending task — the scheduler
+    // will route it. When ENABLE_MESSAGE_ROUTING is on, the in-API message
+    // loop owns the escalation lifecycle (creates a task assigned directly
+    // to a senior agent, posts a reply on the thread); skipping here avoids
+    // a duplicate task per escalation message.
+    const messageLoopOwnsEscalation =
+      process.env.ENABLE_MESSAGE_ROUTING === "true" || process.env.ENABLE_MESSAGE_ROUTING === "1";
+    if (body.data.type === "escalation" && !messageLoopOwnsEscalation) {
       const [thread] = await db.select().from(threads).where(eq(threads.id, request.params.id));
       if (thread) {
         await db.insert(tasks).values({

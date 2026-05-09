@@ -1,3 +1,11 @@
+// Rules-based routing — zero Claude calls, zero token cost.
+// Returns null when rules can't confidently resolve; Claude handles the rest.
+//
+// Rationale strings are surfaced verbatim in the routing log. Keep them
+// specific — "Exact domain match + load balance (fewest active tasks)" is a
+// useful breadcrumb for debugging "why did this task land on agent X?";
+// "tiebreak" is not.
+
 export interface AgentRow {
   id: string;
   name: string;
@@ -36,56 +44,112 @@ export function tryRulesRouting(
 
   if (onlineAgents.length === 0) return null;
 
+  // Specialization is a stronger signal than domain overlap — a reviewer task
+  // should never route to a writer just because the writer happens to own the
+  // relevant domains. Fall back to all online agents only when no specialization
+  // match exists, and tell the truth about it in the rationale.
   const specFiltered = task.specialization
     ? onlineAgents.filter((a) => a.specialization === task.specialization)
     : [];
   const workingSet = specFiltered.length > 0 ? specFiltered : onlineAgents;
+  const matchedSpec = specFiltered.length > 0;
+  const specFallbackNote = task.specialization && !matchedSpec
+    ? `No online agent with specialization '${task.specialization}' — load balanced among online agents`
+    : null;
 
+  // Rule 1: exact domain match — task domains are a subset of agent domains.
   if (task.domains.length > 0) {
     const exactMatches = workingSet.filter((a) =>
       task.domains.every((d) => a.domains.includes(d))
     );
     if (exactMatches.length === 1) {
-      return { agentId: exactMatches[0].id, rationale: `Exact domain match: [${task.domains.join(", ")}]`, method: "rules" };
+      return rules(exactMatches[0], `Exact domain match: agent owns [${task.domains.join(", ")}]`);
     }
     if (exactMatches.length > 1) {
-      const w = specializationTiebreak(exactMatches, task.specialization) ??
-                loadBalanceTiebreak(exactMatches, taskCounts) ??
-                exactMatches.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
-      return { agentId: w.id, rationale: "Exact domain match + tiebreak", method: "rules" };
+      const specWinner = specializationTiebreak(exactMatches, task.specialization);
+      if (specWinner) {
+        return rules(specWinner, `Exact domain match + specialization tiebreak: ${specWinner.specialization}`);
+      }
+      const lbWinner = loadBalanceTiebreak(exactMatches, taskCounts);
+      if (lbWinner) {
+        return rules(lbWinner, "Exact domain match + load balance (fewest active tasks)");
+      }
+      return rules(alphabeticallyFirst(exactMatches), "Exact domain match + deterministic tiebreak");
     }
 
+    // Rule 2: partial match — agent shares at least one domain with the task.
     const partialMatches = workingSet.filter((a) =>
       task.domains.some((d) => a.domains.includes(d))
     );
     if (partialMatches.length === 1) {
-      return { agentId: partialMatches[0].id, rationale: `Partial domain match: [${task.domains.join(", ")}]`, method: "rules" };
+      return rules(partialMatches[0], `Partial domain match: agent covers some of [${task.domains.join(", ")}]`);
     }
     if (partialMatches.length > 1) {
-      const w = specializationTiebreak(partialMatches, task.specialization) ??
-                domainOverlapTiebreak(partialMatches, task.domains) ??
-                loadBalanceTiebreak(partialMatches, taskCounts) ??
-                partialMatches.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
-      return { agentId: w.id, rationale: "Partial domain match + tiebreak", method: "rules" };
+      const specWinner = specializationTiebreak(partialMatches, task.specialization);
+      if (specWinner) {
+        return rules(specWinner, `Partial domain match + specialization tiebreak: ${specWinner.specialization}`);
+      }
+      const overlapWinner = domainOverlapTiebreak(partialMatches, task.domains);
+      if (overlapWinner) {
+        const overlap = task.domains.filter((d) => overlapWinner.domains.includes(d));
+        return rules(overlapWinner, `Best domain overlap: agent matches [${overlap.join(", ")}]`);
+      }
+      const lbWinner = loadBalanceTiebreak(partialMatches, taskCounts);
+      if (lbWinner) {
+        return rules(lbWinner, "Partial domain match + load balance (fewest active tasks)");
+      }
+      return rules(alphabeticallyFirst(partialMatches), "Partial domain match + deterministic tiebreak");
     }
   }
 
-  if (task.specialization && workingSet.length >= 1) {
-    const w = loadBalanceTiebreak(workingSet, taskCounts) ??
-              workingSet.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
-    const matchedSpec = specFiltered.length > 0;
+  // Rule 3: specialization match — fires when the task asks for a specialization
+  // and either had no domain constraints or the domain rules couldn't resolve.
+  // The rationale must reflect whether the spec actually matched: an honest log
+  // is the only post-hoc explanation for a routing decision.
+  if (task.specialization && workingSet.length > 0) {
+    if (workingSet.length === 1) {
+      const rationale = matchedSpec
+        ? `Specialization match: ${task.specialization}`
+        : specFallbackNote!;
+      return rules(workingSet[0], rationale);
+    }
+    const lbWinner = loadBalanceTiebreak(workingSet, taskCounts);
+    if (lbWinner) {
+      const rationale = matchedSpec
+        ? `Specialization match + load balance: ${task.specialization}`
+        : specFallbackNote!;
+      return rules(lbWinner, rationale);
+    }
     const rationale = matchedSpec
-      ? `Specialization match: ${task.specialization}`
-      : `No online agent with specialization '${task.specialization}' — load balanced among online agents`;
-    return { agentId: w.id, rationale, method: "rules" };
+      ? `Specialization match + deterministic tiebreak: ${task.specialization}`
+      : specFallbackNote!;
+    return rules(alphabeticallyFirst(workingSet), rationale);
   }
 
+  // Rule 4: no domains and no specialization. Always resolve — single agent
+  // gets it directly; multiple agents go through load balance with an
+  // alphabetical fallback so a tied no-domain queue doesn't depend on the
+  // database row order.
   if (task.domains.length === 0) {
-    const w = loadBalanceTiebreak(workingSet, taskCounts) ?? workingSet[0];
-    return { agentId: w.id, rationale: "No domain constraint — load balanced", method: "rules" };
+    if (workingSet.length === 1) {
+      return rules(workingSet[0], "Only one agent online and task has no domain constraint");
+    }
+    const lbWinner = loadBalanceTiebreak(workingSet, taskCounts);
+    if (lbWinner) {
+      return rules(lbWinner, "No domain constraint + load balance (fewest active tasks)");
+    }
+    return rules(alphabeticallyFirst(workingSet), "No domain constraint + deterministic tiebreak");
   }
 
   return null;
+}
+
+function rules(agent: AgentRow, rationale: string): RoutingResult {
+  return { agentId: agent.id, rationale, method: "rules" };
+}
+
+function alphabeticallyFirst(agents: AgentRow[]): AgentRow {
+  return agents.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
 }
 
 function specializationTiebreak(agents: AgentRow[], spec?: string | null): AgentRow | null {

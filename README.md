@@ -49,7 +49,6 @@ The routing scheduler runs inside the API process — no separate daemon needed.
 | `packages/api`           | Fastify REST API — all state lives here, includes routing scheduler  |
 | `packages/web`           | React dashboard — projects, tasks, agents, threads, plans            |
 | `packages/mcp-server`    | MCP server — what AI agents connect to                               |
-| `packages/orchestrator`  | Optional self-hosted routing daemon                                  |
 | `packages/claude-worker` | Headless Claude Code worker loop                                     |
 | `packages/copilot-worker`| Copilot agent worker loop                                            |
 | `packages/cli`           | `relai` CLI — register agents, init config                            |

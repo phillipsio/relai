@@ -1,17 +1,35 @@
 import { describe, it, expect } from "vitest";
 import { tryRulesRouting } from "./rules.js";
-import type { AgentRow, TaskRow } from "../api-client.js";
+import type { AgentRow, TaskRow } from "./rules.js";
 
-// Helpers
 const now = new Date().toISOString();
-const stale = new Date(Date.now() - 11 * 60 * 1000).toISOString(); // 11 min ago → offline
+const stale = new Date(Date.now() - 11 * 60 * 1000).toISOString();
 
-function agent(id: string, domains: string[], opts: { specialization?: string; tier?: number; lastSeenAt?: string } = {}): AgentRow {
-  return { id, name: id, role: "worker", domains, specialization: opts.specialization, tier: opts.tier, lastSeenAt: opts.lastSeenAt ?? now };
+function agent(
+  id: string,
+  domains: string[],
+  opts: { specialization?: string; tier?: number; lastSeenAt?: string } = {},
+): AgentRow {
+  return {
+    id,
+    name: id,
+    domains,
+    specialization: opts.specialization ?? null,
+    tier: opts.tier ?? null,
+    lastSeenAt: opts.lastSeenAt ?? now,
+  };
 }
 
 function task(id: string, domains: string[], specialization?: string): TaskRow {
-  return { id, title: id, description: "", status: "pending", priority: "normal", domains, specialization, metadata: {}, createdAt: now };
+  return {
+    id,
+    title: id,
+    description: "",
+    priority: "normal",
+    domains,
+    specialization: specialization ?? null,
+    metadata: {},
+  };
 }
 
 describe("tryRulesRouting", () => {
@@ -60,7 +78,6 @@ describe("tryRulesRouting", () => {
           agent("a2", ["typescript", "api"],   { specialization: "reviewer" }),
         ],
       );
-      // specialization pre-filter narrows to a1 only → exact match wins directly
       expect(result).toMatchObject({ agentId: "a1", method: "rules" });
     });
 
@@ -83,17 +100,10 @@ describe("tryRulesRouting", () => {
           agent("a2", ["typescript"], { specialization: "reviewer" }),
         ],
       );
-      // No spec match → falls back to all online → deterministic tiebreak
       expect(result).toMatchObject({ agentId: "a1", method: "rules" });
     });
 
     it("logs an honest rationale when the spec filter empties out and the spec-fallback path resolves", () => {
-      // No task domains → Rule 1/2 (domain-match) skipped.
-      // Task wants "tester" but no agent is one → specFiltered empty,
-      // workingSet falls back to all online agents, Rule 3 fires.
-      // The rationale must NOT claim "Specialization match: tester" — that
-      // would be a lie. The routing log is the only post-hoc explanation
-      // for a decision; it has to tell the truth.
       const result = tryRulesRouting(
         task("t1", [], "tester"),
         [
@@ -142,8 +152,8 @@ describe("tryRulesRouting", () => {
   describe("Rule 2b: domain overlap count tiebreak among partial matches", () => {
     it("picks the agent with more overlapping domains", () => {
       const result = tryRulesRouting(task("t1", ["typescript", "react", "api"]), [
-        agent("a1", ["typescript", "react"]), // 2 overlaps
-        agent("a2", ["api"]),                 // 1 overlap
+        agent("a1", ["typescript", "react"]),
+        agent("a2", ["api"]),
       ]);
       expect(result).toMatchObject({ agentId: "a1", method: "rules" });
       expect(result?.rationale).toMatch(/best domain overlap/i);
@@ -151,8 +161,8 @@ describe("tryRulesRouting", () => {
 
     it("picks alphabetically first when overlap counts are tied", () => {
       const result = tryRulesRouting(task("t1", ["typescript", "react"]), [
-        agent("a1", ["typescript"]), // 1 overlap
-        agent("a2", ["react"]),      // 1 overlap
+        agent("a1", ["typescript"]),
+        agent("a2", ["react"]),
       ]);
       expect(result).toMatchObject({ agentId: "a1", method: "rules" });
     });
@@ -173,6 +183,15 @@ describe("tryRulesRouting", () => {
         agent("a2", ["python"]),
       ], { a1: 3, a2: 1 });
       expect(result).toMatchObject({ agentId: "a2", method: "rules" });
+    });
+
+    it("breaks no-domain ties alphabetically when load balance is tied", () => {
+      const result = tryRulesRouting(task("t1", []), [
+        agent("a2", ["python"]),
+        agent("a1", ["typescript"]),
+      ], { a1: 2, a2: 2 });
+      expect(result).toMatchObject({ agentId: "a1", method: "rules" });
+      expect(result?.rationale).toMatch(/deterministic tiebreak/i);
     });
 
     it("returns null when task has no domains and no agents are online", () => {
@@ -248,7 +267,7 @@ describe("tryRulesRouting", () => {
           agent("a1", ["typescript"]),
           agent("a2", ["typescript"]),
         ],
-        { a1: 1 }, // a2 not in map → treated as 0
+        { a1: 1 },
       );
       expect(result).toMatchObject({ agentId: "a2", method: "rules" });
     });

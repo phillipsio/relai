@@ -15,7 +15,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --workspace=vitest.workspace.ts",
-    "demo": "pnpm --filter @getrelai/orchestrator exec tsx ../../scripts/demo.ts",
+    "demo": "pnpm --filter @getrelai/api exec tsx ../../scripts/demo.ts",
     "start-worker": "node_modules/.pnpm/node_modules/.bin/tsx scripts/start-worker.ts"
   },
   "devDependencies": {

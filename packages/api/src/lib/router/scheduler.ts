@@ -178,6 +178,48 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
 
 type VerifyExec = (command: string, cwd?: string | null, timeoutMs?: number) => Promise<VerificationResult>;
 
+type Task = typeof tasks.$inferSelect;
+
+interface VerifyContext {
+  task: Task;
+  db: Db;
+  exec: VerifyExec;
+}
+
+interface VerifierEntry {
+  isMisconfigured: (task: Task) => boolean;
+  logLabel: (task: Task) => string;
+  needsAsyncDecision?: true;
+  run: (ctx: VerifyContext) => Promise<VerificationResult>;
+}
+
+const VERIFIERS: Record<string, VerifierEntry> = {
+  shell: {
+    isMisconfigured: (t) => !t.verifyCommand,
+    logLabel: (t) => t.verifyCommand!,
+    run: ({ task, exec }) => exec(task.verifyCommand!, task.verifyCwd, task.verifyTimeoutMs ?? undefined),
+  },
+  file_exists: {
+    isMisconfigured: (t) => !t.verifyPath,
+    logLabel: (t) => `file_exists:${t.verifyPath}`,
+    run: ({ task }) => runFileExistsVerification(task.verifyPath!, task.verifyCwd),
+  },
+  thread_concluded: {
+    isMisconfigured: (t) => !t.verifyThreadId,
+    logLabel: (t) => `thread_concluded:${t.verifyThreadId}`,
+    run: ({ task, db }) => runThreadConcludedVerification(db, task.verifyThreadId!),
+  },
+  reviewer_agent: {
+    isMisconfigured: (t) => !t.verifyReviewerId,
+    logLabel: (t) => `reviewer_agent:${t.verifyReviewerId}`,
+    needsAsyncDecision: true,
+    run: ({ task }) => {
+      const review = (task.metadata as Record<string, unknown>).review as ReviewDecision;
+      return Promise.resolve(runReviewerAgentVerification(review));
+    },
+  },
+};
+
 export async function verifyPending(
   db: Db,
   projectId: string,
@@ -216,13 +258,8 @@ export async function verifyPending(
     // Resolve effective predicate. Legacy rows (null kind + verifyCommand)
     // behave as kind="shell".
     const kind = task.verifyKind ?? (task.verifyCommand ? "shell" : null);
-    const misconfigured =
-      (kind === "shell"            && !task.verifyCommand)    ||
-      (kind === "file_exists"      && !task.verifyPath)       ||
-      (kind === "thread_concluded" && !task.verifyThreadId)   ||
-      (kind === "reviewer_agent"   && !task.verifyReviewerId) ||
-      kind === null;
-    if (misconfigured) {
+    const verifier = kind !== null ? VERIFIERS[kind] : undefined;
+    if (!verifier || verifier.isMisconfigured(task)) {
       // Misconfigured row — clear claim and revert to assigned.
       await db.update(tasks)
         .set({ status: "assigned", verifyingAt: null, updatedAt: new Date() })
@@ -230,12 +267,10 @@ export async function verifyPending(
       continue;
     }
 
-    // Reviewer-agent kind is asynchronous: the decision arrives via
-    // POST /tasks/:id/review and lands in metadata.review. If it's not there
-    // yet, release the claim and try again next tick — no log row, no status
-    // change. (Stuck recovery still applies: a wedged claim is treated as
-    // crashed and synthesized as timed-out below.)
-    if (kind === "reviewer_agent" && !wasStuck) {
+    // Async-decision kinds wait for the decision to land in metadata.review
+    // before proceeding. Release the claim and retry next tick — no log row,
+    // no status change. Stuck recovery bypasses this check.
+    if (verifier.needsAsyncDecision && !wasStuck) {
       const review = (task.metadata as Record<string, unknown> | null)?.review as ReviewDecision | undefined;
       if (!review || (review.decision !== "approve" && review.decision !== "reject")) {
         await db.update(tasks)
@@ -256,16 +291,7 @@ export async function verifyPending(
       };
     } else {
       try {
-        if (kind === "file_exists") {
-          result = await runFileExistsVerification(task.verifyPath!, task.verifyCwd);
-        } else if (kind === "thread_concluded") {
-          result = await runThreadConcludedVerification(db, task.verifyThreadId!);
-        } else if (kind === "reviewer_agent") {
-          const review = (task.metadata as Record<string, unknown>).review as ReviewDecision;
-          result = runReviewerAgentVerification(review);
-        } else {
-          result = await exec(task.verifyCommand!, task.verifyCwd, task.verifyTimeoutMs ?? undefined);
-        }
+        result = await verifier.run({ task, db, exec });
       } catch (err) {
         result = {
           exitCode: null,
@@ -277,13 +303,7 @@ export async function verifyPending(
       }
     }
 
-    // Synthesize a human-readable command label for the log row. Non-shell
-    // kinds don't have a shell command — record the predicate shape instead.
-    const logCommand =
-      kind === "file_exists"      ? `file_exists:${task.verifyPath}`           :
-      kind === "thread_concluded" ? `thread_concluded:${task.verifyThreadId}`  :
-      kind === "reviewer_agent"   ? `reviewer_agent:${task.verifyReviewerId}`  :
-      task.verifyCommand!;
+    const logCommand = verifier.logLabel(task);
 
     const [logRow] = await db.insert(verificationLog).values({
       id:         newId("verif"),

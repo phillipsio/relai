@@ -179,6 +179,7 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
 type VerifyExec = (command: string, cwd?: string | null, timeoutMs?: number) => Promise<VerificationResult>;
 
 type Task = typeof tasks.$inferSelect;
+type VerifyKind = NonNullable<Task["verifyKind"]>;
 
 interface VerifyContext {
   task: Task;
@@ -193,7 +194,7 @@ interface VerifierEntry {
   run: (ctx: VerifyContext) => Promise<VerificationResult>;
 }
 
-const VERIFIERS: Record<string, VerifierEntry> = {
+const VERIFIERS: Record<VerifyKind, VerifierEntry> = {
   shell: {
     isMisconfigured: (t) => !t.verifyCommand,
     logLabel: (t) => t.verifyCommand!,
@@ -213,9 +214,9 @@ const VERIFIERS: Record<string, VerifierEntry> = {
     isMisconfigured: (t) => !t.verifyReviewerId,
     logLabel: (t) => `reviewer_agent:${t.verifyReviewerId}`,
     needsAsyncDecision: true,
-    run: ({ task }) => {
+    run: async ({ task }) => {
       const review = (task.metadata as Record<string, unknown>).review as ReviewDecision;
-      return Promise.resolve(runReviewerAgentVerification(review));
+      return runReviewerAgentVerification(review);
     },
   },
 };

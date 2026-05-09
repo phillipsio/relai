@@ -75,6 +75,7 @@ export async function taskCreateCommand(options: {
   verifyPath?: string;
   verifyThread?: string;
   verifyReviewer?: string;
+  reviewBy?: string;
 }) {
   const config = requireConfig();
   const client = new CliApiClient(config);
@@ -114,7 +115,13 @@ export async function taskCreateCommand(options: {
   // --verify alone keeps the existing "shell predicate" UX (verifyKind defaults
   // to "shell" server-side when only verifyCommand is sent).
   let verifyKind: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent" | undefined;
-  if (options.verifyKind) {
+  if (options.reviewBy && (options.verifyKind || options.verifyReviewer)) {
+    console.error(chalk.red("--review-by cannot be combined with --verify-kind or --verify-reviewer."));
+    process.exit(1);
+  }
+  if (options.reviewBy) {
+    verifyKind = "reviewer_agent";
+  } else if (options.verifyKind) {
     if (!["shell", "file_exists", "thread_concluded", "reviewer_agent"].includes(options.verifyKind)) {
       console.error(chalk.red(`Invalid --verify-kind "${options.verifyKind}".`));
       process.exit(1);
@@ -124,11 +131,12 @@ export async function taskCreateCommand(options: {
 
   let verifyReviewerId: string | undefined;
   if (verifyKind === "reviewer_agent") {
-    if (!options.verifyReviewer) {
-      console.error(chalk.red("--verify-kind reviewer_agent requires --verify-reviewer <agent>."));
+    const reviewerRef = options.reviewBy ?? options.verifyReviewer;
+    if (!reviewerRef) {
+      console.error(chalk.red("--verify-kind reviewer_agent requires --verify-reviewer <agent> (or use --review-by <agent>)."));
       process.exit(1);
     }
-    verifyReviewerId = await resolveAgentRef(client, config.projectId, options.verifyReviewer);
+    verifyReviewerId = await resolveAgentRef(client, config.projectId, reviewerRef);
   } else if (options.verifyReviewer) {
     console.error(chalk.red("--verify-reviewer is only valid with --verify-kind reviewer_agent."));
     process.exit(1);

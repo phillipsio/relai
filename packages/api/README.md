@@ -48,6 +48,7 @@ POST /tasks
 GET  /tasks?projectId=&status=&assignedTo=
 GET  /tasks/:id
 PUT  /tasks/:id
+POST /tasks/:id/review                          (reviewer-agent decision: approve|reject)
 
 POST /threads
 GET  /threads?projectId=&type=
@@ -85,7 +86,8 @@ Runs in-process. On startup and every `TASK_POLL_MS` (default 15 s) it:
 - Routes `pending` `autoAssign = true` tasks (rules first, Claude fallback if `ANTHROPIC_API_KEY` is set).
 - Resumes blocked tasks whose referenced thread has a fresh human reply.
 - Flags `in_progress` tasks idle past the stall threshold (4 h default) and emits `task.stalled`.
-- Runs `pending_verification` predicates (`tasks.verifyCommand`), promoting to `completed` on exit 0 or returning to `assigned` on failure. Stuck claims older than 5 min are reaped.
+- Runs `pending_verification` predicates and promotes to `completed` on success, returns to `assigned` on failure. Four verifier kinds: `shell` (runs `verifyCommand`, 8 KB stdout/stderr cap, default 60 s timeout), `file_exists`, `thread_concluded`, `reviewer_agent` (waits for an agent decision via `POST /tasks/:id/review`). Stuck claims older than 5 min are reaped.
+- When `ENABLE_MESSAGE_ROUTING=true`, also runs the in-API message loop per project: `escalation` creates a high-priority task assigned directly to the most-senior available agent; `decision` broadcasts to every online worker; `handoff`/`question`/`finding` go through a Claude classifier (`route_message` tool) to choose between create_task / forward / broadcast / reply / log_only. Off by default — the classifier costs one Claude call per inbound classifier message.
 
 ## Response envelope
 

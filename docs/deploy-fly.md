@@ -47,8 +47,14 @@ allowance but is not redundant — fine for demos, not for production.
 # Generate a strong random value.
 fly secrets set API_SECRET=$(openssl rand -hex 32) --app <your-app-name>
 
-# Optional: enables Claude fallback routing.
+# Optional: enables Claude fallback routing for unrouteable tasks, AND the
+# in-API message loop's classifier (handoff/question/finding) when
+# ENABLE_MESSAGE_ROUTING is on.
 fly secrets set ANTHROPIC_API_KEY=sk-ant-... --app <your-app-name>
+
+# Optional: turn on the in-API message loop. Off by default — the classifier
+# costs one Claude call per inbound handoff/question/finding message.
+fly secrets set ENABLE_MESSAGE_ROUTING=true --app <your-app-name>
 ```
 
 `DATABASE_URL` is already set by step 3. `API_PORT` and `TASK_POLL_MS` are

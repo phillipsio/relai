@@ -150,14 +150,20 @@ Tasks default to `pending` with no assignee. Three ways to get them moving:
 
 ### Behavior-grounded completion
 
-Add `--verify <cmd>` (and optionally `--verify-cwd <path>`) to gate the `completed` transition on a shell predicate. When set:
+A task can be gated on an objective predicate so an agent can't self-mark itself done without proof. When the predicate is set, calling `completed` rewrites the status to `pending_verification`; the scheduler evaluates the predicate on the next tick and either promotes to `completed` (emits `task.verified`) or returns the task to `assigned` with `metadata.lastVerification` populated (emits `task.verification_failed`). Stuck claims older than 5 min are reaped.
 
-- An agent calling `update_task_status` with `completed` (or `relai task done <id>`) sees the status rewritten to `pending_verification`.
-- The scheduler runs the predicate on the next tick (60s timeout, 8KB stdout/stderr cap; full transcript stored in `verification_log`).
-- Exit `0` promotes to `completed` and emits `task.verified`. Anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`, so the agent retries.
-- Stuck claims older than 5 min are reaped as crashed runs.
+Four verifier kinds:
 
-Example: `relai task create -t "fix tests" -d "..." --verify "pnpm --filter @getrelai/api test"` — the task can't be self-marked done unless the test command exits 0.
+| Kind | CLI flags | When it passes |
+|---|---|---|
+| `shell` | `--verify <cmd>` (optionally `--verify-cwd`) | Command exits 0 (60 s timeout, 8 KB stdout/stderr cap; full transcript stored in `verification_log`). Authoring restricted to orchestrator agents. |
+| `file_exists` | `--verify-kind file_exists --verify-path <path>` | The file exists (relative paths resolve against `--verify-cwd`). |
+| `thread_concluded` | `--verify-kind thread_concluded --verify-thread <id>` | The referenced thread reaches `status = "concluded"`. |
+| `reviewer_agent` | `--verify-kind reviewer_agent --verify-reviewer <agent>`, or `--review-by <agent>` | The named agent posts an `approve` decision via `relai task review` / `submit_review`. Reject fails; no decision yet → scheduler skips the row. Entering `pending_verification` emits `task.review_requested` and auto-subscribes the reviewer; the dashboard surfaces these on the Tasks page with Approve/Reject buttons. |
+
+Example: `relai task create -t "fix tests" -d "..." --verify "pnpm --filter @getrelai/api test"` — the task can't self-mark done unless the test command exits 0.
+
+Example: `relai task create --review-by @reviewer-bot -t "auth refactor" -d "..."` — a peer agent gates the merge.
 
 ## Routing
 
@@ -182,6 +188,7 @@ Set `ANTHROPIC_API_KEY` to enable Claude fallback. Without it, unresolvable task
 | `list_all_tasks`      | View all project tasks                                      |
 | `conclude_plan`       | Mark a planning discussion concluded                        |
 | `session_start`       | Bundled "where am I" snapshot for a fresh session           |
+| `submit_review`       | Submit an approve/reject decision on a `reviewer_agent`-gated task |
 
 ## Environment variables
 
@@ -193,6 +200,7 @@ Set `ANTHROPIC_API_KEY` to enable Claude fallback. Without it, unresolvable task
 | `ANTHROPIC_API_KEY` | —                                               | Enables Claude fallback routing                                                                                                                             |
 | `ROUTING_MODEL`     | `claude-haiku-4-5-20251001`                     | Model for routing decisions                                                                                                                                 |
 | `TASK_POLL_MS`      | `15000`                                         | Routing scheduler interval (ms)                                                                                                                             |
+| `ENABLE_MESSAGE_ROUTING` | `false`                                    | When `true`, the scheduler runs the in-API message loop per project — handoff/question/finding go through a Claude classifier, escalation creates+assigns a senior task, decision broadcasts. Costs one Claude call per inbound classifier message. |
 | `AGENT_ID`          | —                                               | Set after registering an agent                                                                                                                              |
 | `PROJECT_ID`        | —                                               | Set after creating a project                                                                                                                                |
 | `RELAI_CONFIG_DIR`   | `~/.config/relai`                                | Override CLI config location (multi-identity testing)                                                                                                       |

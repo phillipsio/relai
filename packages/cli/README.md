@@ -52,10 +52,15 @@ relai tasks --status pending        Filter by status (comma-separated ok)
 
 relai task create                   Interactive: title, description, priority, assignee
 relai task create --to <agent|@auto> --domains web,api
+relai task create --review-by <agent>      Shorthand for reviewer-agent gating
+relai task create --verify <cmd>           Shell-predicate gating (orchestrator only)
 relai task start <id>               Mark in_progress
 relai task done <id>                Mark completed
 relai task block <id> -n "reason"   Mark blocked with a note
 relai task cancel <id>              Mark cancelled
+relai task review <id> --decision approve|reject [-n "..."]
+                                    Submit a decision on a reviewer-agent
+                                    -gated task (you must be the named reviewer)
 ```
 
 **Threads & messages**
@@ -66,9 +71,11 @@ relai thread new "Phase 3"          Create a thread
 
 relai send <threadId>               Interactive: prompts for type + body
 relai send <threadId> -m "..." -t handoff --to <agent>
-relai inbox                         Unread messages
+relai inbox                         Unread messages, plus any tasks awaiting your review
 relai inbox --read                  Show and mark all as read
 ```
+
+**Non-interactive use.** Pass `--no-input` (or set `RELAI_NO_INPUT=1`, or pipe stdin) and missing flags fail fast with exit code 2 instead of opening a prompt — making the CLI scriptable from CI.
 
 **Project ops**
 

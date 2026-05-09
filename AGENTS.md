@@ -72,7 +72,7 @@ Twelve tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`,
 - `tokens` is the per-agent bearer-credential store: hashed token, `lastUsedAt`, `revokedAt`. Issued at agent registration and via `POST /agents/:id/tokens`
 - `invites` is the project-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`
-- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional verification predicate. Three kinds: `verifyKind = "shell"` (uses `verifyCommand` + optional `verifyCwd` + optional `verifyTimeoutMs` bounded `[1_000, 600_000]`, default 60s — legacy rows with null `verifyKind` and `verifyCommand` set are treated as shell), `verifyKind = "file_exists"` (uses `verifyPath` resolved against `verifyCwd`; no shell exec), and `verifyKind = "thread_concluded"` (uses `verifyThreadId`; passes when the referenced thread's status is `"concluded"`; no shell exec). **Authoring a shell predicate requires `request.agent.role === "orchestrator"` or the deprecated admin-secret path** — workers and other roles get 403. The structured kinds are unrestricted. When any predicate is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the predicate (shell kind: 8KB stdout/stderr cap; written to `verification_log` for all kinds). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. Stuck claims older than 5 min are reaped as crashed runs.
+- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional verification predicate. Four kinds: `verifyKind = "shell"` (uses `verifyCommand` + optional `verifyCwd` + optional `verifyTimeoutMs` bounded `[1_000, 600_000]`, default 60s — legacy rows with null `verifyKind` and `verifyCommand` set are treated as shell), `verifyKind = "file_exists"` (uses `verifyPath` resolved against `verifyCwd`; no shell exec), `verifyKind = "thread_concluded"` (uses `verifyThreadId`; passes when the referenced thread's status is `"concluded"`; no shell exec), and `verifyKind = "reviewer_agent"` (uses `verifyReviewerId`; passes when the named agent posts an approve decision via `POST /tasks/:id/review`, fails on reject; the scheduler skips the row until a decision lands). **Authoring a shell predicate requires `request.agent.role === "orchestrator"` or the deprecated admin-secret path** — workers and other roles get 403. The structured kinds are unrestricted. When any predicate is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the predicate (shell kind: 8KB stdout/stderr cap; written to `verification_log` for all kinds). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. For `reviewer_agent`, entering `pending_verification` also emits `task.review_requested` (notifying the reviewer + auto-subscribing them); the review endpoint emits `task.review_submitted` when the reviewer decides. Stuck claims older than 5 min are reaped as crashed runs.
 - `subscriptions` records which agents want event notifications for a given thread/task/agent target
 - `events` is the persisted mirror of the in-process bus; written on every `publish()` so `/session/start` can show what an agent missed. SSE stays live; this table is history.
 
@@ -106,6 +106,7 @@ Fastify v4 with Zod validation throughout.
 
 **Tasks**
 - `POST /tasks`, `GET /tasks?projectId=&status=&assignedTo=`, `GET /tasks/:id`, `PUT /tasks/:id`
+- `POST /tasks/:id/review` — reviewer-agent decision endpoint. Body `{ decision: "approve"|"reject", note? }`. Caller must equal `tasks.verifyReviewerId`; task must be in `pending_verification`. Writes the decision into `metadata.review`; the verify scheduler picks it up on its next tick.
 
 **Threads & messages**
 - `POST /threads`, `GET /threads?projectId=&type=`, `DELETE /threads/:id`, `PUT /threads/:id/conclude`
@@ -139,8 +140,8 @@ The `scheduler` option on `buildServer()` is `false` in tests to avoid backgroun
 
 ### MCP server (packages/mcp-server)
 
-Ten tools with model-agnostic descriptions (work with any MCP-compatible client):
-`get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`.
+Eleven tools with model-agnostic descriptions (work with any MCP-compatible client):
+`get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`, `submit_review`.
 
 Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
@@ -204,11 +205,12 @@ Currently tested:
 - `packages/api/src/lib/verify.test.ts` — shell predicate executor (timeout, stdout/stderr cap)
 - `packages/api/src/lib/verify-file-exists.test.ts` — file_exists predicate (absolute, missing, relative-to-cwd)
 - `packages/api/src/lib/verify-thread-concluded.test.ts` — thread_concluded predicate (concluded, open, missing)
+- `packages/api/src/lib/verify-reviewer-agent.test.ts` — reviewer_agent predicate (approve, reject)
 - `packages/orchestrator/src/router/rules.test.ts` — rules-based routing logic
 - `packages/orchestrator/src/message-loop.test.ts` — handoff/finding/decision/question/escalation handling
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~226 tests across the workspace (api alone: 130). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~238 tests across the workspace (api alone: 141). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 

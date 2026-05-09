@@ -8,6 +8,7 @@ import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
 import { runFileExistsVerification } from "../verify-file-exists.js";
 import { runThreadConcludedVerification } from "../verify-thread-concluded.js";
+import { runReviewerAgentVerification, type ReviewDecision } from "../verify-reviewer-agent.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
 
@@ -216,9 +217,10 @@ export async function verifyPending(
     // behave as kind="shell".
     const kind = task.verifyKind ?? (task.verifyCommand ? "shell" : null);
     const misconfigured =
-      (kind === "shell"            && !task.verifyCommand)  ||
-      (kind === "file_exists"      && !task.verifyPath)     ||
-      (kind === "thread_concluded" && !task.verifyThreadId) ||
+      (kind === "shell"            && !task.verifyCommand)    ||
+      (kind === "file_exists"      && !task.verifyPath)       ||
+      (kind === "thread_concluded" && !task.verifyThreadId)   ||
+      (kind === "reviewer_agent"   && !task.verifyReviewerId) ||
       kind === null;
     if (misconfigured) {
       // Misconfigured row — clear claim and revert to assigned.
@@ -226,6 +228,21 @@ export async function verifyPending(
         .set({ status: "assigned", verifyingAt: null, updatedAt: new Date() })
         .where(eq(tasks.id, task.id));
       continue;
+    }
+
+    // Reviewer-agent kind is asynchronous: the decision arrives via
+    // POST /tasks/:id/review and lands in metadata.review. If it's not there
+    // yet, release the claim and try again next tick — no log row, no status
+    // change. (Stuck recovery still applies: a wedged claim is treated as
+    // crashed and synthesized as timed-out below.)
+    if (kind === "reviewer_agent" && !wasStuck) {
+      const review = (task.metadata as Record<string, unknown> | null)?.review as ReviewDecision | undefined;
+      if (!review || (review.decision !== "approve" && review.decision !== "reject")) {
+        await db.update(tasks)
+          .set({ verifyingAt: null })
+          .where(eq(tasks.id, task.id));
+        continue;
+      }
     }
 
     let result: VerificationResult;
@@ -243,6 +260,9 @@ export async function verifyPending(
           result = await runFileExistsVerification(task.verifyPath!, task.verifyCwd);
         } else if (kind === "thread_concluded") {
           result = await runThreadConcludedVerification(db, task.verifyThreadId!);
+        } else if (kind === "reviewer_agent") {
+          const review = (task.metadata as Record<string, unknown>).review as ReviewDecision;
+          result = runReviewerAgentVerification(review);
         } else {
           result = await exec(task.verifyCommand!, task.verifyCwd, task.verifyTimeoutMs ?? undefined);
         }
@@ -262,6 +282,7 @@ export async function verifyPending(
     const logCommand =
       kind === "file_exists"      ? `file_exists:${task.verifyPath}`           :
       kind === "thread_concluded" ? `thread_concluded:${task.verifyThreadId}`  :
+      kind === "reviewer_agent"   ? `reviewer_agent:${task.verifyReviewerId}`  :
       task.verifyCommand!;
 
     const [logRow] = await db.insert(verificationLog).values({

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray } from "drizzle-orm";
-import { tasks, projects } from "@getrelai/db";
+import { tasks, projects, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import type { Db } from "@getrelai/db";
@@ -28,25 +28,36 @@ const createSchema = z.object({
   //   - "file_exists"      — checks `verifyPath`; no shell exec.
   //   - "thread_concluded" — passes when `verifyThreadId`'s status is
   //                          "concluded"; useful for plan-driven flows.
-  verifyKind:      z.enum(["shell", "file_exists", "thread_concluded"]).optional(),
+  //   - "reviewer_agent"   — passes when `verifyReviewerId` posts an "approve"
+  //                          decision via POST /tasks/:id/review.
+  verifyKind:      z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
   verifyCommand:   z.string().min(1).optional(),
   verifyCwd:       z.string().optional(),
   verifyPath:      z.string().min(1).optional(),
   verifyThreadId:  z.string().min(1).optional(),
+  verifyReviewerId: z.string().min(1).optional(),
   // Per-task override for the predicate timeout. Bounded at [1s, 10min];
   // null/undefined falls back to the executor default of 60s.
   verifyTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
 })
 .refine(
   (v) => {
-    if (v.verifyKind === "shell"            && !v.verifyCommand)  return false;
-    if (v.verifyKind === "file_exists"      && !v.verifyPath)     return false;
-    if (v.verifyKind === "thread_concluded" && !v.verifyThreadId) return false;
+    if (v.verifyKind === "shell"            && !v.verifyCommand)    return false;
+    if (v.verifyKind === "file_exists"      && !v.verifyPath)       return false;
+    if (v.verifyKind === "thread_concluded" && !v.verifyThreadId)   return false;
+    if (v.verifyKind === "reviewer_agent"   && !v.verifyReviewerId) return false;
     // Non-shell kinds never use verifyCommand — reject mixed config.
-    if ((v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded") && v.verifyCommand) return false;
+    if (
+      (v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded" || v.verifyKind === "reviewer_agent") &&
+      v.verifyCommand
+    ) return false;
+    // Reviewer-agent rejects fields that belong to other kinds, and vice versa.
+    if (v.verifyKind !== "reviewer_agent"   && v.verifyReviewerId) return false;
+    if (v.verifyKind !== "thread_concluded" && v.verifyThreadId)   return false;
+    if (v.verifyKind !== "file_exists"      && v.verifyPath)       return false;
     return true;
   },
-  { message: "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId) and non-shell kinds forbid verifyCommand" },
+  { message: "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId) and fields cannot cross kinds" },
 );
 
 const updateSchema = z.object({
@@ -77,6 +88,20 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
           message: "Only orchestrator agents may author shell verifyCommand. Use verifyKind=file_exists or verifyKind=thread_concluded for structured predicates.",
         },
       });
+    }
+
+    // Reviewer-agent kind: confirm the named reviewer is an agent in the same
+    // project. Catches typos and prevents pointing at agents from other tenants.
+    if (body.data.verifyKind === "reviewer_agent") {
+      const [reviewer] = await db
+        .select({ id: agents.id, projectId: agents.projectId })
+        .from(agents)
+        .where(eq(agents.id, body.data.verifyReviewerId!));
+      if (!reviewer || reviewer.projectId !== body.data.projectId) {
+        return reply.status(400).send({
+          error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" },
+        });
+      }
     }
 
     // Resolve effective assignee: explicit value wins, else the project's default.
@@ -154,20 +179,23 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // verifying / completed), rewrite the transition to pending_verification.
     // The scheduler will run the predicate on the next tick.
     const updates: Record<string, unknown> = { ...body.data };
+    let reviewerToNotify: string | null = null;
     if (updates.status === "completed") {
       const [existing] = await db
         .select({
-          verifyKind:     tasks.verifyKind,
-          verifyCommand:  tasks.verifyCommand,
-          verifyPath:     tasks.verifyPath,
-          verifyThreadId: tasks.verifyThreadId,
-          status:         tasks.status,
+          verifyKind:       tasks.verifyKind,
+          verifyCommand:    tasks.verifyCommand,
+          verifyPath:       tasks.verifyPath,
+          verifyThreadId:   tasks.verifyThreadId,
+          verifyReviewerId: tasks.verifyReviewerId,
+          status:           tasks.status,
         })
         .from(tasks)
         .where(eq(tasks.id, request.params.id));
       const hasVerify =
-        existing?.verifyKind === "file_exists"      ? !!existing.verifyPath     :
-        existing?.verifyKind === "thread_concluded" ? !!existing.verifyThreadId :
+        existing?.verifyKind === "file_exists"      ? !!existing.verifyPath       :
+        existing?.verifyKind === "thread_concluded" ? !!existing.verifyThreadId   :
+        existing?.verifyKind === "reviewer_agent"   ? !!existing.verifyReviewerId :
         !!existing?.verifyCommand;  // shell (or legacy null+command)
       if (
         hasVerify &&
@@ -175,6 +203,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         existing!.status !== "completed"
       ) {
         updates.status = "pending_verification";
+        if (existing!.verifyKind === "reviewer_agent") {
+          reviewerToNotify = existing!.verifyReviewerId;
+        }
       }
     }
 
@@ -198,6 +229,77 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       createdAt:  task.updatedAt.toISOString(),
     });
 
+    // Reviewer-agent kind: nudge the reviewer with a dedicated event and
+    // ensure they're subscribed to the task so the SSE stream picks it up.
+    if (reviewerToNotify) {
+      await ensureSubscription(db, reviewerToNotify, "task", task.id);
+      await publish(db, {
+        id:         newId("evt"),
+        kind:       "task.review_requested",
+        projectId:  task.projectId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: [{ targetType: "agent", targetId: reviewerToNotify }],
+        payload:    { task, reviewerId: reviewerToNotify },
+        createdAt:  task.updatedAt.toISOString(),
+      });
+    }
+
     return { data: task };
+  });
+
+  // ── Reviewer-agent decision endpoint ──────────────────────────────────────
+  // Records an approve/reject decision from the reviewer named in
+  // `tasks.verifyReviewerId`. The decision lands in metadata.review; the
+  // verify scheduler picks it up on its next tick and either promotes the
+  // task to `completed` or returns it to `assigned`.
+  const reviewSchema = z.object({
+    decision: z.enum(["approve", "reject"]),
+    note:     z.string().max(2_000).optional(),
+  });
+
+  fastify.post<{ Params: { id: string } }>("/tasks/:id/review", async (request, reply) => {
+    if (!request.agent) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "review requires an authenticated agent" } });
+    }
+    const body = reviewSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, request.params.id));
+    if (!task) return reply.status(404).send({ error: { code: "not_found", message: "Task not found" } });
+    if (task.verifyKind !== "reviewer_agent" || !task.verifyReviewerId) {
+      return reply.status(400).send({ error: { code: "wrong_kind", message: "task does not use reviewer_agent verification" } });
+    }
+    if (task.verifyReviewerId !== request.agent.id) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "only the named reviewer may submit a decision" } });
+    }
+    if (task.status !== "pending_verification") {
+      return reply.status(409).send({ error: { code: "wrong_state", message: `task is ${task.status}; reviews accepted only in pending_verification` } });
+    }
+
+    const review = {
+      decision:   body.data.decision,
+      reviewerId: request.agent.id,
+      decidedAt:  new Date().toISOString(),
+      ...(body.data.note ? { note: body.data.note } : {}),
+    };
+    const meta = (task.metadata ?? {}) as Record<string, unknown>;
+    const [updated] = await db.update(tasks)
+      .set({ metadata: { ...meta, review }, updatedAt: new Date() })
+      .where(eq(tasks.id, task.id))
+      .returning();
+
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "task.review_submitted",
+      projectId:  task.projectId,
+      targetType: "task",
+      targetId:   task.id,
+      alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+      payload:    { task: updated, review },
+      createdAt:  updated.updatedAt.toISOString(),
+    });
+
+    return { data: updated };
   });
 };

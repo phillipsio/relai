@@ -287,6 +287,94 @@ describe("verifyPending", () => {
     expect((meta.lastVerification as { exitCode: number }).exitCode).toBe(1);
   });
 
+  it("kind=reviewer_agent passes when an approve decision is recorded", async () => {
+    // Reviewer agent in the same project.
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ projectId, name: "rev-approve", role: "worker" }),
+    });
+    const reviewerId = reviewer.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "ra", description: "x",
+        assignedTo: agentId,
+        verifyKind:       "reviewer_agent",
+        verifyReviewerId: reviewerId,
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+
+    // First tick — no decision yet → row should remain pending_verification
+    // with verifyingAt cleared, no log row written.
+    let shellExecCalled = false;
+    await verifyPending(db, projectId, async () => {
+      shellExecCalled = true;
+      return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
+    });
+    expect(shellExecCalled).toBe(false);
+    {
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("pending_verification");
+      expect(row.verifyingAt).toBeNull();
+      const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+      expect(logs.length).toBe(0);
+    }
+
+    // Inject the approval directly via the same metadata shape the route writes.
+    await db.update(tasks)
+      .set({ metadata: { review: { decision: "approve", reviewerId, decidedAt: new Date().toISOString() } } })
+      .where(eq(tasks.id, taskId));
+
+    await verifyPending(db, projectId);
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("completed");
+    const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+    expect(logs[0].command).toBe(`reviewer_agent:${reviewerId}`);
+    expect(logs[0].exitCode).toBe(0);
+  });
+
+  it("kind=reviewer_agent fails when a reject decision is recorded", async () => {
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ projectId, name: "rev-reject", role: "worker" }),
+    });
+    const reviewerId = reviewer.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "ra-rej", description: "x",
+        assignedTo: agentId,
+        verifyKind:       "reviewer_agent",
+        verifyReviewerId: reviewerId,
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+    await db.update(tasks)
+      .set({ metadata: { review: { decision: "reject", reviewerId, decidedAt: new Date().toISOString(), note: "needs tests" } } })
+      .where(eq(tasks.id, taskId));
+
+    await verifyPending(db, projectId);
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("assigned");
+    const meta = row.metadata as Record<string, unknown>;
+    expect((meta.lastVerification as { exitCode: number }).exitCode).toBe(1);
+  });
+
   it("recovers stuck claims older than the threshold", async () => {
     const taskId = await makePendingVerificationTask("noop-stuck");
     const db = createDb(DB_URL);

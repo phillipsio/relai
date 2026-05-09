@@ -607,6 +607,69 @@ describe("PUT /tasks/:id", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("accepts kind=reviewer_agent with a reviewer in the same project", async () => {
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "rev-ok", role: "worker" }),
+    });
+    const reviewerId = reviewer.json().data.id;
+
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "needs review", description: "x",
+        verifyKind:       "reviewer_agent",
+        verifyReviewerId: reviewerId,
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const data = res.json().data;
+    expect(data.verifyKind).toBe("reviewer_agent");
+    expect(data.verifyReviewerId).toBe(reviewerId);
+  });
+
+  it("rejects kind=reviewer_agent without verifyReviewerId", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyKind: "reviewer_agent",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects kind=reviewer_agent when the reviewer is from another project", async () => {
+    const otherProj = await app.inject({
+      method: "POST", url: "/projects",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "__test__ other-rev" }),
+    });
+    const otherProjectId = otherProj.json().data.id;
+    const stranger = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: otherProjectId, name: "stranger", role: "worker" }),
+    });
+    const strangerId = stranger.json().data.id;
+
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "x", description: "x",
+        verifyKind:       "reviewer_agent",
+        verifyReviewerId: strangerId,
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+
+    await app.inject({ method: "DELETE", url: `/projects/${otherProjectId}`, headers: AUTH });
+  });
+
   it("leaves completed alone when no verifyCommand", async () => {
     const create = await app.inject({
       method: "POST", url: "/tasks",
@@ -626,6 +689,119 @@ describe("PUT /tasks/:id", () => {
       body: JSON.stringify({ status: "completed" }),
     });
     expect(done.json().data.status).toBe("completed");
+  });
+});
+
+// ── reviewer-agent decision endpoint ──────────────────────────────────────────
+describe("POST /tasks/:id/review", () => {
+  async function setupReviewTask(reviewerName: string) {
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: reviewerName, role: "worker" }),
+    });
+    const reviewerId    = reviewer.json().data.id as string;
+    const reviewerToken = reviewer.json().token as string;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId,
+        title: "review-me", description: "x",
+        assignedTo: agentId,
+        verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
+      }),
+    });
+    const id = create.json().data.id as string;
+    // Move to pending_verification.
+    await app.inject({
+      method: "PUT", url: `/tasks/${id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    return { id, reviewerId, reviewerToken };
+  }
+
+  it("records an approve decision and stores it in metadata.review", async () => {
+    const { id, reviewerId, reviewerToken } = await setupReviewTask("rev-endpoint-1");
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { Authorization: `Bearer ${reviewerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve", note: "lgtm" }),
+    });
+    expect(res.statusCode).toBe(200);
+    const review = (res.json().data.metadata as { review: { decision: string; reviewerId: string; note?: string } }).review;
+    expect(review.decision).toBe("approve");
+    expect(review.reviewerId).toBe(reviewerId);
+    expect(review.note).toBe("lgtm");
+  });
+
+  it("rejects when the caller is not the named reviewer", async () => {
+    const { id } = await setupReviewTask("rev-endpoint-2");
+    // Re-use the test agentToken (different identity from the reviewer).
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve" }),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("rejects when the task is not in pending_verification", async () => {
+    // Build a fresh reviewer-agent task but DON'T transition it to pending_verification.
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "rev-endpoint-3", role: "worker" }),
+    });
+    const reviewerToken = reviewer.json().token as string;
+    const reviewerId    = reviewer.json().data.id as string;
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "open", description: "x",
+        assignedTo: agentId,
+        verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
+      }),
+    });
+    const id = create.json().data.id;
+
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { Authorization: `Bearer ${reviewerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve" }),
+    });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("rejects when the task is not a reviewer_agent kind", async () => {
+    // Need a real per-agent token so request.agent is populated and we hit
+    // the "wrong kind" branch rather than the "no agent identity" branch.
+    const caller = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "rev-endpoint-4-caller", role: "worker" }),
+    });
+    const callerToken = caller.json().token as string;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "plain", description: "x",
+        assignedTo: agentId,
+      }),
+    });
+    const id = create.json().data.id;
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { Authorization: `Bearer ${callerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve" }),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("wrong_kind");
   });
 });
 

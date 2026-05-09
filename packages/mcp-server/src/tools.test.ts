@@ -20,6 +20,8 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     listAgents: vi.fn().mockResolvedValue([]),
     createThread: vi.fn().mockResolvedValue({ id: "thread_1", title: "test" }),
     listThreads: vi.fn().mockResolvedValue([]),
+    submitReview: vi.fn().mockResolvedValue({ id: "task_1", status: "pending_verification" }),
+    concludePlan: vi.fn().mockResolvedValue({}),
     getSessionStart: vi.fn().mockResolvedValue({
       agent: { id: AGENT_ID, name: "test", specialization: null, workerType: null, repoPath: null },
       project: { id: PROJECT_ID, name: "test", context: null, defaultAssignee: null },
@@ -36,9 +38,9 @@ function getHandler(tools: ReturnType<typeof buildTools>, name: string) {
 }
 
 describe("buildTools", () => {
-  it("returns all 10 tools", () => {
+  it("returns all 11 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, PROJECT_ID);
-    expect(tools).toHaveLength(10);
+    expect(tools).toHaveLength(11);
     const names = tools.map((t) => t.name);
     expect(names).toContain("get_my_tasks");
     expect(names).toContain("update_task_status");
@@ -50,6 +52,18 @@ describe("buildTools", () => {
     expect(names).toContain("conclude_plan");
     expect(names).toContain("list_all_tasks");
     expect(names).toContain("session_start");
+    expect(names).toContain("submit_review");
+  });
+});
+
+describe("submit_review", () => {
+  it("forwards decision and note to submitReview and returns MCP content", async () => {
+    const submit = vi.fn().mockResolvedValue({ id: "task_42", status: "pending_verification" });
+    const tools = buildTools(mockClient({ submitReview: submit }), AGENT_ID, PROJECT_ID);
+    const result = await getHandler(tools, "submit_review")({ taskId: "task_42", decision: "reject", note: "needs tests" });
+    expect(submit).toHaveBeenCalledWith("task_42", { decision: "reject", note: "needs tests" });
+    expect(result.content[0].type).toBe("text");
+    expect(result.content[0].text).toContain("task_42");
   });
 });
 

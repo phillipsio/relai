@@ -62,6 +62,10 @@ export class ApiClient {
     return this.request<unknown>("PUT", `/tasks/${id}`, body);
   }
 
+  submitReview(taskId: string, body: { decision: "approve" | "reject"; note?: string }) {
+    return this.request<unknown>("POST", `/tasks/${taskId}/review`, body);
+  }
+
   // Messages
   sendMessage(threadId: string, body: {
     fromAgent: string;

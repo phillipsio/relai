@@ -10,6 +10,8 @@ export type EventKind =
   | "task.stalled"
   | "task.verified"
   | "task.verification_failed"
+  | "task.review_requested"
+  | "task.review_submitted"
   | "thread.created"
   | "thread.concluded";
 

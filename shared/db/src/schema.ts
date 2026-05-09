@@ -14,7 +14,7 @@ export const messageTypeEnum = pgEnum("message_type", [
 
 export const routingMethodEnum = pgEnum("routing_method", ["rules", "claude"]);
 
-export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded"]);
+export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded", "reviewer_agent"]);
 
 // ── Projects ────────────────────────────────────────────────────────────────
 
@@ -140,6 +140,11 @@ export const tasks = pgTable("tasks", {
   // kind="thread_concluded" — passes once the referenced thread reaches
   // status="concluded". No FK constraint here (declared after threads).
   verifyThreadId:  text("verify_thread_id"),
+  // kind="reviewer_agent" — passes when the named agent posts an "approve"
+  // decision via POST /tasks/:id/review. Reject → fail; no decision → the
+  // scheduler skips the row this tick. The decision itself lives in
+  // metadata.review (set by the review endpoint), not on the row.
+  verifyReviewerId: text("verify_reviewer_id"),
   // Optional per-task override for the verification predicate timeout. Null
   // means use the executor default (60_000 ms). Stored as ms; Zod clamps to
   // [1_000, 600_000] (1s..10min) at the route layer.

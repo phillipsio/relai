@@ -240,5 +240,23 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
         };
       },
     },
+
+    {
+      name: "submit_review",
+      description:
+        "Submit your approval decision on a task that names you as the reviewer (verifyKind=" +
+        "'reviewer_agent'). The task must be in 'pending_verification'. Approve to promote it to " +
+        "'completed'; reject to send it back to 'assigned' so the original worker can iterate. " +
+        "Reject decisions should include a note explaining what to change.",
+      inputSchema: z.object({
+        taskId:   z.string().describe("The ID of the task you are reviewing."),
+        decision: z.enum(["approve", "reject"]).describe("Approve or reject."),
+        note:     z.string().max(2_000).optional().describe("Required for reject; useful for approve. Concise reason or guidance."),
+      }),
+      handler: async (input: { taskId: string; decision: "approve" | "reject"; note?: string }) => {
+        const task = await client.submitReview(input.taskId, { decision: input.decision, note: input.note });
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
   ];
 }

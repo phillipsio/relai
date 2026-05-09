@@ -139,31 +139,6 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.17)
 
-  packages/orchestrator:
-    dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.39.0
-        version: 0.39.0
-      '@getrelai/db':
-        specifier: workspace:*
-        version: link:../../shared/db
-      '@getrelai/types':
-        specifier: workspace:*
-        version: link:../../shared/types
-      nanoid:
-        specifier: ^5.0.0
-        version: 5.1.9
-    devDependencies:
-      tsx:
-        specifier: ^4.7.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.4.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.0.0
-        version: 2.1.9(@types/node@22.19.17)
-
   packages/web:
     dependencies:
       '@getrelai/types':

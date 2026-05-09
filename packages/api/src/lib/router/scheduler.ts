@@ -11,11 +11,14 @@ import { runThreadConcludedVerification } from "../verify-thread-concluded.js";
 import { runReviewerAgentVerification, type ReviewDecision } from "../verify-reviewer-agent.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
+import { runMessageLoopCycle } from "./message-loop.js";
 
 const VERIFY_STUCK_MS = 5 * 60 * 1000;
 
 const TASK_POLL_MS         = Number(process.env.TASK_POLL_MS         ?? 15_000);
 const BLOCKED_POLL_MS      = Number(process.env.BLOCKED_POLL_MS      ?? 15_000);
+const messageRoutingEnabled = () =>
+  process.env.ENABLE_MESSAGE_ROUTING === "true" || process.env.ENABLE_MESSAGE_ROUTING === "1";
 // A task is considered stalled when it's been `in_progress` longer than this
 // without any update. Cleared on the next PUT /tasks/:id. Read lazily so tests
 // can override via env at runtime.
@@ -381,7 +384,7 @@ export async function verifyPending(
 // ── Project-scoped cycle ──────────────────────────────────────────────────────
 
 async function runCycle(db: Db, projectId: string): Promise<void> {
-  await Promise.all([
+  const tasks: Promise<void>[] = [
     routePendingTasks(db, projectId).catch((err) =>
       console.error(`[scheduler] routing error project=${projectId}:`, err)
     ),
@@ -394,7 +397,19 @@ async function runCycle(db: Db, projectId: string): Promise<void> {
     verifyPending(db, projectId).catch((err) =>
       console.error(`[scheduler] verify error project=${projectId}:`, err)
     ),
-  ]);
+  ];
+
+  if (messageRoutingEnabled()) {
+    const ai = getAnthropic();
+    const model = process.env.ROUTING_MODEL ?? "claude-haiku-4-5-20251001";
+    tasks.push(
+      runMessageLoopCycle({ db, anthropic: ai, model }, projectId).catch((err) =>
+        console.error(`[scheduler] message-loop error project=${projectId}:`, err)
+      )
+    );
+  }
+
+  await Promise.all(tasks);
 }
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -425,11 +440,24 @@ export function startRoutingScheduler(db: Db): void {
         .from(tasks)
         .where(eq(tasks.status, "pending_verification"));
 
+      // When message routing is enabled, also tick every project that has any
+      // orchestrator agent — message-loop fans out from project-wide unread,
+      // and we don't know which projects have unread without querying messages.
+      // Ticking every project with an orchestrator is cheap (one extra select
+      // per tick when the cycle would otherwise be idle).
+      const messageProjects = messageRoutingEnabled()
+        ? await db
+            .selectDistinct({ projectId: agents.projectId })
+            .from(agents)
+            .where(eq(agents.role, "orchestrator"))
+        : [];
+
       const projectIds = Array.from(new Set([
         ...auto.map((r) => r.projectId),
         ...blocked.map((r) => r.projectId),
         ...inProgress.map((r) => r.projectId),
         ...verifying.map((r) => r.projectId),
+        ...messageProjects.map((r) => r.projectId),
       ]));
 
       await Promise.all(projectIds.map((id) => runCycle(db, id)));

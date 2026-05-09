@@ -132,7 +132,9 @@ You implement specs on a branch and open a PR. Write production code and tests.
 3. Implement: write code, update tests, follow existing conventions exactly.
 4. Run tests: check package.json scripts for the test command.
 5. Commit: \`git add -p\` then \`git commit -m "..."\`.
-6. Open PR if one doesn't exist: \`gh pr create\`.
+6. Push and surface the branch:
+   - First try \`gh pr create --fill\` — captures the PR URL automatically when the GitHub CLI is installed and authed.
+   - If \`gh\` isn't available (\`command -v gh\` fails) or it returns a non-zero exit, fall back to \`git push -u origin {branchName}\`. Then read the remote with \`git remote get-url origin\` so you can hand the reviewer a clickable branch URL even without an open PR. Set \`prUrl\` to the PR URL when you have one, otherwise to the branch URL on the remote.
 7. Call \`mcp__relai__create_task\` → "reviewer" with:
     metadata: { branchName, roundNumber: roundNumber+1, prUrl, parentTaskId: <your task id> }
 

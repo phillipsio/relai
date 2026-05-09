@@ -20,11 +20,36 @@ export async function inboxCommand(options: { read?: boolean }) {
   const spinner = ora("Checking inbox...").start();
 
   try {
-    const messages = await client.getUnread(config.agentId, config.projectId);
+    const [messages, pendingTasks] = await Promise.all([
+      client.getUnread(config.agentId, config.projectId),
+      client.getTasks({ projectId: config.projectId, status: "pending_verification" }),
+    ]);
     spinner.stop();
 
-    if (messages.length === 0) {
+    const pendingReviews = pendingTasks.filter((t) =>
+      t.verifyKind === "reviewer_agent" && t.verifyReviewerId === config.agentId,
+    );
+
+    if (messages.length === 0 && pendingReviews.length === 0) {
       console.log(chalk.dim("Inbox empty."));
+      return;
+    }
+
+    if (pendingReviews.length > 0) {
+      console.log();
+      console.log(chalk.bold.yellow(`Pending reviews (${pendingReviews.length})`));
+      for (const task of pendingReviews) {
+        const date = new Date(task.updatedAt).toLocaleString();
+        const titlePreview = task.title.length > 80 ? task.title.slice(0, 80) + "…" : task.title;
+        console.log(`  ${chalk.yellow("review")}     ${chalk.dim(task.id)}`);
+        console.log(`  ${chalk.dim("from:")} ${task.assignedTo ?? "?"}  ${chalk.dim(date)}`);
+        console.log(`  ${titlePreview}`);
+        console.log(`  ${chalk.dim(`relai task review ${task.id} --decision approve|reject`)}`);
+        console.log();
+      }
+    }
+
+    if (messages.length === 0) {
       return;
     }
 

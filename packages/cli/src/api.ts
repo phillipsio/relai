@@ -189,6 +189,9 @@ export interface TaskRow {
   priority: string;
   domains: string[];
   assignedTo?: string;
+  verifyKind?: string | null;
+  verifyReviewerId?: string | null;
+  metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }

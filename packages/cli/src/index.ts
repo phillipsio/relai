@@ -73,6 +73,7 @@ task
   .option("--verify-path <path>", "Path that must exist (--verify-kind file_exists)")
   .option("--verify-thread <id>", "Thread that must be concluded (--verify-kind thread_concluded)")
   .option("--verify-reviewer <agent>", "Agent (id or name) who must approve (--verify-kind reviewer_agent)")
+  .option("--review-by <agent>", "Shorthand for --verify-kind reviewer_agent --verify-reviewer <agent>")
   .action(taskCreateCommand);
 
 task

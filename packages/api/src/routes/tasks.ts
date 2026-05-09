@@ -259,9 +259,6 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
   });
 
   fastify.post<{ Params: { id: string } }>("/tasks/:id/review", async (request, reply) => {
-    if (!request.agent) {
-      return reply.status(403).send({ error: { code: "forbidden", message: "review requires an authenticated agent" } });
-    }
     const body = reviewSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
@@ -270,17 +267,29 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     if (task.verifyKind !== "reviewer_agent" || !task.verifyReviewerId) {
       return reply.status(400).send({ error: { code: "wrong_kind", message: "task does not use reviewer_agent verification" } });
     }
-    if (task.verifyReviewerId !== request.agent.id) {
-      return reply.status(403).send({ error: { code: "forbidden", message: "only the named reviewer may submit a decision" } });
-    }
     if (task.status !== "pending_verification") {
       return reply.status(409).send({ error: { code: "wrong_state", message: `task is ${task.status}; reviews accepted only in pending_verification` } });
     }
 
+    // Authorization: the named reviewer agent always wins. The deprecated
+    // admin-secret path (no request.agent attached) is also accepted so the
+    // self-hosted dashboard can stand in as a human reviewer; the recorded
+    // reviewerId stays the named verifyReviewerId so audit semantics line up
+    // with the agent-driven path. Anything else is rejected.
+    const isNamedReviewer = !!request.agent && task.verifyReviewerId === request.agent.id;
+    const isAdminOverride = !request.agent;
+    if (!isNamedReviewer && !isAdminOverride) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "only the named reviewer may submit a decision" } });
+    }
+    if (isAdminOverride) {
+      console.warn(`[tasks] /tasks/${task.id}/review submitted via deprecated admin-secret on behalf of ${task.verifyReviewerId}`);
+    }
+
     const review = {
       decision:   body.data.decision,
-      reviewerId: request.agent.id,
+      reviewerId: task.verifyReviewerId,
       decidedAt:  new Date().toISOString(),
+      ...(isAdminOverride ? { submittedBy: "admin" as const } : {}),
       ...(body.data.note ? { note: body.data.note } : {}),
     };
     const meta = (task.metadata ?? {}) as Record<string, unknown>;

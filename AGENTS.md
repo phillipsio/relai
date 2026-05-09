@@ -104,7 +104,7 @@ Fastify v4 with Zod validation throughout.
 
 **Tasks**
 - `POST /tasks`, `GET /tasks?projectId=&status=&assignedTo=`, `GET /tasks/:id`, `PUT /tasks/:id`
-- `POST /tasks/:id/review` — reviewer-agent decision endpoint. Body `{ decision: "approve"|"reject", note? }`. Caller must equal `tasks.verifyReviewerId`; task must be in `pending_verification`. Writes the decision into `metadata.review`; the verify scheduler picks it up on its next tick.
+- `POST /tasks/:id/review` — reviewer-agent decision endpoint. Body `{ decision: "approve"|"reject", note? }`. Caller must equal `tasks.verifyReviewerId`, **or** authenticate via the deprecated admin-secret path (in which case the decision is recorded as belonging to the named reviewer with `metadata.review.submittedBy = "admin"`, so the self-hosted dashboard can stand in as a human reviewer). Task must be in `pending_verification`. Writes the decision into `metadata.review`; the verify scheduler picks it up on its next tick.
 
 **Threads & messages**
 - `POST /threads`, `GET /threads?projectId=&type=`, `DELETE /threads/:id`, `PUT /threads/:id/conclude`

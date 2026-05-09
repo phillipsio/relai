@@ -7,13 +7,14 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import type { WebApiClient, TaskRow, AgentRow } from "../lib/api";
 
-const STATUS_BADGE: Record<string, "default" | "blue" | "yellow" | "green" | "red" | "outline"> = {
-  pending:     "outline",
-  assigned:    "blue",
-  in_progress: "yellow",
-  completed:   "green",
-  blocked:     "red",
-  cancelled:   "outline",
+const STATUS_BADGE: Record<string, "default" | "blue" | "yellow" | "green" | "red" | "purple" | "outline"> = {
+  pending:              "outline",
+  assigned:             "blue",
+  in_progress:          "yellow",
+  pending_verification: "purple",
+  completed:            "green",
+  blocked:              "red",
+  cancelled:            "outline",
 };
 
 const PRIORITY_BADGE: Record<string, "default" | "yellow" | "red" | "outline"> = {
@@ -23,7 +24,7 @@ const PRIORITY_BADGE: Record<string, "default" | "yellow" | "red" | "outline"> =
   urgent: "red",
 };
 
-const FILTERS = ["all", "pending", "assigned", "in_progress", "blocked", "completed"];
+const FILTERS = ["all", "pending", "assigned", "in_progress", "pending_verification", "blocked", "completed"];
 
 function TaskItem({ task, api, agents }: { task: TaskRow; api: WebApiClient; agents: AgentRow[] }) {
   const qc = useQueryClient();
@@ -32,10 +33,20 @@ function TaskItem({ task, api, agents }: { task: TaskRow; api: WebApiClient; age
       api.updateTask(task.id, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });
+  const review = useMutation({
+    mutationFn: (decision: "approve" | "reject") =>
+      api.submitReview(task.id, { decision }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+  });
 
   const assignedAgent = agents.find((a) => a.id === task.assignedTo);
   const workers = agents.filter((a) => a.role === "worker");
   const canAssign = task.status !== "completed" && task.status !== "cancelled";
+  const isAwaitingReview =
+    task.status === "pending_verification" && task.verifyKind === "reviewer_agent";
+  const reviewerAgent = isAwaitingReview
+    ? agents.find((a) => a.id === task.verifyReviewerId)
+    : undefined;
 
   return (
     <div className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
@@ -45,6 +56,11 @@ function TaskItem({ task, api, agents }: { task: TaskRow; api: WebApiClient; age
           <Badge variant={STATUS_BADGE[task.status] ?? "default"}>{task.status.replace("_", " ")}</Badge>
           <Badge variant={PRIORITY_BADGE[task.priority] ?? "default"}>{task.priority}</Badge>
           {task.specialization && <Badge variant="blue">{task.specialization}</Badge>}
+          {isAwaitingReview && (
+            <Badge variant="purple">
+              review by {reviewerAgent?.name ?? task.verifyReviewerId}
+            </Badge>
+          )}
           {task.domains.map((d) => (
             <Badge key={d} variant="outline">{d}</Badge>
           ))}
@@ -60,36 +76,62 @@ function TaskItem({ task, api, agents }: { task: TaskRow; api: WebApiClient; age
         </div>
       </div>
       <div className="flex gap-1 shrink-0 items-center">
-        {canAssign && workers.length > 0 && (
-          <select
-            value={task.assignedTo ?? ""}
-            onChange={(e) => {
-              const agentId = e.target.value;
-              update.mutate({ status: "assigned", assignedTo: agentId || null });
-            }}
-            className="rounded border border-zinc-700 bg-zinc-800 text-zinc-300 text-xs px-2 py-1"
-            disabled={update.isPending}
-          >
-            <option value="">Assign to…</option>
-            {workers.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        )}
-        {task.status !== "in_progress" && task.status !== "completed" && (
-          <Button size="sm" variant="outline" onClick={() => update.mutate({ status: "in_progress" })} disabled={update.isPending}>
-            Start
-          </Button>
-        )}
-        {task.status !== "completed" && (
-          <Button size="sm" variant="outline" onClick={() => update.mutate({ status: "completed" })} disabled={update.isPending}>
-            Done
-          </Button>
-        )}
-        {task.status !== "blocked" && task.status !== "completed" && (
-          <Button size="sm" variant="outline" className="text-zinc-400" onClick={() => update.mutate({ status: "blocked" })} disabled={update.isPending}>
-            Block
-          </Button>
+        {isAwaitingReview ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-green-800 text-green-300 hover:bg-green-950"
+              onClick={() => review.mutate("approve")}
+              disabled={review.isPending}
+              title="Approve as the named reviewer (acts on their behalf via admin auth)"
+            >
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-red-800 text-red-300 hover:bg-red-950"
+              onClick={() => review.mutate("reject")}
+              disabled={review.isPending}
+            >
+              Reject
+            </Button>
+          </>
+        ) : (
+          <>
+            {canAssign && workers.length > 0 && (
+              <select
+                value={task.assignedTo ?? ""}
+                onChange={(e) => {
+                  const agentId = e.target.value;
+                  update.mutate({ status: "assigned", assignedTo: agentId || null });
+                }}
+                className="rounded border border-zinc-700 bg-zinc-800 text-zinc-300 text-xs px-2 py-1"
+                disabled={update.isPending}
+              >
+                <option value="">Assign to…</option>
+                {workers.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            )}
+            {task.status !== "in_progress" && task.status !== "completed" && (
+              <Button size="sm" variant="outline" onClick={() => update.mutate({ status: "in_progress" })} disabled={update.isPending}>
+                Start
+              </Button>
+            )}
+            {task.status !== "completed" && (
+              <Button size="sm" variant="outline" onClick={() => update.mutate({ status: "completed" })} disabled={update.isPending}>
+                Done
+              </Button>
+            )}
+            {task.status !== "blocked" && task.status !== "completed" && (
+              <Button size="sm" variant="outline" className="text-zinc-400" onClick={() => update.mutate({ status: "blocked" })} disabled={update.isPending}>
+                Block
+              </Button>
+            )}
+          </>
         )}
       </div>
     </div>

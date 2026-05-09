@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
-import { tasksCommand, taskUpdateCommand, taskCreateCommand } from "./commands/tasks.js";
+import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand } from "./commands/tasks.js";
 import { projectsListCommand, projectShowCommand, projectContextShowCommand, projectContextEditCommand } from "./commands/projects.js";
 import { agentsListCommand } from "./commands/agents.js";
 import { threadsCommand, threadNewCommand } from "./commands/threads.js";
@@ -69,6 +69,10 @@ task
   .option("--specialization <s>", "Required specialization")
   .option("-v, --verify <cmd>", "Shell command that must exit 0 to gate the `completed` transition")
   .option("--verify-cwd <path>", "Working directory for --verify (defaults to API server cwd)")
+  .option("--verify-kind <kind>", "Verifier kind: shell|file_exists|thread_concluded|reviewer_agent")
+  .option("--verify-path <path>", "Path that must exist (--verify-kind file_exists)")
+  .option("--verify-thread <id>", "Thread that must be concluded (--verify-kind thread_concluded)")
+  .option("--verify-reviewer <agent>", "Agent (id or name) who must approve (--verify-kind reviewer_agent)")
   .action(taskCreateCommand);
 
 task
@@ -94,6 +98,13 @@ task
   .description("Mark a task as cancelled")
   .option("-n, --note <note>", "Optional reason")
   .action((id, options) => taskUpdateCommand(id, "cancelled", options));
+
+task
+  .command("review <id>")
+  .description("Submit your review decision on a reviewer_agent-gated task (you must be the named reviewer)")
+  .option("-d, --decision <decision>", "approve | reject")
+  .option("-n, --note <note>", "Optional rationale (recommended on reject)")
+  .action(taskReviewCommand);
 
 // ── threads ───────────────────────────────────────────────────────────────────
 

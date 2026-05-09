@@ -52,8 +52,12 @@ export class CliApiClient {
     assignedTo?: string;
     domains?: string[];
     specialization?: string;
+    verifyKind?: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent";
     verifyCommand?: string;
     verifyCwd?: string;
+    verifyPath?: string;
+    verifyThreadId?: string;
+    verifyReviewerId?: string;
   }) {
     return this.request<TaskRow>("POST", "/tasks", body);
   }
@@ -107,6 +111,10 @@ export class CliApiClient {
 
   updateTask(id: string, body: { status?: string; metadata?: Record<string, unknown> }) {
     return this.request<TaskRow>("PUT", `/tasks/${id}`, body);
+  }
+
+  submitReview(id: string, body: { decision: "approve" | "reject"; note?: string }) {
+    return this.request<TaskRow>("POST", `/tasks/${id}/review`, body);
   }
 
   listThreads(projectId: string) {

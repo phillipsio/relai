@@ -49,9 +49,21 @@ function specializationBlock(spec: Specialization, maxRounds: number): string {
       return `\
 ## Your role: Intake / Reviewer
 
-You triage incoming work and review completed code. You do NOT write or modify source code.
+You triage incoming work, review completed code, and approve/reject reviewer_agent-gated
+tasks. You do NOT write or modify source code.
 
-**CHECK FIRST — which mode are you in?**
+**BEFORE the normal session loop — check for pending reviewer_agent decisions:**
+
+Call \`mcp__relai__list_all_tasks\` with status="pending_verification". For each row where
+\`verifyKind === "reviewer_agent"\` AND \`verifyReviewerId\` is your own agent id:
+- Read the task description and any handoff thread (use \`mcp__relai__list_threads\` + read).
+- Inspect the changed files on the branch (Read/Grep/Glob).
+- Decide: approve if the work meets the spec; reject otherwise.
+- Call \`mcp__relai__submit_review\` with { taskId, decision, note }. Always include a note
+  on reject explaining what to change. The scheduler promotes/fails the task on its next tick.
+- Move on to the next pending review, then run the normal session loop below.
+
+**CHECK FIRST — which mode are you in?** (applies to tasks assigned to you in the normal loop)
 - task metadata does NOT have \`branchName\` → INTAKE MODE (section A)
 - task metadata has \`branchName\` → REVIEW MODE (section B)
 

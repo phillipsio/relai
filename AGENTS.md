@@ -168,8 +168,9 @@ The `relai` binary is the operator surface. It reads its config from `~/.config/
 
 **Tasks**
 - `relai tasks [--all] [--status ...]` — list (default: your assigned + in_progress)
-- `relai task create [-t -d -p --to <agent|@auto> --domains --specialization]`
+- `relai task create [-t -d -p --to <agent|@auto> --domains --specialization --verify-kind <kind> --verify-reviewer <agent> ...]` — verifier flags: `--verify` (shell), `--verify-kind file_exists --verify-path`, `--verify-kind thread_concluded --verify-thread`, `--verify-kind reviewer_agent --verify-reviewer`
 - `relai task start|done|block|cancel <id> [--note ...]`
+- `relai task review <id> --decision approve|reject [--note ...]` — submit a reviewer-agent decision (caller must be the named reviewer)
 
 **Threads & messages**
 - `relai threads`, `relai thread new <title>`

@@ -71,6 +71,10 @@ export async function taskCreateCommand(options: {
   specialization?: string;
   verify?: string;
   verifyCwd?: string;
+  verifyKind?: string;
+  verifyPath?: string;
+  verifyThread?: string;
+  verifyReviewer?: string;
 }) {
   const config = requireConfig();
   const client = new CliApiClient(config);
@@ -106,6 +110,30 @@ export async function taskCreateCommand(options: {
     ? options.domains.split(",").map((d) => d.trim()).filter(Boolean)
     : [];
 
+  // Resolve verify kind. Three explicit kinds + a legacy shell shortcut: passing
+  // --verify alone keeps the existing "shell predicate" UX (verifyKind defaults
+  // to "shell" server-side when only verifyCommand is sent).
+  let verifyKind: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent" | undefined;
+  if (options.verifyKind) {
+    if (!["shell", "file_exists", "thread_concluded", "reviewer_agent"].includes(options.verifyKind)) {
+      console.error(chalk.red(`Invalid --verify-kind "${options.verifyKind}".`));
+      process.exit(1);
+    }
+    verifyKind = options.verifyKind as typeof verifyKind;
+  }
+
+  let verifyReviewerId: string | undefined;
+  if (verifyKind === "reviewer_agent") {
+    if (!options.verifyReviewer) {
+      console.error(chalk.red("--verify-kind reviewer_agent requires --verify-reviewer <agent>."));
+      process.exit(1);
+    }
+    verifyReviewerId = await resolveAgentRef(client, config.projectId, options.verifyReviewer);
+  } else if (options.verifyReviewer) {
+    console.error(chalk.red("--verify-reviewer is only valid with --verify-kind reviewer_agent."));
+    process.exit(1);
+  }
+
   const spinner = ora("Creating task...").start();
   try {
     const task = await client.createTask({
@@ -117,15 +145,61 @@ export async function taskCreateCommand(options: {
       assignedTo,
       domains,
       specialization: options.specialization,
+      verifyKind,
       verifyCommand: options.verify,
       verifyCwd:     options.verifyCwd,
+      verifyPath:    options.verifyPath,
+      verifyThreadId: options.verifyThread,
+      verifyReviewerId,
     });
     spinner.succeed(chalk.green(`Created ${chalk.bold(task.id)}`));
     console.log(chalk.dim(`  ${task.title}`));
     if (assignedTo) console.log(chalk.dim(`  assigned: ${assignedTo}`));
     if (options.verify) console.log(chalk.dim(`  verify:   ${options.verify}`));
+    if (verifyKind === "reviewer_agent") {
+      console.log(chalk.dim(`  reviewer: ${verifyReviewerId}`));
+    } else if (verifyKind) {
+      console.log(chalk.dim(`  verify-kind: ${verifyKind}`));
+    }
   } catch (err) {
     spinner.fail(chalk.red("Create failed"));
+    console.error(chalk.dim(String(err)));
+    process.exit(1);
+  }
+}
+
+export async function taskReviewCommand(
+  id: string,
+  options: { decision?: string; note?: string }
+) {
+  const config = requireConfig();
+  const client = new CliApiClient(config);
+  const ni = nonInteractive();
+
+  const decision = (options.decision
+    ?? (ni ? requireFlag("decision", "--decision approve|reject") : null)) as "approve" | "reject" | null;
+  if (decision !== "approve" && decision !== "reject") {
+    console.error(chalk.red(`Invalid decision "${decision}". Must be "approve" or "reject".`));
+    process.exit(1);
+  }
+
+  const spinner = ora(`Submitting ${decision}...`).start();
+  try {
+    const task = await client.submitReview(id, {
+      decision,
+      note: options.note,
+    });
+    const actual = task.status;
+    const colored = STATUS_COLOR[actual]?.(actual) ?? actual;
+    spinner.succeed(`${chalk.bold(id)} → ${colored} (review ${decision})`);
+    console.log(chalk.dim(`  ${task.title}`));
+    if (decision === "approve") {
+      console.log(chalk.dim(`  scheduler will promote to completed on next tick`));
+    } else {
+      console.log(chalk.dim(`  scheduler will return the task to assigned on next tick`));
+    }
+  } catch (err) {
+    spinner.fail(chalk.red("Review failed"));
     console.error(chalk.dim(String(err)));
     process.exit(1);
   }

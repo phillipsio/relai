@@ -1,19 +1,13 @@
-import { input, select } from "@inquirer/prompts";
+import { input } from "@inquirer/prompts";
 import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../config.js";
 import { CliApiClient } from "../api.js";
 import { resolveAgentRef } from "../lib/resolve.js";
+import { nonInteractive, requireFlag } from "../lib/interactive.js";
 
-const MESSAGE_TYPES = [
-  { value: "handoff",    name: "handoff    — finished a task, passing context to next agent" },
-  { value: "finding",    name: "finding    — discovered something relevant to other work" },
-  { value: "decision",   name: "decision   — agreed-upon decision all agents should honor" },
-  { value: "question",   name: "question   — blocked, need input before proceeding" },
-  { value: "escalation", name: "escalation — needs human judgment" },
-  { value: "status",     name: "status     — routine progress update" },
-  { value: "reply",      name: "reply      — response to another message" },
-];
+const VALID_TYPES = ["handoff", "finding", "decision", "question", "escalation", "status", "reply"] as const;
+type MessageType = typeof VALID_TYPES[number];
 
 export async function sendCommand(
   threadId: string,
@@ -21,15 +15,18 @@ export async function sendCommand(
 ) {
   const config = requireConfig();
   const client = new CliApiClient(config);
+  const ni = nonInteractive();
 
-  const type = options.type ?? await select({
-    message: "Message type",
-    choices: MESSAGE_TYPES,
-  });
+  const type = (options.type ?? "status") as MessageType;
+  if (!VALID_TYPES.includes(type)) {
+    console.error(chalk.red(`Invalid message type "${type}". Must be one of: ${VALID_TYPES.join(", ")}.`));
+    process.exit(1);
+  }
 
-  const body = options.message ?? await input({
-    message: "Message (be specific — receiver has no other context)",
-  });
+  const body = options.message
+    ?? (ni ? requireFlag("message body", "--message/-m") : await input({
+      message: "Message (be specific — receiver has no other context)",
+    }));
 
   if (!body.trim()) {
     console.error(chalk.red("Message body cannot be empty."));

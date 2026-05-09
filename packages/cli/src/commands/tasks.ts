@@ -1,9 +1,10 @@
 import chalk from "chalk";
 import ora from "ora";
-import { input, select } from "@inquirer/prompts";
+import { input } from "@inquirer/prompts";
 import { requireConfig } from "../config.js";
 import { CliApiClient } from "../api.js";
 import { resolveAgentRef } from "../lib/resolve.js";
+import { nonInteractive, requireFlag } from "../lib/interactive.js";
 
 const STATUS_COLOR: Record<string, (s: string) => string> = {
   pending:              chalk.dim,
@@ -74,27 +75,27 @@ export async function taskCreateCommand(options: {
   const config = requireConfig();
   const client = new CliApiClient(config);
 
-  const title = options.title ?? await input({ message: "Title" });
+  const ni = nonInteractive();
+
+  const title = options.title
+    ?? (ni ? requireFlag("title", "--title/-t") : await input({ message: "Title" }));
   if (!title.trim()) {
     console.error(chalk.red("Title is required."));
     process.exit(1);
   }
 
-  const description = options.description ?? await input({ message: "Description" });
+  const description = options.description
+    ?? (ni ? requireFlag("description", "--description/-d") : await input({ message: "Description" }));
   if (!description.trim()) {
     console.error(chalk.red("Description is required."));
     process.exit(1);
   }
 
-  const priority = (options.priority ?? await select({
-    message: "Priority",
-    choices: [
-      { value: "normal", name: "normal" },
-      { value: "low",    name: "low" },
-      { value: "high",   name: "high" },
-      { value: "urgent", name: "urgent" },
-    ],
-  })) as "low" | "normal" | "high" | "urgent";
+  const priority = (options.priority ?? "normal") as "low" | "normal" | "high" | "urgent";
+  if (!["low", "normal", "high", "urgent"].includes(priority)) {
+    console.error(chalk.red(`Invalid priority "${priority}". Must be one of: low, normal, high, urgent.`));
+    process.exit(1);
+  }
 
   let assignedTo: string | undefined;
   if (options.to) {

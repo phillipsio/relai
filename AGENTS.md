@@ -181,6 +181,8 @@ The `relai` binary is the operator surface. It reads its config from `~/.config/
 
 The `--to <name>` flag in both `task create` and `send` resolves through `packages/cli/src/lib/resolve.ts` (case-insensitive name match; passes through `agent_*` IDs and the literal `@auto`).
 
+**Non-interactive mode.** The global `--no-input` flag (or `RELAI_NO_INPUT=1`, or a non-TTY stdin) suppresses every prompt. Defaults: `task create` uses `priority=normal`; `send` uses `type=status`. Required-without-default fields (`task create` title/description, `send` body) fail fast with exit code 2 and a hint at the missing flag instead of opening a prompt — making the CLI scriptable from CI or pipes.
+
 ### MCP client configuration
 
 Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the project root (project-level) or `~/.claude.json` (global). Project-level is preferred — it keeps each project's agent identity isolated. The snippet wires the per-agent token into `API_SECRET` for the MCP server, which sends it as the bearer credential.

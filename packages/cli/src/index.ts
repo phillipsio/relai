@@ -17,7 +17,14 @@ const program = new Command();
 program
   .name("relai")
   .description("ai-orchestrator CLI — coordinate agents from the terminal")
-  .version("0.1.0");
+  .version("0.1.0")
+  // Global non-interactive switch. When set (or when RELAI_NO_INPUT=1, or when
+  // stdin isn't a TTY), commands fail fast on missing required input instead
+  // of opening a prompt — making CLI usage scriptable.
+  .option("--no-input", "Never prompt; require values via flags")
+  .hook("preAction", (thisCommand) => {
+    if (thisCommand.opts().input === false) process.env.RELAI_NO_INPUT = "1";
+  });
 
 // ── init ─────────────────────────────────────────────────────────────────────
 

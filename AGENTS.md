@@ -268,11 +268,11 @@ This repo lives under the personal `phillipsio` org on github.com. Local git is 
 The local `gh` CLI is authenticated against the **work** account (Enterprise Managed User) and **cannot** create PRs against `phillipsio` repos — `gh pr create` fails with `Unauthorized: As an Enterprise Managed User, you cannot access this content`. Do not retry with different flags; the auth is the limit.
 
 Workflow:
-1. Push the branch with `git push -u origin <local-branch>:<remote-branch>` — works.
-2. Open the PR manually in the browser at `https://github.com/phillipsio/relai/pull/new/<remote-branch>`. The user pastes the PR body.
-3. After merge, `git pull origin main` to sync.
+1. Branches are optional — used for isolation when worktrees are involved, not for review. Push direct to `main` is fine on this repo (solo personal project; the user owns it).
+2. If you do work on a branch, fast-forward or `--no-ff` merge into `main` locally, then `git push origin main`. No PR ceremony needed.
+3. The Claude Code auto-mode classifier may still flag direct-to-main pushes; if blocked, surface the block — the user has standing authorization and will approve.
 
-Don't push directly to `main` — the project follows a PR-merge flow (see `git log` for the `Merge pull request #N` pattern). The Claude Code auto-mode classifier blocks direct-to-main pushes anyway.
+`gh pr create` will not work against `phillipsio/*` repos because the local `gh` is bound to the work account (Enterprise Managed). Don't try.
 
 ## Deploy
 

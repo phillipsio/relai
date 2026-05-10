@@ -1,10 +1,19 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, sql, and } from "drizzle-orm";
-import { threads, messages, tasks } from "@getrelai/db";
+import { eq, sql, and, inArray } from "drizzle-orm";
+import { threads, messages, tasks, projects } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish } from "../lib/events.js";
+import { assertProjectAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
+
+async function loadThreadScoped(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
+  const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
+  if (!thread) return { ok: false as const, status: 404 as const };
+  const access = await assertProjectAccess(request, db, thread.projectId);
+  if (!access.ok) return { ok: false as const, status: 404 as const };
+  return { ok: true as const, thread };
+}
 
 const createSchema = z.object({
   projectId: z.string(),
@@ -20,6 +29,9 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
   fastify.post("/threads", async (request, reply) => {
     const body = createSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const access = await assertProjectAccess(request, db, body.data.projectId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
 
     const [thread] = await db.insert(threads).values({
       id: newId("thread"),
@@ -44,10 +56,20 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
   fastify.get<{ Querystring: { projectId?: string; type?: string } }>("/threads", async (request, reply) => {
     const { projectId, type } = request.query;
 
-    const conditions = [
-      projectId ? eq(threads.projectId, projectId) : null,
-      type ? eq(threads.type, type) : null,
-    ].filter(Boolean);
+    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof inArray>> = [];
+    if (projectId) conditions.push(eq(threads.projectId, projectId));
+    if (type)      conditions.push(eq(threads.type, type));
+
+    if (request.agent) {
+      conditions.push(eq(threads.projectId, request.agent.projectId));
+    } else if (request.ownerId) {
+      const ownedProjectIds = (await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.ownerId, request.ownerId))).map((p) => p.id);
+      if (ownedProjectIds.length === 0) return { data: [] };
+      conditions.push(inArray(threads.projectId, ownedProjectIds));
+    }
 
     const where = conditions.length === 0
       ? undefined
@@ -76,8 +98,8 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
 
   fastify.delete<{ Params: { id: string } }>("/threads/:id", async (request, reply) => {
     const { id } = request.params;
-    const [thread] = await db.select().from(threads).where(eq(threads.id, id));
-    if (!thread) return reply.status(404).send({ error: { code: "not_found", message: "Thread not found" } });
+    const scope = await loadThreadScoped(request, db, id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
 
     await db.delete(messages).where(eq(messages.threadId, id));
     await db.delete(threads).where(eq(threads.id, id));
@@ -89,13 +111,14 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     const body = concludeSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    const scope = await loadThreadScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
+
     const [thread] = await db
       .update(threads)
       .set({ status: "concluded", summary: body.data.summary ?? null })
       .where(eq(threads.id, request.params.id))
       .returning();
-
-    if (!thread) return reply.status(404).send({ error: { code: "not_found", message: "Thread not found" } });
 
     await publish(db, {
       id:         newId("evt"),

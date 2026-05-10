@@ -16,11 +16,30 @@ export const routingMethodEnum = pgEnum("routing_method", ["rules", "claude"]);
 
 export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded", "reviewer_agent"]);
 
+// ── Users ────────────────────────────────────────────────────────────────────
+//
+// Tenancy boundary for hosted deployments. The OSS API never authenticates
+// users directly — login/sessions/passwords live in the closed cloud overlay.
+// All this table needs is a stable id the closed dashboard can stamp on
+// projects via the `ownerId` column to scope reads/writes per tenant.
+// Self-hosted deployments can leave the table empty; `projects.ownerId` is
+// nullable and the API_SECRET path bypasses ownership filtering entirely.
+
+export const users = pgTable("users", {
+  id:        text("id").primaryKey(),    // usr_<nanoid>
+  email:     text("email").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ── Projects ────────────────────────────────────────────────────────────────
 
 export const projects = pgTable("projects", {
   id:          text("id").primaryKey(),
   name:        text("name").notNull(),
+  // Tenant owner for hosted deployments. Null for self-hosted (single-tenant)
+  // and for legacy rows. The service-admin auth path filters reads/writes by
+  // this column; per-agent tokens ignore it (they're already project-scoped).
+  ownerId:     text("owner_id").references(() => users.id, { onDelete: "cascade" }),
   repoUrl:     text("repo_url"),
   description: text("description"),
   // Used when a task is created without an explicit assignee. Values:

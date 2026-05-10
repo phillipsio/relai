@@ -9,11 +9,17 @@ type Agent = typeof agents.$inferSelect;
 declare module "fastify" {
   interface FastifyRequest {
     agent?: Agent;
+    // Set when the request authenticates with SERVICE_ADMIN_TOKEN and carries
+    // an X-Owner-Id header. The closed cloud dashboard uses this path to act
+    // on behalf of a logged-in user; ownership-aware route handlers filter by
+    // this value. Null on per-agent tokens and the legacy API_SECRET path.
+    ownerId?: string;
   }
 }
 
 const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.decorateRequest("agent", null);
+  fastify.decorateRequest("ownerId", null);
 
   // Endpoints that authenticate via their request body (e.g. invite codes)
   // and therefore must be reachable without a bearer token.
@@ -48,6 +54,21 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
       const now = new Date();
       void db.update(tokens).set({ lastUsedAt: now }).where(eq(tokens.id, row.token.id));
       void db.update(agents).set({ lastSeenAt: now }).where(eq(agents.id, row.agent.id));
+      return;
+    }
+
+    if (process.env.SERVICE_ADMIN_TOKEN && token === process.env.SERVICE_ADMIN_TOKEN) {
+      // Multi-tenant service-admin path. The closed cloud dashboard uses this
+      // to call the API on behalf of a logged-in user; the X-Owner-Id header
+      // tells route handlers which tenant's rows to scope to.
+      const ownerHeader = request.headers["x-owner-id"];
+      const ownerId = Array.isArray(ownerHeader) ? ownerHeader[0] : ownerHeader;
+      if (typeof ownerId !== "string" || !ownerId.startsWith("usr_")) {
+        return reply.status(400).send({
+          error: { code: "owner_required", message: "X-Owner-Id header required for service admin auth" },
+        });
+      }
+      request.ownerId = ownerId;
       return;
     }
 

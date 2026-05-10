@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, and } from "drizzle-orm";
 import { projects, agents, threads, messages, tasks, routingLog, verificationLog, invites } from "@getrelai/db";
 import { newId } from "../lib/id.js";
+import { assertProjectAccess, scopedProjectFilter } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 const createSchema = z.object({
@@ -14,8 +15,17 @@ const createSchema = z.object({
 });
 
 export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
-  fastify.get("/projects", async () => {
-    const rows = await db.select().from(projects);
+  fastify.get("/projects", async (request) => {
+    // Per-agent callers see only their own project; service-admin sees only
+    // projects owned by X-Owner-Id; API_SECRET sees everything.
+    if (request.agent) {
+      const rows = await db.select().from(projects).where(eq(projects.id, request.agent.projectId));
+      return { data: rows };
+    }
+    const filter = scopedProjectFilter(request);
+    const rows = filter
+      ? await db.select().from(projects).where(filter)
+      : await db.select().from(projects);
     return { data: rows };
   });
 
@@ -26,6 +36,9 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const [project] = await db.insert(projects).values({
       id: newId("proj"),
       name: body.data.name,
+      // Stamp tenant ownership when the closed dashboard provisions a project
+      // on behalf of a logged-in user. Null for self-hosted / seed scripts.
+      ownerId: request.ownerId ?? null,
       repoUrl: body.data.repoUrl,
       description: body.data.description,
       defaultAssignee: body.data.defaultAssignee ?? null,
@@ -36,6 +49,8 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
   });
 
   fastify.get<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
+    const access = await assertProjectAccess(request, db, request.params.id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
     const [project] = await db.select().from(projects).where(eq(projects.id, request.params.id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
     return { data: project };
@@ -53,6 +68,9 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const body = updateSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    const access = await assertProjectAccess(request, db, request.params.id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
+
     const [project] = await db
       .update(projects)
       .set(body.data)
@@ -65,6 +83,8 @@ export const projectRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
 
   fastify.delete<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
     const { id } = request.params;
+    const access = await assertProjectAccess(request, db, id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
 

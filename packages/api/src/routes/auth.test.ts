@@ -74,6 +74,47 @@ describe("auth: per-agent tokens", () => {
   });
 });
 
+describe("auth: service-admin token + X-Owner-Id", () => {
+  const SERVICE_TOKEN = "test-service-admin-token";
+
+  it("rejects service-admin auth without X-Owner-Id", async () => {
+    process.env.SERVICE_ADMIN_TOKEN = SERVICE_TOKEN;
+    const res = await app.inject({
+      method: "GET", url: "/projects",
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("owner_required");
+  });
+
+  it("rejects malformed X-Owner-Id", async () => {
+    const res = await app.inject({
+      method: "GET", url: "/projects",
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": "not-a-user-id" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("owner_required");
+  });
+
+  it("accepts service-admin with a usr_ X-Owner-Id and scopes results", async () => {
+    const res = await app.inject({
+      method: "GET", url: "/projects",
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": "usr_nonexistent" },
+    });
+    // Auth passes (200), and scope filter returns no projects for the unknown user.
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual([]);
+  });
+
+  it("falls back to API_SECRET when SERVICE_ADMIN_TOKEN does not match", async () => {
+    const res = await app.inject({
+      method: "GET", url: "/projects",
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe("auth: token rotate + revoke", () => {
   let secondToken: string;
   let secondTokenId: string;

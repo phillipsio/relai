@@ -5,6 +5,7 @@ import { agents, invites, projects, tokens } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js";
+import { assertProjectAccess } from "../lib/ownership.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
@@ -25,6 +26,8 @@ const acceptSchema = z.object({
 
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.post<{ Params: { id: string } }>("/projects/:id/invites", async (request, reply) => {
+    const access = await assertProjectAccess(request, db, request.params.id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
     const [project] = await db.select().from(projects).where(eq(projects.id, request.params.id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
 
@@ -47,6 +50,8 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
   });
 
   fastify.get<{ Params: { id: string } }>("/projects/:id/invites", async (request, reply) => {
+    const access = await assertProjectAccess(request, db, request.params.id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
     const [project] = await db.select().from(projects).where(eq(projects.id, request.params.id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
 
@@ -55,12 +60,14 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
   });
 
   fastify.delete<{ Params: { id: string } }>("/invites/:id", async (request, reply) => {
-    const [row] = await db
-      .update(invites)
+    const [existing] = await db.select().from(invites).where(eq(invites.id, request.params.id));
+    if (!existing) return reply.status(404).send({ error: { code: "not_found", message: "Invite not found" } });
+    const access = await assertProjectAccess(request, db, existing.projectId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Invite not found" } });
+
+    await db.update(invites)
       .set({ revokedAt: new Date() })
-      .where(eq(invites.id, request.params.id))
-      .returning();
-    if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Invite not found" } });
+      .where(eq(invites.id, request.params.id));
     return reply.status(204).send();
   });
 

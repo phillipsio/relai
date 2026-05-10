@@ -4,7 +4,18 @@ import { eq, and, inArray } from "drizzle-orm";
 import { tasks, projects, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
+import { assertProjectAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
+
+// Lookup a task and verify the caller may access its project. Returns 404 to
+// avoid leaking task existence across tenants.
+async function loadTaskScoped(request: import("fastify").FastifyRequest, db: Db, taskId: string) {
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  if (!task) return { ok: false as const, status: 404 as const };
+  const access = await assertProjectAccess(request, db, task.projectId);
+  if (!access.ok) return { ok: false as const, status: 404 as const };
+  return { ok: true as const, task };
+}
 
 const createSchema = z.object({
   projectId:      z.string(),
@@ -74,6 +85,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
   fastify.post("/tasks", async (request, reply) => {
     const body = createSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const access = await assertProjectAccess(request, db, body.data.projectId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
 
     // Authoring a shell predicate runs arbitrary commands inside the API
     // process. Restrict to orchestrators and the deprecated admin-secret
@@ -156,6 +170,19 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         conditions.push(inArray(tasks.status, statuses));
       }
 
+      // Per-agent caller: scope to the agent's project.
+      if (request.agent) {
+        conditions.push(eq(tasks.projectId, request.agent.projectId));
+      } else if (request.ownerId) {
+        // Service-admin: scope to projects owned by this tenant.
+        const ownedProjectIds = (await db
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.ownerId, request.ownerId))).map((p) => p.id);
+        if (ownedProjectIds.length === 0) return { data: [] };
+        conditions.push(inArray(tasks.projectId, ownedProjectIds));
+      }
+
       const rows = conditions.length > 0
         ? await db.select().from(tasks).where(and(...conditions))
         : await db.select().from(tasks);
@@ -165,14 +192,17 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
   );
 
   fastify.get<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
-    const [task] = await db.select().from(tasks).where(eq(tasks.id, request.params.id));
-    if (!task) return reply.status(404).send({ error: { code: "not_found", message: "Task not found" } });
-    return { data: task };
+    const result = await loadTaskScoped(request, db, request.params.id);
+    if (!result.ok) return reply.status(result.status).send({ error: { code: "not_found", message: "Task not found" } });
+    return { data: result.task };
   });
 
   fastify.put<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
     const body = updateSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const scope = await loadTaskScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
 
     // Verification gate: if the task has any verification predicate configured
     // and the caller is trying to mark it completed (and it isn't already
@@ -262,8 +292,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const body = reviewSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    const [task] = await db.select().from(tasks).where(eq(tasks.id, request.params.id));
-    if (!task) return reply.status(404).send({ error: { code: "not_found", message: "Task not found" } });
+    const scope = await loadTaskScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+    const task = scope.task;
     if (task.verifyKind !== "reviewer_agent" || !task.verifyReviewerId) {
       return reply.status(400).send({ error: { code: "wrong_kind", message: "task does not use reviewer_agent verification" } });
     }

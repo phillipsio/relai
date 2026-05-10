@@ -4,18 +4,8 @@ import { eq, and, inArray } from "drizzle-orm";
 import { agents, tokens, projects } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
-import { assertProjectAccess } from "../lib/ownership.js";
+import { assertProjectAccess, assertAgentAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
-
-// Verify the caller may operate on this agent: the agent must belong to a
-// project the caller can access. Returns 404 to avoid leaking existence.
-async function assertAgentAccess(request: import("fastify").FastifyRequest, db: Db, agentId: string) {
-  const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-  if (!agent) return { ok: false as const, status: 404 as const, agent: null };
-  const access = await assertProjectAccess(request, db, agent.projectId);
-  if (!access.ok) return { ok: false as const, status: 404 as const, agent: null };
-  return { ok: true as const, agent };
-}
 
 const registerSchema = z.object({
   projectId:      z.string(),

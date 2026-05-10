@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { notificationChannels, type Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
+import { assertAgentAccess, scopedAgentIds } from "../lib/ownership.js";
 
 function generateSecret(): string {
   return `whsec_${randomBytes(32).toString("hex")}`;
@@ -39,6 +40,9 @@ export const notificationChannelRoutes: FastifyPluginAsync<{ db: Db }> = async (
     const agentId = body.data.agentId ?? request.agent?.id;
     if (!agentId) return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
 
+    const access = await assertAgentAccess(request, db, agentId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Agent not found" } });
+
     const [row] = await db.insert(notificationChannels).values({
       id:      newId("nch"),
       agentId,
@@ -51,7 +55,20 @@ export const notificationChannelRoutes: FastifyPluginAsync<{ db: Db }> = async (
   });
 
   fastify.get<{ Querystring: { agentId?: string } }>("/notification-channels", async (request) => {
+    const visible = await scopedAgentIds(request, db);
     const agentId = request.query.agentId ?? request.agent?.id;
+
+    if (visible !== null) {
+      if (visible.length === 0) return { data: [] };
+      const filter = agentId
+        ? (visible.includes(agentId) ? eq(notificationChannels.agentId, agentId) : null)
+        : inArray(notificationChannels.agentId, visible);
+      if (filter === null) return { data: [] };
+      const rows = await db.select().from(notificationChannels).where(filter).orderBy(desc(notificationChannels.createdAt));
+      return { data: rows };
+    }
+
+    // Legacy API_SECRET — full visibility.
     if (!agentId) return { data: [] };
     const rows = await db
       .select()
@@ -64,6 +81,11 @@ export const notificationChannelRoutes: FastifyPluginAsync<{ db: Db }> = async (
   fastify.put<{ Params: { id: string } }>("/notification-channels/:id", async (request, reply) => {
     const body = updateSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const [existing] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, request.params.id));
+    if (!existing) return reply.status(404).send({ error: { code: "not_found", message: "Channel not found" } });
+    const access = await assertAgentAccess(request, db, existing.agentId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Channel not found" } });
 
     const patch: Partial<typeof notificationChannels.$inferInsert> = {};
     if (body.data.config !== undefined) patch.config = body.data.config;
@@ -87,11 +109,12 @@ export const notificationChannelRoutes: FastifyPluginAsync<{ db: Db }> = async (
   });
 
   fastify.delete<{ Params: { id: string } }>("/notification-channels/:id", async (request, reply) => {
-    const [row] = await db
-      .delete(notificationChannels)
-      .where(eq(notificationChannels.id, request.params.id))
-      .returning();
-    if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Channel not found" } });
+    const [existing] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, request.params.id));
+    if (!existing) return reply.status(404).send({ error: { code: "not_found", message: "Channel not found" } });
+    const access = await assertAgentAccess(request, db, existing.agentId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Channel not found" } });
+
+    await db.delete(notificationChannels).where(eq(notificationChannels.id, request.params.id));
     return reply.status(204).send();
   });
 };

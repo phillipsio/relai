@@ -218,6 +218,162 @@ describe("ownership: agents and tasks scoping", () => {
   });
 });
 
+describe("ownership: subscriptions cross-tenant", () => {
+  it("service-admin cannot subscribe on behalf of another tenant's agent", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/subscriptions",
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ agentId: agentBId, targetType: "task", targetId: "task_x" }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("service-admin /subscriptions list is scoped to its tenant's agents", async () => {
+    const subA = await app.inject({
+      method: "POST", url: "/subscriptions",
+      headers: adminHeaders(),
+      body: JSON.stringify({ agentId: agentAId, targetType: "thread", targetId: "thread_A_marker" }),
+    });
+    expect(subA.statusCode).toBe(201);
+    const subB = await app.inject({
+      method: "POST", url: "/subscriptions",
+      headers: adminHeaders(),
+      body: JSON.stringify({ agentId: agentBId, targetType: "thread", targetId: "thread_B_marker" }),
+    });
+    expect(subB.statusCode).toBe(201);
+
+    const list = await app.inject({ method: "GET", url: "/subscriptions", headers: serviceHeaders(userA) });
+    expect(list.statusCode).toBe(200);
+    const targetIds = list.json().data.map((s: { targetId: string }) => s.targetId);
+    expect(targetIds).toContain("thread_A_marker");
+    expect(targetIds).not.toContain("thread_B_marker");
+  });
+});
+
+describe("ownership: notification-channels cross-tenant", () => {
+  it("service-admin cannot create a channel for another tenant's agent", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels",
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ agentId: agentBId, kind: "webhook", config: { url: "https://example.test/x" } }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("service-admin GET /notification-channels filters by tenant", async () => {
+    const cA = await app.inject({
+      method: "POST", url: "/notification-channels",
+      headers: adminHeaders(),
+      body: JSON.stringify({ agentId: agentAId, kind: "webhook", config: { url: "https://a.test/hook" } }),
+    });
+    expect(cA.statusCode).toBe(201);
+    const cB = await app.inject({
+      method: "POST", url: "/notification-channels",
+      headers: adminHeaders(),
+      body: JSON.stringify({ agentId: agentBId, kind: "webhook", config: { url: "https://b.test/hook" } }),
+    });
+    expect(cB.statusCode).toBe(201);
+
+    const list = await app.inject({ method: "GET", url: "/notification-channels", headers: serviceHeaders(userA) });
+    expect(list.statusCode).toBe(200);
+    const ids = list.json().data.map((c: { id: string }) => c.id);
+    expect(ids).toContain(cA.json().data.id);
+    expect(ids).not.toContain(cB.json().data.id);
+
+    const cross = await app.inject({
+      method: "GET", url: `/notification-channels?agentId=${agentBId}`,
+      headers: serviceHeaders(userA),
+    });
+    expect(cross.statusCode).toBe(200);
+    expect(cross.json().data).toEqual([]);
+  });
+
+  it("service-admin cannot delete another tenant's channel", async () => {
+    const cB = await app.inject({
+      method: "POST", url: "/notification-channels",
+      headers: adminHeaders(),
+      body: JSON.stringify({ agentId: agentBId, kind: "webhook", config: { url: "https://b2.test/hook" } }),
+    });
+    expect(cB.statusCode).toBe(201);
+    const channelId = cB.json().data.id;
+
+    const del = await app.inject({
+      method: "DELETE", url: `/notification-channels/${channelId}`,
+      headers: serviceHeaders(userA),
+    });
+    expect(del.statusCode).toBe(404);
+  });
+});
+
+describe("ownership: tokens cross-tenant", () => {
+  it("service-admin cannot revoke another tenant's token", async () => {
+    const rotate = await app.inject({
+      method: "POST", url: `/agents/${agentBId}/tokens`,
+      headers: adminHeaders(),
+      body: JSON.stringify({}),
+    });
+    expect(rotate.statusCode).toBe(201);
+    const tokenId = rotate.json().data.id;
+
+    const del = await app.inject({
+      method: "DELETE", url: `/tokens/${tokenId}`,
+      headers: serviceHeaders(userA),
+    });
+    expect(del.statusCode).toBe(404);
+  });
+});
+
+describe("ownership: routing-log cross-tenant", () => {
+  it("service-admin cannot log a routing decision for another tenant's task", async () => {
+    const tB = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: adminHeaders(),
+      body: JSON.stringify({ projectId: projectBId, createdBy: agentBId, title: "rl-task", description: "x" }),
+    });
+    expect(tB.statusCode).toBe(201);
+    const taskId = tB.json().data.id;
+
+    const res = await app.inject({
+      method: "POST", url: "/routing-log",
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ taskId, assignedTo: agentBId, method: "rules", rationale: "x" }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("service-admin GET /routing-log is scoped to its tenant's tasks", async () => {
+    const tA = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: adminHeaders(),
+      body: JSON.stringify({ projectId: projectAId, createdBy: agentAId, title: "rl-A", description: "x" }),
+    });
+    expect(tA.statusCode).toBe(201);
+    const tB = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: adminHeaders(),
+      body: JSON.stringify({ projectId: projectBId, createdBy: agentBId, title: "rl-B", description: "x" }),
+    });
+    expect(tB.statusCode).toBe(201);
+
+    await app.inject({
+      method: "POST", url: "/routing-log",
+      headers: adminHeaders(),
+      body: JSON.stringify({ taskId: tA.json().data.id, assignedTo: agentAId, method: "rules", rationale: "rl-A-rationale" }),
+    });
+    await app.inject({
+      method: "POST", url: "/routing-log",
+      headers: adminHeaders(),
+      body: JSON.stringify({ taskId: tB.json().data.id, assignedTo: agentBId, method: "rules", rationale: "rl-B-rationale" }),
+    });
+
+    const list = await app.inject({ method: "GET", url: "/routing-log", headers: serviceHeaders(userA) });
+    expect(list.statusCode).toBe(200);
+    const rationales = list.json().data.map((r: { rationale: string }) => r.rationale);
+    expect(rationales).toContain("rl-A-rationale");
+    expect(rationales).not.toContain("rl-B-rationale");
+  });
+});
+
 describe("ownership: legacy POST /projects without ownerId", () => {
   it("API_SECRET-created projects have null ownerId (self-host parity)", async () => {
     const res = await app.inject({
@@ -228,7 +384,6 @@ describe("ownership: legacy POST /projects without ownerId", () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().data.ownerId).toBeNull();
 
-    // Cleanup
     const id = res.json().data.id;
     await app.inject({ method: "DELETE", url: `/projects/${id}`, headers: ADMIN });
   });

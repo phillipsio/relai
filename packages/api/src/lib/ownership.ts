@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { and, eq, type SQL } from "drizzle-orm";
-import { projects, type Db } from "@getrelai/db";
+import { projects, agents, type Db } from "@getrelai/db";
 
 // Tenancy enforcement for project-scoped routes. Three auth modes resolve to
 // three different access shapes:
@@ -44,5 +44,37 @@ export async function assertProjectAccess(
 // already filter by agent.projectId — or legacy API_SECRET).
 export function scopedProjectFilter(request: FastifyRequest): SQL | null {
   if (request.ownerId) return eq(projects.ownerId, request.ownerId);
+  return null;
+}
+
+// Convenience for routes that scope by agent (subscriptions, notification
+// channels, tokens). Resolves the agent's project and reuses
+// `assertProjectAccess`. Returns 404 to avoid leaking agent existence across
+// tenants.
+export async function assertAgentAccess(
+  request: FastifyRequest,
+  db: Db,
+  agentId: string,
+): Promise<{ ok: true; agent: typeof agents.$inferSelect } | { ok: false; status: 404 }> {
+  const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+  if (!agent) return { ok: false, status: 404 };
+  const access = await assertProjectAccess(request, db, agent.projectId);
+  if (!access.ok) return { ok: false, status: 404 };
+  return { ok: true, agent };
+}
+
+// For routes that filter rows by agentId. Returns the list of agent IDs the
+// caller can see, or null when no filtering applies (API_SECRET path = full
+// visibility). Per-agent callers see only their own agent.
+export async function scopedAgentIds(request: FastifyRequest, db: Db): Promise<string[] | null> {
+  if (request.agent) return [request.agent.id];
+  if (request.ownerId) {
+    const rows = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .innerJoin(projects, eq(projects.id, agents.projectId))
+      .where(eq(projects.ownerId, request.ownerId));
+    return rows.map((r) => r.id);
+  }
   return null;
 }

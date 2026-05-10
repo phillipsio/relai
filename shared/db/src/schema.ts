@@ -28,6 +28,12 @@ export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "th
 export const users = pgTable("users", {
   id:        text("id").primaryKey(),    // usr_<nanoid>
   email:     text("email").notNull().unique(),
+  // Optional profile fields used by the closed cloud overlay's NextAuth
+  // adapter. Nullable on purpose — the OSS API never reads or writes these.
+  // Kept here so OSS db:push doesn't drop them when the cloud is in use.
+  name:          text("name"),
+  emailVerified: timestamp("email_verified", { withTimezone: true }),
+  image:         text("image"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

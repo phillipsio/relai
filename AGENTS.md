@@ -261,6 +261,19 @@ Then open http://localhost:5173, enter the API URL and secret.
 
 For a coworker joining an existing project, see `docs/two-person-test.md`: the host runs `relai project invite`, the coworker runs `relai login --invite <code>`.
 
+## Git remote / PR workflow
+
+This repo lives under the personal `phillipsio` org on github.com. Local git is wired to push via the `github-personal` SSH host alias (`git@github-personal:phillipsio/relai.git`), which routes through the personal SSH key. **`git push` works normally** — no extra steps.
+
+The local `gh` CLI is authenticated against the **work** account (Enterprise Managed User) and **cannot** create PRs against `phillipsio` repos — `gh pr create` fails with `Unauthorized: As an Enterprise Managed User, you cannot access this content`. Do not retry with different flags; the auth is the limit.
+
+Workflow:
+1. Push the branch with `git push -u origin <local-branch>:<remote-branch>` — works.
+2. Open the PR manually in the browser at `https://github.com/phillipsio/relai/pull/new/<remote-branch>`. The user pastes the PR body.
+3. After merge, `git pull origin main` to sync.
+
+Don't push directly to `main` — the project follows a PR-merge flow (see `git log` for the `Merge pull request #N` pattern). The Claude Code auto-mode classifier blocks direct-to-main pushes anyway.
+
 ## Deploy
 
 The repo ships a production `Dockerfile` + `fly.toml` targeting Fly.io. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). Schema migrations run automatically via the `[deploy] release_command` in `fly.toml` (`pnpm --filter @getrelai/db db:push`); column renames must still be applied manually via raw SQL first. See `docs/deploy-fly.md` for the full walkthrough.

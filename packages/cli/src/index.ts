@@ -153,9 +153,11 @@ program
 
 program
   .command("login")
-  .description("Log in to a project on this machine using an invite code")
+  .description("Log in to a project on this machine using an invite code or an agent token")
   .option("--invite <code>", "Invite code from `relai project invite`")
+  .option("--token <token>", "Per-agent token (from the cloud dashboard)")
   .option("--api <url>", "API URL (skips prompt)")
+  .option("--working-dir <path>", "Override the working directory (defaults to CWD)")
   .action(loginCommand);
 
 // ── project invite ───────────────────────────────────────────────────────────

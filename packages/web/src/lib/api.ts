@@ -75,11 +75,11 @@ export class WebApiClient {
 
   getAgents()  { return this.request<AgentRow[]>("GET", `/agents?projectId=${encodeURIComponent(this.projectId)}`); }
   deleteAgent(id: string) { return this.request<void>("DELETE", `/agents/${id}`); }
-  createAgent(body: { name: string; specialization?: string; domains?: string[]; workerType?: string; repoPath?: string }) {
+  createAgent(body: { name: string; role?: "orchestrator" | "worker"; tier?: number; specialization?: string; domains?: string[]; workerType?: string; repoPath?: string }) {
     return this.request<AgentRow>("POST", "/agents", {
       ...body,
       projectId: this.projectId,
-      role: "worker",
+      role: body.role ?? "worker",
     });
   }
   getTasks(status?: string) {

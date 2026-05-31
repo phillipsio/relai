@@ -5,10 +5,15 @@
 //   stdio (default) — Claude Code, Copilot in VS Code, any local MCP client
 //   http            — remote/team scenarios; set TRANSPORT=http
 Object.defineProperty(exports, "__esModule", { value: true });
+const node_fs_1 = require("node:fs");
+const node_path_1 = require("node:path");
 const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const api_client_js_1 = require("./api-client.js");
 const tools_js_1 = require("./tools.js");
+// Report the package version (dist/index.js → ../package.json) so the MCP
+// handshake matches the published package.
+const pkg = JSON.parse((0, node_fs_1.readFileSync)((0, node_path_1.join)(__dirname, "../package.json"), "utf8"));
 const { API_URL = "http://localhost:3010", API_SECRET, AGENT_ID, PROJECT_ID, TRANSPORT = "stdio", } = process.env;
 if (!API_SECRET) {
     console.error("[relai-mcp] API_SECRET is required");
@@ -28,7 +33,7 @@ const apiClient = new api_client_js_1.ApiClient({
 });
 const server = new mcp_js_1.McpServer({
     name: "relai",
-    version: "0.1.0",
+    version: pkg.version,
 });
 // Register all tools
 const tools = (0, tools_js_1.buildTools)(apiClient, AGENT_ID, PROJECT_ID);

@@ -4,10 +4,18 @@
 //   stdio (default) — Claude Code, Copilot in VS Code, any local MCP client
 //   http            — remote/team scenarios; set TRANSPORT=http
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ApiClient } from "./api-client.js";
 import { buildTools } from "./tools.js";
+
+// Report the package version (dist/index.js → ../package.json) so the MCP
+// handshake matches the published package.
+const pkg = JSON.parse(
+  readFileSync(join(__dirname, "../package.json"), "utf8"),
+) as { version: string };
 
 const {
   API_URL = "http://localhost:3010",
@@ -37,7 +45,7 @@ const apiClient = new ApiClient({
 
 const server = new McpServer({
   name: "relai",
-  version: "0.1.0",
+  version: pkg.version,
 });
 
 // Register all tools

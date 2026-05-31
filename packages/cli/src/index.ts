@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand } from "./commands/tasks.js";
@@ -12,12 +14,19 @@ import { startCommand } from "./commands/start.js";
 import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
 import { projectInviteCommand, loginCommand } from "./commands/invite.js";
 
+// Read the version from package.json so `relai --version` always matches the
+// published package (dist/index.js → ../package.json; same shape when installed
+// under node_modules).
+const pkg = JSON.parse(
+  readFileSync(join(__dirname, "../package.json"), "utf8"),
+) as { version: string };
+
 const program = new Command();
 
 program
   .name("relai")
   .description("ai-orchestrator CLI — coordinate agents from the terminal")
-  .version("0.1.0")
+  .version(pkg.version)
   // Global non-interactive switch. When set (or when RELAI_NO_INPUT=1, or when
   // stdin isn't a TTY), commands fail fast on missing required input instead
   // of opening a prompt — making CLI usage scriptable.

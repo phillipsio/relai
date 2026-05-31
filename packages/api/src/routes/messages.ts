@@ -21,6 +21,11 @@ const createSchema = z.object({
   type:      z.enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"]),
   body:      z.string().min(1),
   metadata:  z.record(z.unknown()).default({}),
+  // Opt-in: when true AND type=escalation AND the message loop is off, the
+  // legacy fallback spawns a parked high-priority task from this message.
+  // Defaults false so informational escalations (e.g. coordinator notifications)
+  // don't silently create tasks.
+  spawnTask: z.boolean().optional().default(false),
 });
 
 export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -41,14 +46,15 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       metadata:  body.data.metadata,
     }).returning();
 
-    // Escalations: auto-create a high-priority pending task — the scheduler
-    // will route it. When ENABLE_MESSAGE_ROUTING is on, the in-API message
-    // loop owns the escalation lifecycle (creates a task assigned directly
-    // to a senior agent, posts a reply on the thread); skipping here avoids
-    // a duplicate task per escalation message.
+    // Escalations: OPT-IN auto-create of a high-priority pending task (set
+    // spawnTask:true). The scheduler routes it. When ENABLE_MESSAGE_ROUTING is
+    // on, the in-API message loop owns the escalation lifecycle, so skip here to
+    // avoid a duplicate. Default (spawnTask omitted/false) creates no task —
+    // escalation is then purely a notification, so coordinator/informational
+    // escalations don't spawn stray tasks.
     const messageLoopOwnsEscalation =
       process.env.ENABLE_MESSAGE_ROUTING === "true" || process.env.ENABLE_MESSAGE_ROUTING === "1";
-    if (body.data.type === "escalation" && !messageLoopOwnsEscalation) {
+    if (body.data.type === "escalation" && body.data.spawnTask && !messageLoopOwnsEscalation) {
       const [thread] = await db.select().from(threads).where(eq(threads.id, request.params.id));
       if (thread) {
         await db.insert(tasks).values({

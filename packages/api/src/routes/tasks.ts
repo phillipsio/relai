@@ -17,6 +17,33 @@ async function loadTaskScoped(request: import("fastify").FastifyRequest, db: Db,
   return { ok: true as const, task };
 }
 
+// Verify-predicate consistency: each kind requires its own field, and fields
+// cannot cross kinds. Shared by create (validates the full object) and update
+// (validates the merged existing+patch config) so both paths enforce identically.
+function verifyConfigConsistent(v: {
+  verifyKind?: string | null;
+  verifyCommand?: string | null;
+  verifyPath?: string | null;
+  verifyThreadId?: string | null;
+  verifyReviewerId?: string | null;
+}): boolean {
+  if (v.verifyKind === "shell"            && !v.verifyCommand)    return false;
+  if (v.verifyKind === "file_exists"      && !v.verifyPath)       return false;
+  if (v.verifyKind === "thread_concluded" && !v.verifyThreadId)   return false;
+  if (v.verifyKind === "reviewer_agent"   && !v.verifyReviewerId) return false;
+  if (
+    (v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded" || v.verifyKind === "reviewer_agent") &&
+    v.verifyCommand
+  ) return false;
+  if (v.verifyKind !== "reviewer_agent"   && v.verifyReviewerId) return false;
+  if (v.verifyKind !== "thread_concluded" && v.verifyThreadId)   return false;
+  if (v.verifyKind !== "file_exists"      && v.verifyPath)       return false;
+  return true;
+}
+
+const VERIFY_MISMATCH_MSG =
+  "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId) and fields cannot cross kinds";
+
 const createSchema = z.object({
   projectId:      z.string(),
   createdBy:      z.string(),
@@ -32,7 +59,9 @@ const createSchema = z.object({
   // Optional verification predicate. When set, the `completed` transition is
   // gated: the API rewrites status to `pending_verification` and the
   // scheduler runs the predicate. Exit 0 promotes to `completed`; anything
-  // else returns to `assigned`. The predicate is fixed at create time.
+  // else returns to `assigned`. The predicate can be edited after creation via
+  // PUT /tasks/:id (e.g. re-point verifyReviewerId); the merged config is
+  // re-validated and the shell-author gate re-applied.
   // Three kinds:
   //   - "shell"            — runs `verifyCommand` (legacy default; kept for
   //                          back-compat when only `verifyCommand` is sent).
@@ -51,25 +80,7 @@ const createSchema = z.object({
   // null/undefined falls back to the executor default of 60s.
   verifyTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
 })
-.refine(
-  (v) => {
-    if (v.verifyKind === "shell"            && !v.verifyCommand)    return false;
-    if (v.verifyKind === "file_exists"      && !v.verifyPath)       return false;
-    if (v.verifyKind === "thread_concluded" && !v.verifyThreadId)   return false;
-    if (v.verifyKind === "reviewer_agent"   && !v.verifyReviewerId) return false;
-    // Non-shell kinds never use verifyCommand — reject mixed config.
-    if (
-      (v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded" || v.verifyKind === "reviewer_agent") &&
-      v.verifyCommand
-    ) return false;
-    // Reviewer-agent rejects fields that belong to other kinds, and vice versa.
-    if (v.verifyKind !== "reviewer_agent"   && v.verifyReviewerId) return false;
-    if (v.verifyKind !== "thread_concluded" && v.verifyThreadId)   return false;
-    if (v.verifyKind !== "file_exists"      && v.verifyPath)       return false;
-    return true;
-  },
-  { message: "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId) and fields cannot cross kinds" },
-);
+.refine(verifyConfigConsistent, { message: VERIFY_MISMATCH_MSG });
 
 const updateSchema = z.object({
   title:          z.string().min(1).optional(),
@@ -79,6 +90,16 @@ const updateSchema = z.object({
   assignedTo:     z.string().nullable().optional(),
   domains:        z.array(z.string()).optional(),
   metadata:       z.record(z.unknown()).optional(),
+  // Verification predicate can be edited after creation (e.g. re-point a
+  // reviewer). The PUT handler validates the merged config + re-applies the
+  // shell-author gate and reviewer-existence check. Fields cannot cross kinds.
+  verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
+  verifyCommand:    z.string().min(1).optional(),
+  verifyCwd:        z.string().optional(),
+  verifyPath:       z.string().min(1).optional(),
+  verifyThreadId:   z.string().min(1).optional(),
+  verifyReviewerId: z.string().min(1).optional(),
+  verifyTimeoutMs:  z.number().int().min(1_000).max(600_000).optional(),
 });
 
 export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -203,6 +224,41 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
 
     const scope = await loadTaskScoped(request, db, request.params.id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+
+    // If this update edits the verification predicate, validate the RESULTING
+    // (existing + patch) config exactly like create, and re-apply the
+    // shell-author gate + reviewer-existence check. Lets callers re-point a
+    // reviewer or swap a predicate kind without dropping to raw SQL.
+    const touchesVerify =
+      "verifyKind" in body.data || "verifyCommand" in body.data || "verifyCwd" in body.data ||
+      "verifyPath" in body.data || "verifyThreadId" in body.data || "verifyReviewerId" in body.data ||
+      "verifyTimeoutMs" in body.data;
+    if (touchesVerify) {
+      const existing = scope.task;
+      const merged = {
+        verifyKind:       body.data.verifyKind       ?? existing.verifyKind,
+        verifyCommand:    body.data.verifyCommand     ?? existing.verifyCommand,
+        verifyPath:       body.data.verifyPath        ?? existing.verifyPath,
+        verifyThreadId:   body.data.verifyThreadId    ?? existing.verifyThreadId,
+        verifyReviewerId: body.data.verifyReviewerId  ?? existing.verifyReviewerId,
+      };
+      if (!verifyConfigConsistent(merged)) {
+        return reply.status(400).send({ error: { code: "validation_error", message: VERIFY_MISMATCH_MSG } });
+      }
+      const authorsShell = merged.verifyKind === "shell" || (merged.verifyKind == null && !!merged.verifyCommand);
+      if (authorsShell && request.agent && request.agent.role !== "orchestrator") {
+        return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may author shell verifyCommand." } });
+      }
+      if (merged.verifyKind === "reviewer_agent") {
+        const [reviewer] = await db
+          .select({ id: agents.id, projectId: agents.projectId })
+          .from(agents)
+          .where(eq(agents.id, merged.verifyReviewerId!));
+        if (!reviewer || reviewer.projectId !== existing.projectId) {
+          return reply.status(400).send({ error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" } });
+        }
+      }
+    }
 
     // Verification gate: if the task has any verification predicate configured
     // and the caller is trying to mark it completed (and it isn't already

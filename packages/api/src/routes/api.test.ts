@@ -473,6 +473,49 @@ describe("PUT /tasks/:id", () => {
     expect(done.json().data.status).toBe("pending_verification");
   });
 
+  it("re-points verifyReviewerId on a reviewer_agent task via PUT", async () => {
+    const mkAgent = async (name: string) => {
+      const r = await app.inject({
+        method: "POST", url: "/agents", headers: { ...AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, name, role: "worker" }),
+      });
+      return r.json().data.id as string;
+    };
+    const revA = await mkAgent("rev-a");
+    const revB = await mkAgent("rev-b");
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "review me", description: "x",
+        verifyKind: "reviewer_agent", verifyReviewerId: revA,
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const id = create.json().data.id;
+    const upd = await app.inject({
+      method: "PUT", url: `/tasks/${id}`, headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ verifyReviewerId: revB }),
+    });
+    expect(upd.statusCode).toBe(200);
+    expect(upd.json().data.verifyReviewerId).toBe(revB);
+  });
+
+  it("rejects a cross-kind verify edit (verifyReviewerId on a file_exists task)", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "fe task", description: "x",
+        verifyKind: "file_exists", verifyPath: "dist/x",
+      }),
+    });
+    const id = create.json().data.id;
+    const upd = await app.inject({
+      method: "PUT", url: `/tasks/${id}`, headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ verifyReviewerId: "agent_whatever" }),
+    });
+    expect(upd.statusCode).toBe(400);
+  });
+
   it("rejects kind=file_exists without verifyPath", async () => {
     const res = await app.inject({
       method: "POST", url: "/tasks",
@@ -987,6 +1030,33 @@ describe("POST /threads/:id/messages", () => {
       body: JSON.stringify({ fromAgent: agentId, type: "shout", body: "hey" }),
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("escalation does NOT spawn a task by default (opt-in)", async () => {
+    const uniq = "esc-no-spawn-" + Math.random().toString(36).slice(2);
+    const post = await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ fromAgent: agentId, type: "escalation", body: uniq }),
+    });
+    expect(post.statusCode).toBe(201);
+    const tasksRes = await app.inject({ method: "GET", url: `/tasks?projectId=${projectId}`, headers: AUTH });
+    const found = (tasksRes.json().data as Array<{ title: string }>).some((t) => t.title === uniq);
+    expect(found).toBe(false);
+  });
+
+  it("escalation with spawnTask:true creates an urgent task", async () => {
+    const uniq = "esc-spawn-" + Math.random().toString(36).slice(2);
+    const post = await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ fromAgent: agentId, type: "escalation", body: uniq, spawnTask: true }),
+    });
+    expect(post.statusCode).toBe(201);
+    const tasksRes = await app.inject({ method: "GET", url: `/tasks?projectId=${projectId}`, headers: AUTH });
+    const task = (tasksRes.json().data as Array<{ title: string; priority: string }>).find((t) => t.title === uniq);
+    expect(task).toBeDefined();
+    expect(task!.priority).toBe("urgent");
   });
 });
 

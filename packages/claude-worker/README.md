@@ -17,6 +17,10 @@ The worker shells out to the `claude` CLI (override path with `CLAUDE_BIN`); mod
 
 `REPO_PATH` is the directory the worker treats as its working tree. The agent's `repoPath` field on the relai record is informational only — the worker uses this env var.
 
+## Failure handling
+
+Between sessions the worker waits `POLL_INTERVAL_MS` (default 15s). If a session fails with a **fatal** error — exhausted credits, an invalid/expired credential, an auth failure — re-spawning immediately would just burn a tight loop, so the worker instead backs off exponentially (capped at `MAX_BACKOFF_MS`, default 5min), logs a loud warning naming the likely cause, and resumes automatically once the underlying issue is fixed. Transient errors (rate limits, overload, network blips) keep the normal poll cadence.
+
 ## What the worker needs installed
 
 | Tool | Required? | Why |

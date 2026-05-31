@@ -10,6 +10,7 @@ function config(overrides: Partial<ClaudeWorkerConfig> = {}): ClaudeWorkerConfig
     apiSecret: "secret",
     repoPath: "/repo",
     pollIntervalMs: 15000,
+    maxBackoffMs: 300000,
     maxTaskRounds: 5,
     model: "claude-sonnet-4-6",
     specialization: "writer",

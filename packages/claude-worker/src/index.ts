@@ -4,6 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { loadConfig } from "./config.js";
 import { buildPrompt } from "./prompt.js";
+import { isFatalError } from "./errors.js";
 
 const config = loadConfig();
 const mcpServerPath = new URL("../../mcp-server/dist/index.js", import.meta.url).pathname;
@@ -71,6 +72,7 @@ async function runSession(): Promise<void> {
 
       const toolsUsed: string[] = [];
       let buffer = "";
+      let resultError = "";
 
       proc.stdout.on("data", (chunk: Buffer) => {
         buffer += chunk.toString();
@@ -92,6 +94,7 @@ async function runSession(): Promise<void> {
                 }
               }
             } else if (event.type === "result" && event.is_error) {
+              resultError = String(event.result ?? "");
               console.error(`[claude-worker] Session failed: ${event.result}`);
             }
           } catch { /* non-JSON line */ }
@@ -108,7 +111,10 @@ async function runSession(): Promise<void> {
         const unique = [...new Set(toolsUsed)];
         console.log(`[claude-worker] Done — tools used: ${unique.length ? unique.join(", ") : "none"}`);
         if (code !== 0 && code !== null) {
-          reject(new Error(`claude exited with code ${code}`));
+          // Surface the result-error / stderr text so the loop can classify the
+          // failure (fatal credential/credit issue vs transient).
+          const detail = (resultError || stderrOutput || "").trim();
+          reject(new Error(`claude exited with code ${code}${detail ? `: ${detail}` : ""}`));
         } else {
           resolve();
         }
@@ -122,15 +128,34 @@ async function runSession(): Promise<void> {
 }
 
 async function main() {
+  let consecutiveFatal = 0;
   while (true) {
     await heartbeat();
+    let delay = config.pollIntervalMs;
     try {
       console.log("[claude-worker] Running session...");
       await runSession();
+      consecutiveFatal = 0;
     } catch (err) {
-      console.error("[claude-worker] Session error:", err);
+      const text = err instanceof Error ? err.message : String(err);
+      if (isFatalError(text)) {
+        // A credential/credit failure won't clear by re-spawning in 15s — that
+        // just burns a tight loop (this bit us when a worker ran out of credits
+        // and respawned every poll). Back off exponentially, capped, and warn
+        // loudly so a human can fix it; resume automatically once it clears.
+        consecutiveFatal++;
+        delay = Math.min(config.maxBackoffMs, config.pollIntervalMs * 2 ** consecutiveFatal);
+        console.error(
+          `[claude-worker] FATAL error (likely exhausted credits or bad credentials) — ` +
+          `backing off ${Math.round(delay / 1000)}s before retry #${consecutiveFatal}. ` +
+          `Fix the credit/credential issue; the worker will resume automatically.\n  ${text}`,
+        );
+      } else {
+        consecutiveFatal = 0;
+        console.error("[claude-worker] Session error:", text);
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, config.pollIntervalMs));
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 

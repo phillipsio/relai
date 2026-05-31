@@ -7,6 +7,7 @@ export interface ClaudeWorkerConfig {
   apiSecret: string;
   repoPath: string;
   pollIntervalMs: number;
+  maxBackoffMs: number;
   maxTaskRounds: number;
   model: string;
   specialization: Specialization;
@@ -27,10 +28,11 @@ export function loadConfig(): ClaudeWorkerConfig {
   return {
     agentId:        process.env.AGENT_ID!,
     projectId:      process.env.PROJECT_ID!,
-    apiUrl:         process.env.API_URL ?? process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010",
-    apiSecret:      (process.env.API_SECRET ?? process.env.ORCHESTRATOR_API_SECRET)!,
+    apiUrl:         process.env.API_URL ?? "http://localhost:3010",
+    apiSecret:      process.env.API_SECRET!,
     repoPath:       process.env.REPO_PATH!,
     pollIntervalMs: Number(process.env.POLL_INTERVAL_MS  ?? 15_000),
+    maxBackoffMs:   Number(process.env.MAX_BACKOFF_MS    ?? 300_000),
     maxTaskRounds:  Number(process.env.MAX_TASK_ROUNDS   ?? 5),
     model:          process.env.CLAUDE_MODEL ?? "sonnet",
     specialization,

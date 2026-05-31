@@ -20,7 +20,7 @@ describe("loadConfig", () => {
   beforeEach(() => setEnv(REQUIRED_ENV));
   afterEach(() => unsetEnv([
     ...Object.keys(REQUIRED_ENV),
-    "SPECIALIZATION", "API_URL", "POLL_INTERVAL_MS",
+    "SPECIALIZATION", "API_URL", "POLL_INTERVAL_MS", "MAX_BACKOFF_MS",
     "MAX_TASK_ROUNDS", "CLAUDE_MODEL", "CLAUDE_BIN",
   ]));
 
@@ -72,6 +72,15 @@ describe("loadConfig", () => {
 
   it("defaults maxTaskRounds to 5", () => {
     expect(loadConfig().maxTaskRounds).toBe(5);
+  });
+
+  it("defaults maxBackoffMs to 300000", () => {
+    expect(loadConfig().maxBackoffMs).toBe(300000);
+  });
+
+  it("accepts custom MAX_BACKOFF_MS", () => {
+    process.env.MAX_BACKOFF_MS = "60000";
+    expect(loadConfig().maxBackoffMs).toBe(60000);
   });
 
   it("defaults claudeBin to 'claude'", () => {

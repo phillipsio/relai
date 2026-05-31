@@ -35,8 +35,8 @@ Severity: 🔴 blocked us / 🟡 real friction / 🟢 nice-to-have.
 - 🟢 **Role/orchestrator collision was ambiguous early on.** Two agents both in an orchestrator posture; the message loop just picks "the" orchestrator. *Proposal:* explicit single lead-orchestrator designation per project.
 
 ## E. Setup / DX
-- 🟡 **`relai init` MCP snippet (`npx @getrelai/mcp-server`) doesn't work** — package isn't published; had to `pnpm build` then point `node` at `dist/index.js`. *Proposal:* emit a working local invocation, or publish the package.
-- 🟡 **`relai` CLI not on PATH / not built.** Forced curl for everything. *Proposal:* build + link the binary as part of setup.
+- ✅ **DONE (2026-05-31) — republished `@getrelai/mcp-server@0.2.0`.** Root cause wasn't "unpublished" — the package was frozen at `0.1.0` (2026-05-04), so `npx @getrelai/mcp-server` pulled pre-`create_task` code with the old `ORCHESTRATOR_*` env vars. Cut a fresh `0.2.0`: version now read from `package.json` at runtime so it can't drift, bin path normalized. Verified `npx @getrelai/mcp-server` resolves current code (`create_task` present, no `ORCHESTRATOR_`). ~~`relai init` MCP snippet doesn't work.~~
+- ✅ **DONE (2026-05-31) — `@getrelai/cli@0.2.0` republished.** Installable via `npm i -g @getrelai/cli` (bin `relai`); was also frozen at stale `0.1.0`. Build now excludes `*.test.ts` so test files no longer ship. ~~`relai` CLI not on PATH / not built.~~
 - ✅ **DONE (2026-05-30) — dropped the `ORCHESTRATOR_*` env fallback** in the MCP server; it now reads only `API_URL`/`API_SECRET`. ~~MCP server env naming: reads `ORCHESTRATOR_API_URL`/`_SECRET` as fallback…~~
 
 ---

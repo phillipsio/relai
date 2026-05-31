@@ -354,8 +354,14 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     if (task.verifyKind !== "reviewer_agent" || !task.verifyReviewerId) {
       return reply.status(400).send({ error: { code: "wrong_kind", message: "task does not use reviewer_agent verification" } });
     }
-    if (task.status !== "pending_verification") {
-      return reply.status(409).send({ error: { code: "wrong_state", message: `task is ${task.status}; reviews accepted only in pending_verification` } });
+    // Accept a decision from any active, pre-terminal state. If the task isn't
+    // already pending_verification (e.g. the worker hasn't transitioned it), the
+    // decision below also moves it there so the verify scheduler resolves it on
+    // its next tick — removing the "worker must flip to pending_verification
+    // before the reviewer can sign off" handoff that stranded tasks.
+    const REVIEWABLE = ["assigned", "in_progress", "pending_verification"];
+    if (!REVIEWABLE.includes(task.status)) {
+      return reply.status(409).send({ error: { code: "wrong_state", message: `task is ${task.status}; reviews accepted only from ${REVIEWABLE.join("/")}` } });
     }
 
     // Authorization: the named reviewer agent always wins. The deprecated
@@ -381,7 +387,13 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     };
     const meta = (task.metadata ?? {}) as Record<string, unknown>;
     const [updated] = await db.update(tasks)
-      .set({ metadata: { ...meta, review }, updatedAt: new Date() })
+      .set({
+        metadata: { ...meta, review },
+        updatedAt: new Date(),
+        // Park it in pending_verification (if it isn't already) so the verify
+        // scheduler picks up the recorded decision and promotes/returns it.
+        ...(task.status !== "pending_verification" ? { status: "pending_verification" as const } : {}),
+      })
       .where(eq(tasks.id, task.id))
       .returning();
 

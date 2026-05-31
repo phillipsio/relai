@@ -815,8 +815,10 @@ describe("POST /tasks/:id/review", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("rejects when the task is not in pending_verification", async () => {
-    // Build a fresh reviewer-agent task but DON'T transition it to pending_verification.
+  it("accepts a decision from an active (assigned) task and moves it to pending_verification", async () => {
+    // Reviewer-agent task left in 'assigned' (worker hasn't transitioned it).
+    // The reviewer can still sign off; the endpoint moves it to
+    // pending_verification so the verify scheduler resolves the decision.
     const reviewer = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
@@ -834,7 +836,41 @@ describe("POST /tasks/:id/review", () => {
       }),
     });
     const id = create.json().data.id;
+    expect(create.json().data.status).toBe("assigned");
 
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { Authorization: `Bearer ${reviewerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve", note: "ok from assigned" }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.status).toBe("pending_verification");
+    expect((res.json().data.metadata as { review: { decision: string } }).review.decision).toBe("approve");
+  });
+
+  it("rejects a decision on a terminal (cancelled) task", async () => {
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, name: "rev-endpoint-terminal", role: "worker" }),
+    });
+    const reviewerToken = reviewer.json().token as string;
+    const reviewerId    = reviewer.json().data.id as string;
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "cancel-me", description: "x",
+        assignedTo: agentId,
+        verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
+      }),
+    });
+    const id = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "cancelled" }),
+    });
     const res = await app.inject({
       method: "POST", url: `/tasks/${id}/review`,
       headers: { Authorization: `Bearer ${reviewerToken}`, "Content-Type": "application/json" },

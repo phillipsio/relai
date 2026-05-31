@@ -278,5 +278,83 @@ export declare function buildTools(client: ApiClient, agentId: string, projectId
             text: string;
         }[];
     }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        decision: z.ZodOptional<z.ZodEnum<["commit", "reject"]>>;
+        assignedTo: z.ZodOptional<z.ZodString>;
+        note: z.ZodOptional<z.ZodString>;
+        title: z.ZodOptional<z.ZodString>;
+        description: z.ZodOptional<z.ZodString>;
+        priority: z.ZodOptional<z.ZodEnum<["low", "normal", "high", "urgent"]>>;
+        domains: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        specialization: z.ZodOptional<z.ZodString>;
+        verifyKind: z.ZodOptional<z.ZodEnum<["shell", "file_exists", "thread_concluded", "reviewer_agent"]>>;
+        verifyReviewerId: z.ZodOptional<z.ZodString>;
+        verifyThreadId: z.ZodOptional<z.ZodString>;
+        verifyPath: z.ZodOptional<z.ZodString>;
+        verifyCommand: z.ZodOptional<z.ZodString>;
+        verifyCwd: z.ZodOptional<z.ZodString>;
+        verifyTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+        assignedTo?: string | undefined;
+        title?: string | undefined;
+        description?: string | undefined;
+        priority?: "low" | "normal" | "high" | "urgent" | undefined;
+        domains?: string[] | undefined;
+        specialization?: string | undefined;
+        verifyKind?: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent" | undefined;
+        verifyReviewerId?: string | undefined;
+        verifyThreadId?: string | undefined;
+        verifyPath?: string | undefined;
+        verifyCommand?: string | undefined;
+        verifyCwd?: string | undefined;
+        verifyTimeoutMs?: number | undefined;
+        decision?: "reject" | "commit" | undefined;
+        note?: string | undefined;
+    }, {
+        taskId: string;
+        assignedTo?: string | undefined;
+        title?: string | undefined;
+        description?: string | undefined;
+        priority?: "low" | "normal" | "high" | "urgent" | undefined;
+        domains?: string[] | undefined;
+        specialization?: string | undefined;
+        verifyKind?: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent" | undefined;
+        verifyReviewerId?: string | undefined;
+        verifyThreadId?: string | undefined;
+        verifyPath?: string | undefined;
+        verifyCommand?: string | undefined;
+        verifyCwd?: string | undefined;
+        verifyTimeoutMs?: number | undefined;
+        decision?: "reject" | "commit" | undefined;
+        note?: string | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        decision?: "commit" | "reject";
+        assignedTo?: string;
+        note?: string;
+        title?: string;
+        description?: string;
+        priority?: string;
+        domains?: string[];
+        specialization?: string;
+        verifyKind?: string;
+        verifyReviewerId?: string;
+        verifyThreadId?: string;
+        verifyPath?: string;
+        verifyCommand?: string;
+        verifyCwd?: string;
+        verifyTimeoutMs?: number;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
 })[];
 //# sourceMappingURL=tools.d.ts.map

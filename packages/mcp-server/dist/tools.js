@@ -15,7 +15,10 @@ function buildTools(client, agentId, projectId) {
                 "status — it's derived (assigned when there's a concrete assignee, else pending). Optionally add " +
                 "a completion gate via verifyKind: 'reviewer_agent' (set verifyReviewerId — that agent must " +
                 "approve via submit_review), 'file_exists' (verifyPath), or 'thread_concluded' (verifyThreadId). " +
-                "The 'shell' kind (verifyCommand) is restricted to orchestrator agents and 403s otherwise.",
+                "The 'shell' kind (verifyCommand) is restricted to orchestrator agents and 403s otherwise. " +
+                "Note: if you are a worker (not an orchestrator), this creates a *proposal* — the task lands in " +
+                "'proposed' with your assignedTo kept only as a hint, and an orchestrator must commit it before " +
+                "it becomes real work. Orchestrators commit on creation.",
             inputSchema: zod_1.z.object({
                 title: zod_1.z.string().min(1).describe("Short, action-oriented task title."),
                 description: zod_1.z.string().min(1).describe("What to do, with enough context to start. Reference specs/files."),
@@ -74,7 +77,10 @@ function buildTools(client, agentId, projectId) {
                             type: "text",
                             text: tasks.length === 0
                                 ? "No tasks currently match that filter."
-                                : JSON.stringify(tasks, null, 2),
+                                // Wrap in an object: a bare JSON array as content trips strict MCP
+                                // clients (e.g. Gemini CLI) that validate derived structuredContent
+                                // as a record. See docs/relai-improvements.md.
+                                : JSON.stringify({ tasks }, null, 2),
                         }],
                 };
             },
@@ -154,7 +160,7 @@ function buildTools(client, agentId, projectId) {
                             type: "text",
                             text: messages.length === 0
                                 ? "No unread messages."
-                                : JSON.stringify(messages, null, 2),
+                                : JSON.stringify({ messages }, null, 2),
                         }],
                 };
             },
@@ -189,7 +195,7 @@ function buildTools(client, agentId, projectId) {
                             type: "text",
                             text: threads.length === 0
                                 ? "No threads found."
-                                : JSON.stringify(threads, null, 2),
+                                : JSON.stringify({ threads }, null, 2),
                         }],
                 };
             },
@@ -258,7 +264,7 @@ function buildTools(client, agentId, projectId) {
                             type: "text",
                             text: tasks.length === 0
                                 ? "No tasks found."
-                                : JSON.stringify(tasks, null, 2),
+                                : JSON.stringify({ tasks }, null, 2),
                         }],
                 };
             },
@@ -276,6 +282,44 @@ function buildTools(client, agentId, projectId) {
             }),
             handler: async (input) => {
                 const task = await client.submitReview(input.taskId, { decision: input.decision, note: input.note });
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "commit_task",
+            description: "Orchestrator-only: act on a worker's proposed task (a task in status 'proposed'). 'commit' " +
+                "(the default) gives it an owner and moves it into the lifecycle — set assignedTo to an agent ID, " +
+                "'@auto' to let the router pick, or omit for the project default. 'reject' cancels the proposal " +
+                "and notifies the proposer (include a note). You may ratify edits in the same call (title, " +
+                "description, priority, domains, specialization, and verify fields); verify changes are " +
+                "re-validated. Non-orchestrators get 403; non-proposed tasks get 409.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The ID of the proposed task to commit or reject."),
+                decision: zod_1.z.enum(["commit", "reject"]).optional().describe("Defaults to 'commit'."),
+                assignedTo: zod_1.z.string().optional().describe("Agent ID, '@auto', or omit for the project default (commit only)."),
+                note: zod_1.z.string().max(2_000).optional().describe("Explanation, especially for reject."),
+                title: zod_1.z.string().min(1).optional().describe("Ratified title edit."),
+                description: zod_1.z.string().min(1).optional().describe("Ratified description edit."),
+                priority: zod_1.z.enum(["low", "normal", "high", "urgent"]).optional().describe("Ratified priority."),
+                domains: zod_1.z.array(zod_1.z.string()).optional().describe("Ratified domain tags."),
+                specialization: zod_1.z.string().optional().describe("Ratified specialization."),
+                verifyKind: zod_1.z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
+                verifyReviewerId: zod_1.z.string().optional(),
+                verifyThreadId: zod_1.z.string().optional(),
+                verifyPath: zod_1.z.string().optional(),
+                verifyCommand: zod_1.z.string().optional(),
+                verifyCwd: zod_1.z.string().optional(),
+                verifyTimeoutMs: zod_1.z.number().int().optional(),
+            }),
+            handler: async (input) => {
+                // Build the body with only the fields that were supplied, so the request
+                // mirrors the caller's intent (no stray undefined keys).
+                const { taskId, decision, ...rest } = input;
+                const body = { decision: decision ?? "commit" };
+                for (const [k, v] of Object.entries(rest))
+                    if (v !== undefined)
+                        body[k] = v;
+                const task = await client.commitTask(taskId, body);
                 return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
             },
         },

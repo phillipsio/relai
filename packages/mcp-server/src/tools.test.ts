@@ -152,6 +152,26 @@ describe("get_my_tasks", () => {
   });
 });
 
+// Regression: bare JSON arrays as tool content break strict MCP clients (Gemini
+// CLI) that validate derived `structuredContent` as a record. Every list tool
+// must wrap its payload in an object. See docs/relai-improvements.md.
+describe("list tools wrap payloads in a record (structuredContent safety)", () => {
+  it("get_my_tasks / list_all_tasks / list_threads / get_unread_messages never return a bare array", async () => {
+    const client = mockClient({
+      getTasks:    vi.fn().mockResolvedValue([{ id: "task_1" }]),
+      listThreads: vi.fn().mockResolvedValue([{ id: "thread_1" }]),
+      getUnread:   vi.fn().mockResolvedValue([{ id: "msg_1" }]),
+    });
+    const tools = buildTools(client, AGENT_ID, PROJECT_ID);
+    for (const name of ["get_my_tasks", "list_all_tasks", "list_threads", "get_unread_messages"]) {
+      const result = await getHandler(tools, name)({});
+      const parsed = JSON.parse(result.content[0].text);
+      expect(Array.isArray(parsed)).toBe(false);
+      expect(typeof parsed).toBe("object");
+    }
+  });
+});
+
 describe("update_task_status", () => {
   it("calls updateTask with correct args", async () => {
     const client = mockClient();

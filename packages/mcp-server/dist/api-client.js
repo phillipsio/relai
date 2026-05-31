@@ -42,6 +42,10 @@ class ApiClient {
     submitReview(taskId, body) {
         return this.request("POST", `/tasks/${taskId}/review`, body);
     }
+    // Orchestrator-only: commit a proposed task into the lifecycle, or reject it.
+    commitTask(taskId, body) {
+        return this.request("POST", `/tasks/${taskId}/commit`, body);
+    }
     // Messages
     sendMessage(threadId, body) {
         return this.request("POST", `/threads/${threadId}/messages`, body);

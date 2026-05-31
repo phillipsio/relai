@@ -41,6 +41,23 @@ export declare class ApiClient {
         decision: "approve" | "reject";
         note?: string;
     }): Promise<unknown>;
+    commitTask(taskId: string, body: {
+        decision?: "commit" | "reject";
+        assignedTo?: string;
+        note?: string;
+        title?: string;
+        description?: string;
+        priority?: string;
+        domains?: string[];
+        specialization?: string;
+        verifyKind?: string;
+        verifyReviewerId?: string;
+        verifyThreadId?: string;
+        verifyPath?: string;
+        verifyCommand?: string;
+        verifyCwd?: string;
+        verifyTimeoutMs?: number;
+    }): Promise<unknown>;
     sendMessage(threadId: string, body: {
         fromAgent: string;
         toAgent?: string;

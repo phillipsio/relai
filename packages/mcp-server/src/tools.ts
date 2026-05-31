@@ -85,7 +85,10 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
             type: "text" as const,
             text: tasks.length === 0
               ? "No tasks currently match that filter."
-              : JSON.stringify(tasks, null, 2),
+              // Wrap in an object: a bare JSON array as content trips strict MCP
+              // clients (e.g. Gemini CLI) that validate derived structuredContent
+              // as a record. See docs/relai-improvements.md.
+              : JSON.stringify({ tasks }, null, 2),
           }],
         };
       },
@@ -177,7 +180,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
             type: "text" as const,
             text: messages.length === 0
               ? "No unread messages."
-              : JSON.stringify(messages, null, 2),
+              : JSON.stringify({ messages }, null, 2),
           }],
         };
       },
@@ -216,7 +219,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
             type: "text" as const,
             text: threads.length === 0
               ? "No threads found."
-              : JSON.stringify(threads, null, 2),
+              : JSON.stringify({ threads }, null, 2),
           }],
         };
       },
@@ -293,7 +296,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
             type: "text" as const,
             text: tasks.length === 0
               ? "No tasks found."
-              : JSON.stringify(tasks, null, 2),
+              : JSON.stringify({ tasks }, null, 2),
           }],
         };
       },

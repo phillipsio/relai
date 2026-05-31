@@ -11,6 +11,8 @@ export interface TaskRow {
   assignedTo?: string; createdAt: string; updatedAt: string;
   verifyKind?: string | null;
   verifyReviewerId?: string | null;
+  threadId?: string | null;
+  epicId?: string | null;
   metadata?: Record<string, unknown>;
 }
 export interface AgentRow {
@@ -63,14 +65,25 @@ export class WebApiClient {
   }
   deleteProject(id: string) { return this.request<void>("DELETE", `/projects/${id}`); }
 
-  createTask(body: { title: string; description: string; specialization?: string; domains?: string[]; priority?: string; assignedTo?: string; metadata?: Record<string, unknown> }) {
+  createTask(body: { title: string; description: string; specialization?: string; domains?: string[]; priority?: string; assignedTo?: string; epicId?: string; metadata?: Record<string, unknown> }) {
     return this.request<TaskRow>("POST", "/tasks", { ...body, projectId: this.projectId, createdBy: "human" });
   }
-  updateTask(id: string, body: { status?: string; assignedTo?: string | null }) {
+  updateTask(id: string, body: { status?: string; assignedTo?: string | null; epicId?: string | null; priority?: string }) {
     return this.request<TaskRow>("PUT", `/tasks/${id}`, body);
   }
   submitReview(id: string, body: { decision: "approve" | "reject"; note?: string }) {
     return this.request<TaskRow>("POST", `/tasks/${id}/review`, body);
+  }
+  // Commit (or reject) a worker's "proposed" Issue. Admin path acts as orchestrator.
+  commitTask(id: string, body: { decision?: "commit" | "reject"; assignedTo?: string; note?: string; epicId?: string; priority?: string; title?: string }) {
+    return this.request<TaskRow>("POST", `/tasks/${id}/commit`, body);
+  }
+  // An Issue's comments live on its lazily-created thread.
+  getTaskComments(id: string) {
+    return this.request<{ threadId: string; comments: MessageRow[] }>("GET", `/tasks/${id}/comments`);
+  }
+  postTaskComment(id: string, body: string, type?: string) {
+    return this.request<MessageRow>("POST", `/tasks/${id}/comments`, { body, type });
   }
 
   getAgents()  { return this.request<AgentRow[]>("GET", `/agents?projectId=${encodeURIComponent(this.projectId)}`); }
@@ -82,9 +95,10 @@ export class WebApiClient {
       role: body.role ?? "worker",
     });
   }
-  getTasks(status?: string) {
+  getTasks(status?: string, epicId?: string) {
     const qs = new URLSearchParams({ projectId: this.projectId });
     if (status) qs.set("status", status);
+    if (epicId) qs.set("epicId", epicId);
     return this.request<TaskRow[]>("GET", `/tasks?${qs}`);
   }
   getThreads(type?: string) {

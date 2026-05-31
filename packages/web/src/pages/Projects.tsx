@@ -101,7 +101,7 @@ function PostCreationGuide({
             <div>
               <p className="text-sm text-zinc-200">Assign tasks manually</p>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Create tasks on the <Link to="/tasks" className="text-zinc-300 underline underline-offset-2" onClick={onDone}>Tasks</Link> page
+                Create tasks on the <Link to="/issues" className="text-zinc-300 underline underline-offset-2" onClick={onDone}>Issues</Link> page
                 and use the "Assign to…" dropdown to route them to workers.
               </p>
             </div>
@@ -113,7 +113,7 @@ function PostCreationGuide({
           <div>
             <p className="text-sm text-zinc-200">Create tasks</p>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Add tasks from the <Link to="/tasks" className="text-zinc-300 underline underline-offset-2" onClick={onDone}>Tasks</Link> page.
+              Add tasks from the <Link to="/issues" className="text-zinc-300 underline underline-offset-2" onClick={onDone}>Issues</Link> page.
               Workers will pick them up {isAutomated ? "automatically" : "once assigned"}.
             </p>
           </div>

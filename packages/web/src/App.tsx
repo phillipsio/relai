@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { LayoutDashboard, ListTodo, MessageSquare, Bot, FolderOpen, LogOut, Workflow, Lightbulb } from "lucide-react";
+import { LayoutDashboard, ListTodo, Bot, FolderOpen, LogOut, Workflow, Lightbulb } from "lucide-react";
 import { getConfig, saveConfig, clearConfig } from "./lib/config";
 import { WebApiClient } from "./lib/api";
 import { Setup } from "./pages/Setup";
 import { Dashboard } from "./pages/Dashboard";
-import { Tasks } from "./pages/Tasks";
-import { Threads } from "./pages/Threads";
-import { Plans } from "./pages/Plans";
+import { Issues } from "./pages/Issues";
+import { Epics } from "./pages/Epics";
 import { Agents } from "./pages/Agents";
 import { Projects } from "./pages/Projects";
 
@@ -36,17 +35,14 @@ function Shell({ api, onProjectSwitch, onLogout }: {
         <NavLink to="/" end className={navCls}>
           <LayoutDashboard className="h-4 w-4" /> Dashboard
         </NavLink>
-        <NavLink to="/tasks" className={navCls}>
-          <ListTodo className="h-4 w-4" /> Tasks
+        <NavLink to="/issues" className={navCls}>
+          <ListTodo className="h-4 w-4" /> Issues
+        </NavLink>
+        <NavLink to="/epics" className={navCls}>
+          <Lightbulb className="h-4 w-4" /> Epics
         </NavLink>
         <NavLink to="/agents" className={navCls}>
           <Bot className="h-4 w-4" /> Agents
-        </NavLink>
-        <NavLink to="/plans" className={navCls}>
-          <Lightbulb className="h-4 w-4" /> Plans
-        </NavLink>
-        <NavLink to="/threads" className={navCls}>
-          <MessageSquare className="h-4 w-4" /> Threads
         </NavLink>
         <NavLink to="/projects" className={navCls}>
           <FolderOpen className="h-4 w-4" /> Projects
@@ -66,10 +62,9 @@ function Shell({ api, onProjectSwitch, onLogout }: {
       <main className="flex-1 overflow-auto p-6">
         <Routes>
           <Route path="/"         element={<Dashboard api={api} />} />
-          <Route path="/tasks"    element={<Tasks api={api} />} />
+          <Route path="/issues"   element={<Issues api={api} />} />
+          <Route path="/epics"    element={<Epics api={api} />} />
           <Route path="/agents"   element={<Agents api={api} />} />
-          <Route path="/plans"    element={<Plans api={api} />} />
-          <Route path="/threads"  element={<Threads api={api} />} />
           <Route path="/projects" element={<Projects api={api} onSwitch={onProjectSwitch} />} />
         </Routes>
       </main>

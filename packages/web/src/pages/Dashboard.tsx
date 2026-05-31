@@ -41,7 +41,7 @@ export function Dashboard({ api }: { api: WebApiClient }) {
 
       {awaitingReview.length > 0 && (
         <Link
-          to="/tasks?status=pending_verification"
+          to="/issues?status=pending_verification"
           className="block rounded-lg border border-purple-800 bg-purple-950/50 p-4 hover:bg-purple-950/70 transition-colors"
         >
           <div className="flex items-start gap-3">
@@ -117,7 +117,7 @@ export function Dashboard({ api }: { api: WebApiClient }) {
             {STATUS_ORDER.filter((s) => tasksByStatus[s] > 0).map((status) => (
               <Link
                 key={status}
-                to={`/tasks?status=${status}`}
+                to={`/issues?status=`}
                 className="flex items-center justify-between text-sm rounded px-1 -mx-1 hover:bg-zinc-800 transition-colors"
               >
                 <span className="text-zinc-400">{status.replace("_", " ")}</span>

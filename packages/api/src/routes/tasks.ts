@@ -5,6 +5,7 @@ import { tasks, projects, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import { assertProjectAccess } from "../lib/ownership.js";
+import { verifyTask } from "../lib/router/scheduler.js";
 import type { Db } from "@getrelai/db";
 
 // Lookup a task and verify the caller may access its project. Returns 404 to
@@ -408,6 +409,12 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       createdAt:  updated.updatedAt.toISOString(),
     });
 
-    return { data: updated };
+    // Resolve the decision synchronously so the caller gets the final state
+    // (completed on approve, assigned on reject) without waiting for the next
+    // scheduler tick. If the row isn't claimable here (e.g. the scheduler is
+    // mid-tick on it), it falls through and the scheduler finishes the job.
+    await verifyTask(db, task.id);
+    const [resolved] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+    return { data: resolved ?? updated };
   });
 };

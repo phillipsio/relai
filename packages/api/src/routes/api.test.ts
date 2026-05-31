@@ -815,10 +815,11 @@ describe("POST /tasks/:id/review", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("accepts a decision from an active (assigned) task and moves it to pending_verification", async () => {
+  it("accepts a decision from an active (assigned) task and verifies it through to completed", async () => {
     // Reviewer-agent task left in 'assigned' (worker hasn't transitioned it).
-    // The reviewer can still sign off; the endpoint moves it to
-    // pending_verification so the verify scheduler resolves the decision.
+    // The reviewer can still sign off; the endpoint parks it in
+    // pending_verification, then resolves the decision synchronously so the
+    // response already reflects the final (completed) state.
     const reviewer = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
@@ -844,8 +845,20 @@ describe("POST /tasks/:id/review", () => {
       body: JSON.stringify({ decision: "approve", note: "ok from assigned" }),
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.status).toBe("pending_verification");
+    expect(res.json().data.status).toBe("completed");
     expect((res.json().data.metadata as { review: { decision: string } }).review.decision).toBe("approve");
+  });
+
+  it("a reject decision resolves synchronously back to assigned", async () => {
+    const { id, reviewerToken } = await setupReviewTask("rev-endpoint-reject");
+    const res = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: { Authorization: `Bearer ${reviewerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "reject", note: "needs work" }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.status).toBe("assigned");
+    expect((res.json().data.metadata as { review: { decision: string } }).review.decision).toBe("reject");
   });
 
   it("rejects a decision on a terminal (cancelled) task", async () => {

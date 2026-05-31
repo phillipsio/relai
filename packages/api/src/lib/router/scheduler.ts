@@ -243,6 +243,42 @@ export async function verifyPending(
     ));
 
   for (const candidate of candidates) {
+    await verifyOne(db, candidate, exec, stuckCutoff);
+  }
+}
+
+// Synchronously verify one pending_verification task by id (its claim must be
+// free or stale). Mirrors a single verifyPending iteration so a review decision
+// can promote/return its task immediately instead of waiting for the next tick.
+// No-ops if the row isn't a claimable pending_verification task — the scheduler
+// then resolves it on its next pass.
+export async function verifyTask(
+  db: Db,
+  taskId: string,
+  exec: VerifyExec = runVerification,
+): Promise<void> {
+  const stuckCutoff = new Date(Date.now() - VERIFY_STUCK_MS);
+  const [candidate] = await db
+    .select()
+    .from(tasks)
+    .where(and(
+      eq(tasks.id, taskId),
+      eq(tasks.status, "pending_verification"),
+      or(isNull(tasks.verifyingAt), lt(tasks.verifyingAt, stuckCutoff)),
+    ));
+  if (!candidate) return;
+  await verifyOne(db, candidate, exec, stuckCutoff);
+}
+
+// One verification iteration: conditionally claim the row, resolve its
+// predicate, log the result, transition the task, and emit events. Extracted
+// from verifyPending's loop so a single task can also be resolved on demand.
+async function verifyOne(
+  db: Db,
+  candidate: typeof tasks.$inferSelect,
+  exec: VerifyExec,
+  stuckCutoff: Date,
+): Promise<void> {
     const wasStuck = candidate.verifyingAt !== null && candidate.verifyingAt < stuckCutoff;
     // Conditional claim: only succeed if verifyingAt is still what we observed.
     // Prevents another scheduler instance racing on the same row.
@@ -257,7 +293,7 @@ export async function verifyPending(
           : eq(tasks.verifyingAt, candidate.verifyingAt),
       ))
       .returning();
-    if (!task) continue;
+    if (!task) return;
 
     // Resolve effective predicate. Legacy rows (null kind + verifyCommand)
     // behave as kind="shell".
@@ -268,7 +304,7 @@ export async function verifyPending(
       await db.update(tasks)
         .set({ status: "assigned", verifyingAt: null, updatedAt: new Date() })
         .where(eq(tasks.id, task.id));
-      continue;
+      return;
     }
 
     // Async-decision kinds wait for the decision to land in metadata.review
@@ -304,7 +340,7 @@ export async function verifyPending(
             .set({ verifyingAt: null })
             .where(eq(tasks.id, task.id));
         }
-        continue;
+        return;
       }
     }
 
@@ -402,7 +438,6 @@ export async function verifyPending(
         createdAt:  updated.updatedAt.toISOString(),
       });
     }
-  }
 }
 
 // ── Project-scoped cycle ──────────────────────────────────────────────────────

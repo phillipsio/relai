@@ -375,6 +375,48 @@ describe("verifyPending", () => {
     expect((meta.lastVerification as { exitCode: number }).exitCode).toBe(1);
   });
 
+  it("emits task.review_overdue once when a reviewer task awaits past the threshold", async () => {
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ projectId, name: "rev-overdue", role: "worker" }),
+    });
+    const reviewerId = reviewer.json().data.id;
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "ra-overdue", description: "x",
+        assignedTo: agentId, verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
+      }),
+    });
+    const taskId = create.json().data.id;
+    // → pending_verification, with NO review decision recorded.
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const captured: AppEvent[] = [];
+    const handler = (e: AppEvent) => captured.push(e);
+    bus.on("event", handler);
+    const prev = process.env.REVIEW_OVERDUE_MS;
+    process.env.REVIEW_OVERDUE_MS = "0"; // any wait counts as overdue
+    try {
+      const db = createDb(DB_URL);
+      await verifyPending(db, projectId); // emits + sets the flag
+      await verifyPending(db, projectId); // flag set → must NOT re-emit
+
+      const overdue = captured.filter((e) => e.kind === "task.review_overdue" && e.targetId === taskId);
+      expect(overdue).toHaveLength(1);
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("pending_verification"); // still awaiting — unchanged
+      expect((row.metadata as Record<string, unknown>).reviewOverdueNotifiedAt).toBeDefined();
+    } finally {
+      bus.off("event", handler);
+      if (prev === undefined) delete process.env.REVIEW_OVERDUE_MS;
+      else process.env.REVIEW_OVERDUE_MS = prev;
+    }
+  });
+
   it("recovers stuck claims older than the threshold", async () => {
     const taskId = await makePendingVerificationTask("noop-stuck");
     const db = createDb(DB_URL);

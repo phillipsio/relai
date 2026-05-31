@@ -233,6 +233,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `ANTHROPIC_API_KEY` | — | Enables Claude fallback routing; optional |
 | `ROUTING_MODEL` | `claude-haiku-4-5-20251001` | Model used for routing decisions |
 | `TASK_POLL_MS` | `15000` | Routing scheduler interval (ms) |
+| `REVIEW_OVERDUE_MS` | `600000` | How long a `reviewer_agent` task may sit in `pending_verification` awaiting a decision before the verify scheduler emits a one-time `task.review_overdue` event (notifies the reviewer + task subscribers). |
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
 | `AGENT_ID` | — | Set after registering an agent |
 | `PROJECT_ID` | — | Set after creating a project |

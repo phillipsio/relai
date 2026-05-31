@@ -9,7 +9,7 @@ const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const api_client_js_1 = require("./api-client.js");
 const tools_js_1 = require("./tools.js");
-const { API_URL = process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010", API_SECRET = process.env.ORCHESTRATOR_API_SECRET, AGENT_ID, PROJECT_ID, TRANSPORT = "stdio", } = process.env;
+const { API_URL = "http://localhost:3010", API_SECRET, AGENT_ID, PROJECT_ID, TRANSPORT = "stdio", } = process.env;
 if (!API_SECRET) {
     console.error("[relai-mcp] API_SECRET is required");
     process.exit(1);

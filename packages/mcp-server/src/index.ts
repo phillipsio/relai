@@ -10,8 +10,8 @@ import { ApiClient } from "./api-client.js";
 import { buildTools } from "./tools.js";
 
 const {
-  API_URL = process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010",
-  API_SECRET = process.env.ORCHESTRATOR_API_SECRET,
+  API_URL = "http://localhost:3010",
+  API_SECRET,
   AGENT_ID,
   PROJECT_ID,
   TRANSPORT = "stdio",

@@ -275,11 +275,35 @@ export async function verifyPending(
     // before proceeding. Release the claim and retry next tick — no log row,
     // no status change. Stuck recovery bypasses this check.
     if (verifier.needsAsyncDecision && !wasStuck) {
-      const review = (task.metadata as Record<string, unknown> | null)?.review as ReviewDecision | undefined;
+      const meta = (task.metadata as Record<string, unknown> | null) ?? {};
+      const review = meta.review as ReviewDecision | undefined;
       if (!review || (review.decision !== "approve" && review.decision !== "reject")) {
-        await db.update(tasks)
-          .set({ verifyingAt: null })
-          .where(eq(tasks.id, task.id));
+        // No decision yet. If the task has awaited review past the overdue
+        // threshold, emit a one-time nudge (task.review_overdue) so a reviewer
+        // who isn't looking — or is working outside relai — gets surfaced
+        // instead of the task stalling silently. updatedAt is the "awaiting
+        // since" proxy (stamped when the row entered pending_verification).
+        const overdueMs = Number(process.env.REVIEW_OVERDUE_MS ?? 600_000);
+        const awaitingMs = Date.now() - new Date(task.updatedAt).getTime();
+        if (awaitingMs >= overdueMs && !meta.reviewOverdueNotifiedAt) {
+          await db.update(tasks)
+            .set({ metadata: { ...meta, reviewOverdueNotifiedAt: new Date().toISOString() }, verifyingAt: null })
+            .where(eq(tasks.id, task.id));
+          await publish(db, {
+            id:         newId("evt"),
+            kind:       "task.review_overdue",
+            projectId:  task.projectId,
+            targetType: "task",
+            targetId:   task.id,
+            alsoNotify: task.verifyReviewerId ? [{ targetType: "agent", targetId: task.verifyReviewerId }] : [],
+            payload:    { task, reviewerId: task.verifyReviewerId, awaitingMs },
+            createdAt:  new Date().toISOString(),
+          });
+        } else {
+          await db.update(tasks)
+            .set({ verifyingAt: null })
+            .where(eq(tasks.id, task.id));
+        }
         continue;
       }
     }

@@ -19,14 +19,27 @@ export declare class ApiClient {
         title: string;
         description: string;
         priority?: string;
+        assignedTo?: string;
         domains?: string[];
+        specialization?: string;
         metadata?: Record<string, unknown>;
+        verifyKind?: string;
+        verifyReviewerId?: string;
+        verifyThreadId?: string;
+        verifyPath?: string;
+        verifyCommand?: string;
+        verifyCwd?: string;
+        verifyTimeoutMs?: number;
     }): Promise<unknown>;
     updateTask(id: string, body: {
         status?: string;
         assignedTo?: string | null;
         priority?: string;
         metadata?: Record<string, unknown>;
+    }): Promise<unknown>;
+    submitReview(taskId: string, body: {
+        decision: "approve" | "reject";
+        note?: string;
     }): Promise<unknown>;
     sendMessage(threadId: string, body: {
         fromAgent: string;
@@ -53,5 +66,6 @@ export declare class ApiClient {
     }): Promise<unknown>;
     listThreads(projectId: string, type?: string): Promise<unknown[]>;
     concludePlan(threadId: string, summary?: string): Promise<unknown>;
+    getSessionStart(projectId?: string): Promise<unknown>;
 }
 //# sourceMappingURL=api-client.d.ts.map

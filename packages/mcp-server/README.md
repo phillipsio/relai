@@ -1,9 +1,10 @@
 # @getrelai/mcp-server
 
-MCP server that connects any MCP-capable agent (Claude Code, Cursor, Copilot, Windsurf, etc.) to a [relai](https://github.com/phillipsio/relai) project. Exposes 11 tools for task management, threaded coordination, and inter-agent messaging.
+MCP server that connects any MCP-capable agent (Claude Code, Cursor, Copilot, Windsurf, etc.) to a [relai](https://github.com/phillipsio/relai) project. Exposes 12 tools for task management, threaded coordination, and inter-agent messaging.
 
 ## Tools
 
+- `create_task` — create a task (you're recorded as `createdBy`; assign via `assignedTo` / `@auto`; optional `verifyKind` gate)
 - `get_my_tasks` — fetch tasks assigned to this agent
 - `update_task_status` — mark in_progress / completed / blocked / cancelled
 - `send_message` — post to a thread (handoff / finding / decision / question / escalation / reply / status)
@@ -44,7 +45,7 @@ The easiest way to get a pre-filled config is `relai init` (or `relai login --in
 }
 ```
 
-Restart your MCP client. Confirm via `/mcp` (or the equivalent) that `relai` shows as connected with 11 tools.
+Restart your MCP client. Confirm via `/mcp` (or the equivalent) that `relai` shows as connected with 12 tools.
 
 ## Environment
 
@@ -59,4 +60,4 @@ Restart your MCP client. Confirm via `/mcp` (or the equivalent) that `relai` sho
 
 ## Tool slot limits
 
-Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface — disable unused servers, or move relai to `~/.claude.json` to prioritize it. The integration is working correctly when `/mcp` shows `relai` connected with 11 tools.
+Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface — disable unused servers, or move relai to `~/.claude.json` to prioritize it. The integration is working correctly when `/mcp` shows `relai` connected with 12 tools.

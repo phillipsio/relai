@@ -7,6 +7,61 @@ import type { ApiClient } from "./api-client.js";
 export function buildTools(client: ApiClient, agentId: string, projectId: string) {
   return [
     {
+      name: "create_task",
+      description:
+        "Create a new task in this project — use this to turn a plan into actionable work (e.g. an " +
+        "architect/planner breaking a design into tasks for workers). You are recorded as the task's " +
+        "creator automatically. Assign with assignedTo: an agent ID assigns directly, '@auto' lets the " +
+        "routing scheduler pick (task stays 'pending'), or omit to use the project default. Do NOT set " +
+        "status — it's derived (assigned when there's a concrete assignee, else pending). Optionally add " +
+        "a completion gate via verifyKind: 'reviewer_agent' (set verifyReviewerId — that agent must " +
+        "approve via submit_review), 'file_exists' (verifyPath), or 'thread_concluded' (verifyThreadId). " +
+        "The 'shell' kind (verifyCommand) is restricted to orchestrator agents and 403s otherwise.",
+      inputSchema: z.object({
+        title: z.string().min(1).describe("Short, action-oriented task title."),
+        description: z.string().min(1).describe("What to do, with enough context to start. Reference specs/files."),
+        priority: z.enum(["low", "normal", "high", "urgent"]).optional().describe("Defaults to 'normal'."),
+        assignedTo: z.string().optional().describe("Agent ID to assign directly, '@auto' for the router, or omit for the project default."),
+        domains: z.array(z.string()).optional().describe("Domain tags for rules-based routing, e.g. ['database','schema']."),
+        specialization: z.string().optional().describe("Specialization the task needs, for routing (e.g. 'writer')."),
+        verifyKind: z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional().describe("Optional completion gate — see tool description."),
+        verifyReviewerId: z.string().optional().describe("For verifyKind='reviewer_agent': agent ID that must approve."),
+        verifyThreadId: z.string().optional().describe("For verifyKind='thread_concluded': thread whose conclusion gates completion."),
+        verifyPath: z.string().optional().describe("For verifyKind='file_exists': path that must exist."),
+        verifyCommand: z.string().optional().describe("For verifyKind='shell' (orchestrator only): command that must exit 0."),
+        verifyCwd: z.string().optional().describe("Working directory for shell/file_exists predicates."),
+        verifyTimeoutMs: z.number().int().optional().describe("Timeout for shell predicate (1000–600000 ms)."),
+      }),
+      handler: async (input: {
+        title: string; description: string; priority?: string; assignedTo?: string;
+        domains?: string[]; specialization?: string;
+        verifyKind?: string; verifyReviewerId?: string; verifyThreadId?: string;
+        verifyPath?: string; verifyCommand?: string; verifyCwd?: string; verifyTimeoutMs?: number;
+      }) => {
+        // createdBy + projectId are injected from this agent's identity. Status is
+        // intentionally NOT set — the API derives it from the effective assignee.
+        const task = await client.createTask({
+          projectId,
+          createdBy: agentId,
+          title: input.title,
+          description: input.description,
+          priority: input.priority,
+          assignedTo: input.assignedTo,
+          domains: input.domains,
+          specialization: input.specialization,
+          verifyKind: input.verifyKind,
+          verifyReviewerId: input.verifyReviewerId,
+          verifyThreadId: input.verifyThreadId,
+          verifyPath: input.verifyPath,
+          verifyCommand: input.verifyCommand,
+          verifyCwd: input.verifyCwd,
+          verifyTimeoutMs: input.verifyTimeoutMs,
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
+
+    {
       name: "get_my_tasks",
       description:
         "Retrieve tasks assigned to this agent. Use this at the start of a session or when you want " +

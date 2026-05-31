@@ -146,8 +146,8 @@ The `scheduler` option on `buildServer()` is `false` in tests to avoid backgroun
 
 ### MCP server (packages/mcp-server)
 
-Eleven tools with model-agnostic descriptions (work with any MCP-compatible client):
-`get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`, `submit_review`.
+Twelve tools with model-agnostic descriptions (work with any MCP-compatible client):
+`create_task`, `get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`, `submit_review`. (`create_task` injects the caller as `createdBy`; status is derived from the assignee server-side; shell verify predicates stay orchestrator-gated — same surface the `relai task create` CLI command exposes to humans.)
 
 Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
@@ -194,7 +194,7 @@ The `--to <name>` flag in both `task create` and `send` resolves through `packag
 
 Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the project root (project-level) or `~/.claude.json` (global). Project-level is preferred — it keeps each project's agent identity isolated. The snippet wires the per-agent token into `API_SECRET` for the MCP server, which sends it as the bearer credential.
 
-**Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with ten tools.
+**Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with twelve tools.
 
 **Repo path**: Relai stores `repoPath` on the agent record and shows it in setup instructions, but cannot enforce it for interactive sessions. Always start your agent session from the correct directory — the agent will work in whatever directory it was launched from.
 

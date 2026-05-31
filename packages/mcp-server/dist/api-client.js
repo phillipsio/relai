@@ -39,6 +39,9 @@ class ApiClient {
     updateTask(id, body) {
         return this.request("PUT", `/tasks/${id}`, body);
     }
+    submitReview(taskId, body) {
+        return this.request("POST", `/tasks/${taskId}/review`, body);
+    }
     // Messages
     sendMessage(threadId, body) {
         return this.request("POST", `/threads/${threadId}/messages`, body);
@@ -74,6 +77,11 @@ class ApiClient {
     }
     concludePlan(threadId, summary) {
         return this.request("PUT", `/threads/${threadId}/conclude`, { summary });
+    }
+    // Session
+    getSessionStart(projectId) {
+        const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+        return this.request("GET", `/session/start${qs}`);
     }
 }
 exports.ApiClient = ApiClient;

@@ -7,6 +7,54 @@ const zod_1 = require("zod");
 function buildTools(client, agentId, projectId) {
     return [
         {
+            name: "create_task",
+            description: "Create a new task in this project — use this to turn a plan into actionable work (e.g. an " +
+                "architect/planner breaking a design into tasks for workers). You are recorded as the task's " +
+                "creator automatically. Assign with assignedTo: an agent ID assigns directly, '@auto' lets the " +
+                "routing scheduler pick (task stays 'pending'), or omit to use the project default. Do NOT set " +
+                "status — it's derived (assigned when there's a concrete assignee, else pending). Optionally add " +
+                "a completion gate via verifyKind: 'reviewer_agent' (set verifyReviewerId — that agent must " +
+                "approve via submit_review), 'file_exists' (verifyPath), or 'thread_concluded' (verifyThreadId). " +
+                "The 'shell' kind (verifyCommand) is restricted to orchestrator agents and 403s otherwise.",
+            inputSchema: zod_1.z.object({
+                title: zod_1.z.string().min(1).describe("Short, action-oriented task title."),
+                description: zod_1.z.string().min(1).describe("What to do, with enough context to start. Reference specs/files."),
+                priority: zod_1.z.enum(["low", "normal", "high", "urgent"]).optional().describe("Defaults to 'normal'."),
+                assignedTo: zod_1.z.string().optional().describe("Agent ID to assign directly, '@auto' for the router, or omit for the project default."),
+                domains: zod_1.z.array(zod_1.z.string()).optional().describe("Domain tags for rules-based routing, e.g. ['database','schema']."),
+                specialization: zod_1.z.string().optional().describe("Specialization the task needs, for routing (e.g. 'writer')."),
+                verifyKind: zod_1.z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional().describe("Optional completion gate — see tool description."),
+                verifyReviewerId: zod_1.z.string().optional().describe("For verifyKind='reviewer_agent': agent ID that must approve."),
+                verifyThreadId: zod_1.z.string().optional().describe("For verifyKind='thread_concluded': thread whose conclusion gates completion."),
+                verifyPath: zod_1.z.string().optional().describe("For verifyKind='file_exists': path that must exist."),
+                verifyCommand: zod_1.z.string().optional().describe("For verifyKind='shell' (orchestrator only): command that must exit 0."),
+                verifyCwd: zod_1.z.string().optional().describe("Working directory for shell/file_exists predicates."),
+                verifyTimeoutMs: zod_1.z.number().int().optional().describe("Timeout for shell predicate (1000–600000 ms)."),
+            }),
+            handler: async (input) => {
+                // createdBy + projectId are injected from this agent's identity. Status is
+                // intentionally NOT set — the API derives it from the effective assignee.
+                const task = await client.createTask({
+                    projectId,
+                    createdBy: agentId,
+                    title: input.title,
+                    description: input.description,
+                    priority: input.priority,
+                    assignedTo: input.assignedTo,
+                    domains: input.domains,
+                    specialization: input.specialization,
+                    verifyKind: input.verifyKind,
+                    verifyReviewerId: input.verifyReviewerId,
+                    verifyThreadId: input.verifyThreadId,
+                    verifyPath: input.verifyPath,
+                    verifyCommand: input.verifyCommand,
+                    verifyCwd: input.verifyCwd,
+                    verifyTimeoutMs: input.verifyTimeoutMs,
+                });
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
             name: "get_my_tasks",
             description: "Retrieve tasks assigned to this agent. Use this at the start of a session or when you want " +
                 "to know what work is queued for you. Returns tasks with status 'assigned' or 'in_progress'. " +
@@ -36,7 +84,9 @@ function buildTools(client, agentId, projectId) {
             description: "Update the status of a task you are working on. Call this when you start work on a task " +
                 "(set to 'in_progress'), finish it (set to 'completed'), or hit a blocker (set to 'blocked'). " +
                 "Always update status when it changes — the orchestrator uses this to track progress and " +
-                "route follow-on work.",
+                "route follow-on work. Note: tasks with a verifyCommand have completion gated — the server " +
+                "may return status 'pending_verification' while a predicate runs; if it fails the task is " +
+                "returned to 'assigned' with details on metadata.lastVerification.",
             inputSchema: zod_1.z.object({
                 taskId: zod_1.z.string().describe("The ID of the task to update."),
                 status: zod_1.z
@@ -176,6 +226,21 @@ function buildTools(client, agentId, projectId) {
             },
         },
         {
+            name: "session_start",
+            description: "Get a single bundled snapshot of your current state in this project: your identity, the " +
+                "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +
+                "human-readable label like 'Running' / 'Stalled' / 'Input required'), unread messages " +
+                "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
+                "start of every session — it replaces the get_my_tasks + get_unread_messages + list_threads " +
+                "calls you would otherwise need to orient yourself, and includes context those tools don't " +
+                "expose. Read the project context carefully before doing any work.",
+            inputSchema: zod_1.z.object({}),
+            handler: async () => {
+                const session = await client.getSessionStart(projectId);
+                return { content: [{ type: "text", text: JSON.stringify(session, null, 2) }] };
+            },
+        },
+        {
             name: "list_all_tasks",
             description: "List tasks across the project, optionally filtered by status. Use this to get a full " +
                 "picture of project state — what's pending, in progress, blocked, or completed. " +
@@ -196,6 +261,22 @@ function buildTools(client, agentId, projectId) {
                                 : JSON.stringify(tasks, null, 2),
                         }],
                 };
+            },
+        },
+        {
+            name: "submit_review",
+            description: "Submit your approval decision on a task that names you as the reviewer (verifyKind=" +
+                "'reviewer_agent'). The task must be in 'pending_verification'. Approve to promote it to " +
+                "'completed'; reject to send it back to 'assigned' so the original worker can iterate. " +
+                "Reject decisions should include a note explaining what to change.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The ID of the task you are reviewing."),
+                decision: zod_1.z.enum(["approve", "reject"]).describe("Approve or reject."),
+                note: zod_1.z.string().max(2_000).optional().describe("Required for reject; useful for approve. Concise reason or guidance."),
+            }),
+            handler: async (input) => {
+                const task = await client.submitReview(input.taskId, { decision: input.decision, note: input.note });
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
             },
         },
     ];

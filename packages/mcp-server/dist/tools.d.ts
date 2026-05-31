@@ -4,6 +4,72 @@ export declare function buildTools(client: ApiClient, agentId: string, projectId
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
+        title: z.ZodString;
+        description: z.ZodString;
+        priority: z.ZodOptional<z.ZodEnum<["low", "normal", "high", "urgent"]>>;
+        assignedTo: z.ZodOptional<z.ZodString>;
+        domains: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        specialization: z.ZodOptional<z.ZodString>;
+        verifyKind: z.ZodOptional<z.ZodEnum<["shell", "file_exists", "thread_concluded", "reviewer_agent"]>>;
+        verifyReviewerId: z.ZodOptional<z.ZodString>;
+        verifyThreadId: z.ZodOptional<z.ZodString>;
+        verifyPath: z.ZodOptional<z.ZodString>;
+        verifyCommand: z.ZodOptional<z.ZodString>;
+        verifyCwd: z.ZodOptional<z.ZodString>;
+        verifyTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        title: string;
+        description: string;
+        assignedTo?: string | undefined;
+        priority?: "low" | "normal" | "high" | "urgent" | undefined;
+        domains?: string[] | undefined;
+        specialization?: string | undefined;
+        verifyKind?: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent" | undefined;
+        verifyReviewerId?: string | undefined;
+        verifyThreadId?: string | undefined;
+        verifyPath?: string | undefined;
+        verifyCommand?: string | undefined;
+        verifyCwd?: string | undefined;
+        verifyTimeoutMs?: number | undefined;
+    }, {
+        title: string;
+        description: string;
+        assignedTo?: string | undefined;
+        priority?: "low" | "normal" | "high" | "urgent" | undefined;
+        domains?: string[] | undefined;
+        specialization?: string | undefined;
+        verifyKind?: "shell" | "file_exists" | "thread_concluded" | "reviewer_agent" | undefined;
+        verifyReviewerId?: string | undefined;
+        verifyThreadId?: string | undefined;
+        verifyPath?: string | undefined;
+        verifyCommand?: string | undefined;
+        verifyCwd?: string | undefined;
+        verifyTimeoutMs?: number | undefined;
+    }>;
+    handler: (input: {
+        title: string;
+        description: string;
+        priority?: string;
+        assignedTo?: string;
+        domains?: string[];
+        specialization?: string;
+        verifyKind?: string;
+        verifyReviewerId?: string;
+        verifyThreadId?: string;
+        verifyPath?: string;
+        verifyCommand?: string;
+        verifyCwd?: string;
+        verifyTimeoutMs?: number;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
         status: z.ZodDefault<z.ZodEnum<["assigned", "in_progress", "pending", "all"]>>;
     }, "strip", z.ZodTypeAny, {
         status: "assigned" | "in_progress" | "pending" | "all";
@@ -180,6 +246,32 @@ export declare function buildTools(client: ApiClient, agentId: string, projectId
     }>;
     handler: (input: {
         status?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        decision: z.ZodEnum<["approve", "reject"]>;
+        note: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+        decision: "approve" | "reject";
+        note?: string | undefined;
+    }, {
+        taskId: string;
+        decision: "approve" | "reject";
+        note?: string | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        decision: "approve" | "reject";
+        note?: string;
     }) => Promise<{
         content: {
             type: "text";

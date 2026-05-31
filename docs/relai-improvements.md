@@ -1,0 +1,62 @@
+# relai — Pain Points & Improvements (dogfooding backlog)
+
+Running notes from real-world use. Append new items as they surface; don't prune (mark done with ~~strikethrough~~ + a note).
+
+**Source run:** edgefinder Phase 5 fan-out + `final_bdl_v2.py` split, 2026-05-30 — a multi-agent workflow (orchestrator + architect/reviewer + gemini + headless/interactive claude workers) on the local stack.
+
+Severity: 🔴 blocked us / 🟡 real friction / 🟢 nice-to-have.
+
+---
+
+## A. MCP tool surface gaps
+- ✅ **DONE (2026-05-30, `feat/mcp-create-task`) — `create_task` MCP tool added** (mirrors `POST /tasks`; injects the caller as `createdBy`; status derived from assignee; shell predicates stay orchestrator-gated). ~~**No `create_task` MCP tool.**~~ MCP-connected agents (gemini, copilot, interactive/headless claude) cannot create tasks — only REST/CLI can. The architect had to hand task definitions to the coordinator via thread messages, and the coordinator created them over the API. *Proposal:* add `create_task` (orchestrator-gated, mirroring the shell-predicate gate) so a planner/architect can author tasks directly.
+- 🟡 **`PUT /tasks/:id` can't edit verify config.** `updateSchema` lacks `verifyKind`/`verifyReviewerId`/etc., so re-pointing a reviewer required a raw DB `UPDATE`. *Proposal:* allow editing verify fields via the update endpoint (with the same authoring gates).
+- 🟡 **Many coordinator actions have no MCP/CLI path in-session** (reassign, change status, post-on-behalf, re-point reviewer) — all done via curl/DB. *Proposal:* an orchestrator tool surface, or ship the `relai` CLI on PATH by default (see E).
+
+## B. Task model / scheduler
+- 🔴 **No native task dependency/DAG.** "Tasks 3–5 queued with dependencies" had no representation; phase gating was manual (`blocked` status + manual re-activation). The local TaskList tool already exposes `blockedBy` — relai tasks could too. *Proposal:* `dependsOn`/`blockedBy` so the scheduler auto-unblocks downstream tasks.
+- 🟡 **`reviewer_agent` gate stalls silently when the reviewer is offline.** Tasks sat in `pending_verification` with no signal; we invented a "coordinator fallback-review via admin path after ~2 ticks" convention. *Proposal:* emit a `review_overdue` event / configurable reviewer-timeout → escalate or reassign.
+- 🟢 **`pending_verification → completed` isn't synchronous.** The review decision is recorded but only promoted on the next scheduler tick (~15s). *Proposal:* promote synchronously for structured kinds.
+- 🟡 **Approve+merge drifts from relai task state.** Twice (Task 1, bets_writer test) the reviewer merged the branch via git + posted an in-thread verdict, but the relai task stayed in `pending_verification` — the formal `submit_review` didn't land (likely the review was decided while the task wasn't yet in `pending_verification`, or git-merge and the relai transition are separate manual steps). The coordinator had to manually sync via the admin review path each time. *Proposal:* a combined approve+merge action, make `submit_review` tolerant of status/timing, or auto-record the review when the reviewer merges.
+- 🟡 **No collision guard for concurrent edits to the same file across branches.** Two agents (cw2 extracting module 5, gemini about to extract modules 6/7) targeting the same 6k-line `final_bdl_v2.py` on divergent branch bases would have produced an unmergeable mess; relai has no file-ownership/locking awareness — the architect had to manually 🛑 HALT one. Phase sequencing that shares a file is pure convention. *Proposal:* optional file-claim/lock on a task, or a "file X is being edited by agent Y on branch Z" signal so the coordinator/architect can sequence.
+- 🟢 **Agents can "claim" a non-existent task.** gemini announced claiming `task_T7-19O2s…` (Phase 3) which has NO row in the tasks table — relai neither created nor rejected it. *Proposal:* validate task IDs on claim / status-update and reject unknown ones (otherwise phantom work can look tracked).
+- 🟢 **`escalation`-type messages silently auto-create high-priority tasks.** Coordinator notification posts (type `escalation`) spawned 3 stray "COORDINATOR — …escalated" pending tasks via the off-flag fallback in `POST /threads/:id/messages`; they cluttered the board and had to be cancelled at wrap-up. *Proposal:* make escalation→task creation explicit/opt-in (a flag on the message), skip it for purely informational coordinator posts, or auto-resolve the spawned task when the referenced blocker clears.
+- 🟡 **No formal human-approval gate.** gemini correctly self-blocked before prod DDL, but that's pure convention (a `blocked` status + a thread message). *Proposal:* `verifyKind: "human_approval"` (or a deploy/DDL gate) so hard-stops are first-class and auditable.
+
+## C. Worker lifecycle & resilience
+- 🔴 **Headless `claude-worker` retry-loops on fatal errors.** When the CLI hit "Credit balance is too low," every spawned session failed instantly and the loop just respawned (~every 15s) — we only caught it by reading the worker's stdout log, then stopped it manually. *Proposal:* classify fatal/auth errors vs transient; on fatal, stop or exponential-backoff AND surface status to relai (mark agent unavailable / post a message) instead of silent spin.
+- 🟡 **Interactive agents can't poll.** gemini / interactive claude don't auto-check for new tasks/messages; a human must prompt them every time. The coordinator ended up acting as their "inbox watcher." *Proposal:* a lightweight `relai watch` CLI that tails events and prints "you have a new task/message," or a notifier the CLI can surface.
+- 🟡 **Interactive agents stall mid-multi-step task when the human steps away.** They finish the current chunk and idle with no auto-continue — happened to gemini (Task 1, stopped before committing) and cw2 (committed module 2, never started module 5). The coordinator can *detect* it via git file mtimes but can't *resume* it (only a human prompt in the agent's terminal can). *Proposal:* a worker-side wrapper/`relai run` loop for interactive agents that pulls the next step until the task is done, or at minimum make the stall visible in relai (no progress heartbeat → flag).
+- 🟡 **Workers hit provider quota/credit limits mid-workflow, and relai has no awareness.** Both the cw2 headless worker (Anthropic API credits) and gemini (Gemini daily limit) ran dry mid-run on the same day, each blocking their track until the human rerouted or waited for reset. relai tracks "online" (heartbeat) but not "available / has quota." *Proposal:* let an agent report unavailable/quota-exhausted so the router + coordinator skip it and the human is told to reroute, instead of silent failures the coordinator has to infer from git/logs.
+
+## D. Observability / coordinator ergonomics
+- 🟡 **`lastSeenAt`/online is misleading.** An interactive agent doing git work (no tool calls) shows "offline" while productive; a stuck-but-polling agent shows "online." We had to infer stalls from **git file mtimes**, not relai. *Proposal:* distinguish "connected" vs "actively working"; let agents post periodic progress; surface a real activity signal.
+- 🟡 **No visibility into what an agent is doing.** Coordinator state was reconstructed from git commits + mtimes + task status + thread messages. *Proposal:* optional progress streaming / structured status posts so a coordinator can detect stalls without shelling into git.
+- 🟢 **Role/orchestrator collision was ambiguous early on.** Two agents both in an orchestrator posture; the message loop just picks "the" orchestrator. *Proposal:* explicit single lead-orchestrator designation per project.
+
+## E. Setup / DX
+- 🟡 **`relai init` MCP snippet (`npx @getrelai/mcp-server`) doesn't work** — package isn't published; had to `pnpm build` then point `node` at `dist/index.js`. *Proposal:* emit a working local invocation, or publish the package.
+- 🟡 **`relai` CLI not on PATH / not built.** Forced curl for everything. *Proposal:* build + link the binary as part of setup.
+- 🟢 **MCP server env naming:** reads `ORCHESTRATOR_API_URL`/`_SECRET` as fallback though the convention is `API_URL`/`API_SECRET` — mildly confusing.
+
+---
+
+## F. Communication & threading
+- 🟡 **Coordination concentrated in the single PLAN thread, not task threads** (noted by the human). Across the whole run, nearly all communication — handoffs, review verdicts, escalations, status, scope directives, the Phase-3 HALT — flowed through ONE plan thread (`thread_NHKUanP86ny0`). relai tasks have no per-task discussion thread, so the plan thread became a firehose: hard to follow a single task's conversation, and it won't scale as tasks multiply. *Proposal:* per-task threads (or task-scoped messages that auto-link to the task) so a task's review/handoff/status lives with the task; reserve the plan thread for cross-cutting design decisions only.
+
+## Session learnings — 2026-05-30 (Phase 1 run)
+Highest-impact themes from the first real run (details in sections above):
+1. **MCP can't create tasks** — the single biggest friction; planner → coordinator → REST hand-off all day.
+2. **Coordinator-as-glue** — most coordinator actions (create/reassign, review-sync, post-on-behalf) needed raw REST/DB, not MCP/CLI.
+3. **Interactive agents need a babysitter** — they can't poll, stall mid-multi-step when the human steps away, and hit provider quota limits (cw2 API credits, gemini daily cap) — all invisible to relai; had to infer state from git mtimes.
+4. **Reviews drift** — architect approved+merged via git but the relai task stayed `pending_verification` nearly every time (coordinator synced 3×).
+5. **No collision/sequencing guard** — two agents nearly edited the same 6k-line file on divergent branches; prevented only by the architect manually HALTing.
+6. **Communication centralized in the plan thread** (see F) — task-scoped threading would aid navigability.
+
+What carried the workflow (keep): the `reviewer_agent` gate + architect-as-reviewer pattern, per-agent token identities, the thread as audit log, and the admin-review escape hatch.
+
+## What worked well (keep)
+- `reviewer_agent` verify kind + the architect-as-reviewer flow (when the reviewer is online) is clean and powerful.
+- Per-agent tokens + project-scoped identities made spinning up heterogeneous workers (claude/gemini/headless) straightforward.
+- The thread as the coordination + audit log was genuinely useful for reconstructing state.
+- Admin-secret review path was a good escape hatch for coordinator fallback when the reviewer was absent.

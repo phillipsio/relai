@@ -38,10 +38,11 @@ function getHandler(tools: ReturnType<typeof buildTools>, name: string) {
 }
 
 describe("buildTools", () => {
-  it("returns all 11 tools", () => {
+  it("returns all 12 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, PROJECT_ID);
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(12);
     const names = tools.map((t) => t.name);
+    expect(names).toContain("create_task");
     expect(names).toContain("get_my_tasks");
     expect(names).toContain("update_task_status");
     expect(names).toContain("send_message");
@@ -260,5 +261,59 @@ describe("list_all_tasks", () => {
     const handler = getHandler(buildTools(client, AGENT_ID, PROJECT_ID), "list_all_tasks");
     await (handler as Function)({ status: "pending,assigned" });
     expect(client.getTasks).toHaveBeenCalledWith({ projectId: PROJECT_ID, status: "pending,assigned" });
+  });
+});
+
+describe("create_task", () => {
+  it("injects createdBy (this agent) and projectId, and passes core fields", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "task_new", title: "Do the thing" });
+    const handler = getHandler(buildTools(mockClient({ createTask: create }), AGENT_ID, PROJECT_ID), "create_task");
+    await (handler as Function)({ title: "Do the thing", description: "Details here" });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: PROJECT_ID,
+      createdBy: AGENT_ID,
+      title: "Do the thing",
+      description: "Details here",
+    }));
+  });
+
+  it("does NOT set status — the API derives it from assignedTo", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "task_new" });
+    const handler = getHandler(buildTools(mockClient({ createTask: create }), AGENT_ID, PROJECT_ID), "create_task");
+    await (handler as Function)({ title: "t", description: "d", assignedTo: "@auto" });
+    const arg = create.mock.calls[0][0];
+    expect(arg.status).toBeUndefined();
+    expect(arg.assignedTo).toBe("@auto");
+  });
+
+  it("passes routing fields (assignedTo, domains, specialization, priority) through", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "task_new" });
+    const handler = getHandler(buildTools(mockClient({ createTask: create }), AGENT_ID, PROJECT_ID), "create_task");
+    await (handler as Function)({
+      title: "t", description: "d",
+      priority: "high", assignedTo: "agent_worker", domains: ["db"], specialization: "writer",
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      priority: "high", assignedTo: "agent_worker", domains: ["db"], specialization: "writer",
+    }));
+  });
+
+  it("passes a reviewer_agent verify predicate through", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "task_new" });
+    const handler = getHandler(buildTools(mockClient({ createTask: create }), AGENT_ID, PROJECT_ID), "create_task");
+    await (handler as Function)({
+      title: "t", description: "d",
+      verifyKind: "reviewer_agent", verifyReviewerId: "agent_reviewer",
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      verifyKind: "reviewer_agent", verifyReviewerId: "agent_reviewer",
+    }));
+  });
+
+  it("returns MCP content format with the created task", async () => {
+    const handler = getHandler(buildTools(mockClient({ createTask: vi.fn().mockResolvedValue({ id: "task_new" }) }), AGENT_ID, PROJECT_ID), "create_task");
+    const result = await (handler as Function)({ title: "t", description: "d" });
+    expect(result.content[0].type).toBe("text");
+    expect(result.content[0].text).toContain("task_new");
   });
 });

@@ -47,8 +47,18 @@ export class ApiClient {
     title: string;
     description: string;
     priority?: string;
+    assignedTo?: string;
     domains?: string[];
+    specialization?: string;
     metadata?: Record<string, unknown>;
+    // Verification predicate (optional). Shell is orchestrator-gated server-side.
+    verifyKind?: string;
+    verifyReviewerId?: string;
+    verifyThreadId?: string;
+    verifyPath?: string;
+    verifyCommand?: string;
+    verifyCwd?: string;
+    verifyTimeoutMs?: number;
   }) {
     return this.request<unknown>("POST", "/tasks", body);
   }

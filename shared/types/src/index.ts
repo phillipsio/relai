@@ -13,7 +13,7 @@ export interface Agent {
 }
 
 // Task lifecycle
-export type TaskStatus = "pending" | "assigned" | "in_progress" | "pending_verification" | "completed" | "blocked" | "cancelled";
+export type TaskStatus = "proposed" | "pending" | "assigned" | "in_progress" | "pending_verification" | "completed" | "blocked" | "cancelled";
 
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
 
@@ -84,6 +84,7 @@ export interface Project {
 // next" rather than the agent-state framing of TaskStatus. Derived from status
 // plus a couple of flags; intended for CLI/UI surfaces, never persisted.
 export type TaskHumanLabel =
+  | "Proposed"        // proposed — awaiting an orchestrator's commit
   | "Queued"          // pending, autoAssign true — awaiting routing
   | "Unassigned"      // pending, no assignee and no autoAssign
   | "Starting"        // assigned, not yet picked up
@@ -101,6 +102,7 @@ export function humanizeTaskStatus(task: {
   stalledAt?: Date | string | null;
 }): TaskHumanLabel {
   switch (task.status) {
+    case "proposed":    return "Proposed";
     case "pending":     return task.autoAssign ? "Queued" : "Unassigned";
     case "assigned":    return "Starting";
     case "in_progress": return task.stalledAt ? "Stalled" : "Running";

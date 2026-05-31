@@ -117,6 +117,19 @@ export class CliApiClient {
     return this.request<TaskRow>("POST", `/tasks/${id}/review`, body);
   }
 
+  commitTask(id: string, body: {
+    decision?: "commit" | "reject";
+    assignedTo?: string;
+    note?: string;
+    title?: string;
+    description?: string;
+    priority?: "low" | "normal" | "high" | "urgent";
+    domains?: string[];
+    specialization?: string;
+  }) {
+    return this.request<TaskRow>("POST", `/tasks/${id}/commit`, body);
+  }
+
   listThreads(projectId: string) {
     return this.request<ThreadRow[]>("GET", `/threads?projectId=${encodeURIComponent(projectId)}`);
   }

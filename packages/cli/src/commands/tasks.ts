@@ -7,6 +7,7 @@ import { resolveAgentRef } from "../lib/resolve.js";
 import { nonInteractive, requireFlag } from "../lib/interactive.js";
 
 const STATUS_COLOR: Record<string, (s: string) => string> = {
+  proposed:             chalk.blue,
   pending:              chalk.dim,
   assigned:             chalk.cyan,
   in_progress:          chalk.yellow,
@@ -208,6 +209,42 @@ export async function taskReviewCommand(
     }
   } catch (err) {
     spinner.fail(chalk.red("Review failed"));
+    console.error(chalk.dim(String(err)));
+    process.exit(1);
+  }
+}
+
+export async function taskCommitCommand(
+  id: string,
+  options: { to?: string; reject?: boolean; note?: string; priority?: string; title?: string }
+) {
+  const config = requireConfig();
+  const client = new CliApiClient(config);
+
+  const decision = options.reject ? "reject" : "commit";
+  let assignedTo: string | undefined;
+  if (decision === "commit" && options.to) {
+    assignedTo = await resolveAgentRef(client, config.projectId, options.to);
+  }
+
+  const spinner = ora(decision === "reject" ? "Rejecting proposal..." : "Committing proposal...").start();
+  try {
+    const task = await client.commitTask(id, {
+      decision,
+      assignedTo,
+      note: options.note,
+      title: options.title,
+      priority: options.priority as "low" | "normal" | "high" | "urgent" | undefined,
+    });
+    const actual = task.status;
+    const colored = STATUS_COLOR[actual]?.(actual) ?? actual;
+    spinner.succeed(`${chalk.bold(id)} → ${colored} (${decision})`);
+    console.log(chalk.dim(`  ${task.title}`));
+    if (decision === "commit") {
+      console.log(chalk.dim(actual === "assigned" ? `  assigned to ${task.assignedTo}` : `  queued for the router`));
+    }
+  } catch (err) {
+    spinner.fail(chalk.red(decision === "reject" ? "Reject failed" : "Commit failed"));
     console.error(chalk.dim(String(err)));
     process.exit(1);
   }

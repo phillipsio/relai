@@ -3,6 +3,11 @@ import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean }
 export const agentRoleEnum = pgEnum("agent_role", ["orchestrator", "worker"]);
 
 export const taskStatusEnum = pgEnum("task_status", [
+  // "proposed" is worker-authored work awaiting an orchestrator's commit. It is
+  // inert: the routing/verify schedulers skip it until an orchestrator commits
+  // it into the normal lifecycle (or rejects it → cancelled). See POST
+  // /tasks/:id/commit and the propose-vs-commit fork in POST /tasks.
+  "proposed",
   "pending", "assigned", "in_progress", "pending_verification", "completed", "blocked", "cancelled",
 ]);
 

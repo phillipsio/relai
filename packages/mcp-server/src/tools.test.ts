@@ -21,6 +21,7 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     createThread: vi.fn().mockResolvedValue({ id: "thread_1", title: "test" }),
     listThreads: vi.fn().mockResolvedValue([]),
     submitReview: vi.fn().mockResolvedValue({ id: "task_1", status: "pending_verification" }),
+    commitTask: vi.fn().mockResolvedValue({ id: "task_1", status: "assigned" }),
     concludePlan: vi.fn().mockResolvedValue({}),
     getSessionStart: vi.fn().mockResolvedValue({
       agent: { id: AGENT_ID, name: "test", specialization: null, workerType: null, repoPath: null },
@@ -38,11 +39,12 @@ function getHandler(tools: ReturnType<typeof buildTools>, name: string) {
 }
 
 describe("buildTools", () => {
-  it("returns all 12 tools", () => {
+  it("returns all 13 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, PROJECT_ID);
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
+    expect(names).toContain("commit_task");
     expect(names).toContain("get_my_tasks");
     expect(names).toContain("update_task_status");
     expect(names).toContain("send_message");
@@ -65,6 +67,24 @@ describe("submit_review", () => {
     expect(submit).toHaveBeenCalledWith("task_42", { decision: "reject", note: "needs tests" });
     expect(result.content[0].type).toBe("text");
     expect(result.content[0].text).toContain("task_42");
+  });
+});
+
+describe("commit_task", () => {
+  it("forwards assignee and edits to commitTask and returns MCP content", async () => {
+    const commit = vi.fn().mockResolvedValue({ id: "task_42", status: "assigned" });
+    const tools = buildTools(mockClient({ commitTask: commit }), AGENT_ID, PROJECT_ID);
+    const result = await getHandler(tools, "commit_task")({ taskId: "task_42", assignedTo: "@auto", priority: "high" });
+    expect(commit).toHaveBeenCalledWith("task_42", { decision: "commit", assignedTo: "@auto", priority: "high" });
+    expect(result.content[0].type).toBe("text");
+    expect(result.content[0].text).toContain("task_42");
+  });
+
+  it("forwards a reject decision", async () => {
+    const commit = vi.fn().mockResolvedValue({ id: "task_42", status: "cancelled" });
+    const tools = buildTools(mockClient({ commitTask: commit }), AGENT_ID, PROJECT_ID);
+    await getHandler(tools, "commit_task")({ taskId: "task_42", decision: "reject", note: "out of scope" });
+    expect(commit).toHaveBeenCalledWith("task_42", { decision: "reject", note: "out of scope" });
   });
 });
 

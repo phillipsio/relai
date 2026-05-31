@@ -20,9 +20,11 @@ export async function inboxCommand(options: { read?: boolean }) {
   const spinner = ora("Checking inbox...").start();
 
   try {
-    const [messages, pendingTasks] = await Promise.all([
+    const [messages, pendingTasks, proposedTasks, agents] = await Promise.all([
       client.getUnread(config.agentId, config.projectId),
       client.getTasks({ projectId: config.projectId, status: "pending_verification" }),
+      client.getTasks({ projectId: config.projectId, status: "proposed" }),
+      client.getAgents(config.projectId),
     ]);
     spinner.stop();
 
@@ -30,9 +32,28 @@ export async function inboxCommand(options: { read?: boolean }) {
       t.verifyKind === "reviewer_agent" && t.verifyReviewerId === config.agentId,
     );
 
-    if (messages.length === 0 && pendingReviews.length === 0) {
+    // Proposals awaiting commit are only actionable by orchestrators.
+    const isOrchestrator = agents.some((a) => a.id === config.agentId && a.role === "orchestrator");
+    const proposals = isOrchestrator ? proposedTasks : [];
+
+    if (messages.length === 0 && pendingReviews.length === 0 && proposals.length === 0) {
       console.log(chalk.dim("Inbox empty."));
       return;
+    }
+
+    if (proposals.length > 0) {
+      console.log();
+      console.log(chalk.bold.blue(`Proposals awaiting commit (${proposals.length})`));
+      for (const task of proposals) {
+        const date = new Date(task.createdAt).toLocaleString();
+        const titlePreview = task.title.length > 80 ? task.title.slice(0, 80) + "…" : task.title;
+        const suggested = (task.metadata?.proposal as { suggestedAssignee?: string } | undefined)?.suggestedAssignee;
+        console.log(`  ${chalk.blue("proposed")}  ${chalk.dim(task.id)}`);
+        console.log(`  ${chalk.dim("suggests:")} ${suggested ?? "—"}  ${chalk.dim(date)}`);
+        console.log(`  ${titlePreview}`);
+        console.log(`  ${chalk.dim(`relai task commit ${task.id} --to <agent|@auto>  (or --reject)`)}`);
+        console.log();
+      }
     }
 
     if (pendingReviews.length > 0) {

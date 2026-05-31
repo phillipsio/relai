@@ -3,7 +3,7 @@ import { eq, and, inArray, isNull, lt, or } from "drizzle-orm";
 import { agents, tasks, routingLog, messages, verificationLog } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
-import { publish } from "../events.js";
+import { publish, ensureSubscription } from "../events.js";
 import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
 import { runFileExistsVerification } from "../verify-file-exists.js";
@@ -142,6 +142,57 @@ async function watchBlockedTasks(db: Db, projectId: string): Promise<void> {
       status: "assigned",
       metadata: { ...meta, humanReply: humanReply.body, humanRepliedAt: humanReply.createdAt },
     }).where(eq(tasks.id, task.id));
+  }
+}
+
+// ── Proposed-task overdue watch ───────────────────────────────────────────────
+
+// A worker's proposal sits in "proposed" until an orchestrator commits it. If no
+// orchestrator acts within PROPOSED_OVERDUE_MS, emit a one-time nudge
+// (task.proposed_overdue) so the proposal doesn't stall silently — the same
+// failure mode review_overdue addresses for the reviewer gate. createdAt is the
+// "proposed since" proxy. Re-subscribes orchestrators in case any registered
+// after the proposal was created.
+export async function watchProposedTasks(db: Db, projectId: string): Promise<void> {
+  const overdueMs = Number(process.env.PROPOSED_OVERDUE_MS ?? 600_000);
+  const cutoff = new Date(Date.now() - overdueMs);
+
+  const overdue = await db
+    .select()
+    .from(tasks)
+    .where(and(
+      eq(tasks.projectId, projectId),
+      eq(tasks.status, "proposed"),
+      lt(tasks.createdAt, cutoff),
+    ));
+
+  if (overdue.length === 0) return;
+
+  const orchestrators = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.projectId, projectId), eq(agents.role, "orchestrator")));
+
+  for (const task of overdue) {
+    const meta = (task.metadata ?? {}) as Record<string, unknown>;
+    if (meta.proposedOverdueNotifiedAt) continue;
+
+    const awaitingMs = Date.now() - new Date(task.createdAt).getTime();
+    await db.update(tasks)
+      .set({ metadata: { ...meta, proposedOverdueNotifiedAt: new Date().toISOString() } })
+      .where(eq(tasks.id, task.id));
+
+    for (const o of orchestrators) await ensureSubscription(db, o.id, "task", task.id);
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "task.proposed_overdue",
+      projectId:  task.projectId,
+      targetType: "task",
+      targetId:   task.id,
+      alsoNotify: orchestrators.map((o) => ({ targetType: "agent", targetId: o.id })),
+      payload:    { task, proposedBy: task.createdBy, awaitingMs },
+      createdAt:  new Date().toISOString(),
+    });
   }
 }
 
@@ -450,6 +501,9 @@ async function runCycle(db: Db, projectId: string): Promise<void> {
     watchBlockedTasks(db, projectId).catch((err) =>
       console.error(`[scheduler] blocked-watch error project=${projectId}:`, err)
     ),
+    watchProposedTasks(db, projectId).catch((err) =>
+      console.error(`[scheduler] proposed-watch error project=${projectId}:`, err)
+    ),
     detectStalls(db, projectId).catch((err) =>
       console.error(`[scheduler] stall-detect error project=${projectId}:`, err)
     ),
@@ -499,6 +553,11 @@ export function startRoutingScheduler(db: Db): void {
         .from(tasks)
         .where(eq(tasks.status, "pending_verification"));
 
+      const proposed = await db
+        .selectDistinct({ projectId: tasks.projectId })
+        .from(tasks)
+        .where(eq(tasks.status, "proposed"));
+
       // When message routing is enabled, also tick every project that has any
       // orchestrator agent — message-loop fans out from project-wide unread,
       // and we don't know which projects have unread without querying messages.
@@ -516,6 +575,7 @@ export function startRoutingScheduler(db: Db): void {
         ...blocked.map((r) => r.projectId),
         ...inProgress.map((r) => r.projectId),
         ...verifying.map((r) => r.projectId),
+        ...proposed.map((r) => r.projectId),
         ...messageProjects.map((r) => r.projectId),
       ]));
 

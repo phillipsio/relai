@@ -76,6 +76,27 @@ export class ApiClient {
     return this.request<unknown>("POST", `/tasks/${taskId}/review`, body);
   }
 
+  // Orchestrator-only: commit a proposed task into the lifecycle, or reject it.
+  commitTask(taskId: string, body: {
+    decision?: "commit" | "reject";
+    assignedTo?: string;
+    note?: string;
+    title?: string;
+    description?: string;
+    priority?: string;
+    domains?: string[];
+    specialization?: string;
+    verifyKind?: string;
+    verifyReviewerId?: string;
+    verifyThreadId?: string;
+    verifyPath?: string;
+    verifyCommand?: string;
+    verifyCwd?: string;
+    verifyTimeoutMs?: number;
+  }) {
+    return this.request<unknown>("POST", `/tasks/${taskId}/commit`, body);
+  }
+
   // Messages
   sendMessage(threadId: string, body: {
     fromAgent: string;

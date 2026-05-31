@@ -6,6 +6,10 @@ import { newId } from "./id.js";
 export type EventKind =
   | "message.posted"
   | "task.created"
+  | "task.proposed"
+  | "task.committed"
+  | "task.proposal_rejected"
+  | "task.proposed_overdue"
   | "task.updated"
   | "task.stalled"
   | "task.verified"

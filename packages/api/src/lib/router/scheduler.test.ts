@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../../server.js";
-import { detectStalls } from "./scheduler.js";
+import { detectStalls, watchProposedTasks } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
 import { createDb, tasks } from "@getrelai/db";
 import { eq } from "drizzle-orm";
@@ -130,5 +130,91 @@ describe("detectStalls", () => {
 
     const [after] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(after.stalledAt).toBeNull();
+  });
+});
+
+describe("watchProposedTasks", () => {
+  let orchId: string;
+  let workerAuth: { Authorization: string; "Content-Type": string };
+
+  beforeAll(async () => {
+    const orch = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ projectId, name: "overdue-orch", role: "orchestrator" }),
+    });
+    orchId = orch.json().data.id;
+
+    const worker = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ projectId, name: "overdue-worker", role: "worker" }),
+    });
+    workerAuth = { Authorization: `Bearer ${worker.json().token}`, "Content-Type": "application/json" };
+  });
+
+  // A worker's create lands in "proposed"; back-date createdAt so it is overdue.
+  async function makeOverdueProposal(createdMsAgo: number): Promise<string> {
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: workerAuth,
+      body: JSON.stringify({ projectId, createdBy: orchId, title: "proposal", description: "x" }),
+    });
+    const taskId = create.json().data.id;
+    expect(create.json().data.status).toBe("proposed");
+    const db = createDb(DB_URL);
+    await db.update(tasks)
+      .set({ createdAt: new Date(Date.now() - createdMsAgo) })
+      .where(eq(tasks.id, taskId));
+    return taskId;
+  }
+
+  it("emits a one-time task.proposed_overdue and notifies orchestrators", async () => {
+    process.env.PROPOSED_OVERDUE_MS = "1000"; // 1s threshold for the test
+    const taskId = await makeOverdueProposal(5_000);
+
+    const events: AppEvent[] = [];
+    const handler = (e: AppEvent) => events.push(e);
+    bus.on("event", handler);
+
+    const db = createDb(DB_URL);
+    await watchProposedTasks(db, projectId);
+
+    bus.off("event", handler);
+    const evt = events.find((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId);
+    expect(evt).toBeDefined();
+    expect(evt!.alsoNotify?.some((n) => n.targetId === orchId)).toBe(true);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect((row.metadata as Record<string, unknown>).proposedOverdueNotifiedAt).toBeDefined();
+  });
+
+  it("does not re-notify an already-notified proposal (idempotent)", async () => {
+    process.env.PROPOSED_OVERDUE_MS = "1000";
+    const taskId = await makeOverdueProposal(5_000);
+    const db = createDb(DB_URL);
+
+    await watchProposedTasks(db, projectId);
+
+    const events: AppEvent[] = [];
+    const handler = (e: AppEvent) => events.push(e);
+    bus.on("event", handler);
+    await watchProposedTasks(db, projectId);
+    bus.off("event", handler);
+
+    expect(events.some((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId)).toBe(false);
+  });
+
+  it("does not flag a proposal that is younger than the threshold", async () => {
+    process.env.PROPOSED_OVERDUE_MS = "600000"; // 10min — fresh proposal is not overdue
+    const taskId = await makeOverdueProposal(0);
+
+    const events: AppEvent[] = [];
+    const handler = (e: AppEvent) => events.push(e);
+    bus.on("event", handler);
+    const db = createDb(DB_URL);
+    await watchProposedTasks(db, projectId);
+    bus.off("event", handler);
+
+    expect(events.some((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId)).toBe(false);
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect((row.metadata as Record<string, unknown>).proposedOverdueNotifiedAt).toBeUndefined();
   });
 });

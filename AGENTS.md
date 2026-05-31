@@ -70,7 +70,7 @@ Twelve tables: `projects`, `agents`, `tokens`, `invites`, `threads`, `messages`,
 - `tokens` is the per-agent bearer-credential store: hashed token, `lastUsedAt`, `revokedAt`. Issued at agent registration and via `POST /agents/:id/tokens`
 - `invites` is the project-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning), `status` (`"open"` | `"concluded"`), `summary`
-- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional verification predicate. Four kinds: `verifyKind = "shell"` (uses `verifyCommand` + optional `verifyCwd` + optional `verifyTimeoutMs` bounded `[1_000, 600_000]`, default 60s — legacy rows with null `verifyKind` and `verifyCommand` set are treated as shell), `verifyKind = "file_exists"` (uses `verifyPath` resolved against `verifyCwd`; no shell exec), `verifyKind = "thread_concluded"` (uses `verifyThreadId`; passes when the referenced thread's status is `"concluded"`; no shell exec), and `verifyKind = "reviewer_agent"` (uses `verifyReviewerId`; passes when the named agent posts an approve decision via `POST /tasks/:id/review`, fails on reject; the scheduler skips the row until a decision lands). **Authoring a shell predicate requires `request.agent.role === "orchestrator"` or the deprecated admin-secret path** — workers and other roles get 403. The structured kinds are unrestricted. When any predicate is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the predicate (shell kind: 8KB stdout/stderr cap; written to `verification_log` for all kinds). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. For `reviewer_agent`, entering `pending_verification` also emits `task.review_requested` (notifying the reviewer + auto-subscribing them); the review endpoint emits `task.review_submitted` when the reviewer decides. Stuck claims older than 5 min are reaped as crashed runs. The predicate is **editable post-creation via `PUT /tasks/:id`** (e.g. re-point `verifyReviewerId`, swap kind): the update validates the merged (existing+patch) config and re-applies the shell-author gate + reviewer-existence check.
+- `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional verification predicate. **Propose-vs-commit:** committing work (giving it an owner + entering the lifecycle) is an orchestrator act. When a non-orchestrator agent calls `POST /tasks`, the task lands in status `"proposed"` (inert — the routing and verify schedulers skip it), with any requested assignee stashed as a non-binding hint in `metadata.proposal.suggestedAssignee` and the project's orchestrators auto-subscribed + notified via `task.proposed`. An orchestrator (or the deprecated admin-secret path) commits it via `POST /tasks/:id/commit` (assign + optional ratified edits → `assigned`/`pending`, emits `task.committed`) or rejects it (→ `cancelled`, emits `task.proposal_rejected`). Orchestrator/admin creates are committed immediately, preserving prior behavior. Four verify kinds: `verifyKind = "shell"` (uses `verifyCommand` + optional `verifyCwd` + optional `verifyTimeoutMs` bounded `[1_000, 600_000]`, default 60s — legacy rows with null `verifyKind` and `verifyCommand` set are treated as shell), `verifyKind = "file_exists"` (uses `verifyPath` resolved against `verifyCwd`; no shell exec), `verifyKind = "thread_concluded"` (uses `verifyThreadId`; passes when the referenced thread's status is `"concluded"`; no shell exec), and `verifyKind = "reviewer_agent"` (uses `verifyReviewerId`; passes when the named agent posts an approve decision via `POST /tasks/:id/review`, fails on reject; the scheduler skips the row until a decision lands). **Authoring a shell predicate requires `request.agent.role === "orchestrator"` or the deprecated admin-secret path** — workers and other roles get 403. The structured kinds are unrestricted. When any predicate is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the predicate (shell kind: 8KB stdout/stderr cap; written to `verification_log` for all kinds). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. For `reviewer_agent`, entering `pending_verification` also emits `task.review_requested` (notifying the reviewer + auto-subscribing them); the review endpoint emits `task.review_submitted` when the reviewer decides. Stuck claims older than 5 min are reaped as crashed runs. The predicate is **editable post-creation via `PUT /tasks/:id`** (e.g. re-point `verifyReviewerId`, swap kind): the update validates the merged (existing+patch) config and re-applies the shell-author gate + reviewer-existence check.
 - `subscriptions` records which agents want event notifications for a given thread/task/agent target
 - `events` is the persisted mirror of the in-process bus; written on every `publish()` so `/session/start` can show what an agent missed. SSE stays live; this table is history.
 
@@ -104,6 +104,7 @@ Fastify v4 with Zod validation throughout.
 
 **Tasks**
 - `POST /tasks`, `GET /tasks?projectId=&status=&assignedTo=`, `GET /tasks/:id`, `PUT /tasks/:id`
+- `POST /tasks/:id/commit` — orchestrator commits (or rejects) a `"proposed"` task. Body `{ decision: "commit"|"reject" (default "commit"), assignedTo? (agent id | "@auto" | omit→project default), note?, + optional ratified edits: title/description/priority/domains/specialization/verify* }`. Caller must be an orchestrator agent **or** the deprecated admin-secret path; others get 403. Only a `"proposed"` task is committable (others → 409). On commit it resolves the effective assignee exactly like create, applies edits (re-validating any verify changes via the shared consistency + reviewer-existence checks), writes `metadata.commit = { committedBy, committedAt }`, transitions to `assigned`/`pending`, and emits `task.committed`. On reject it sets `cancelled`, records `metadata.proposal.rejectedBy/rejectedAt/note`, and emits `task.proposal_rejected` (notifying the proposer).
 - `POST /tasks/:id/review` — reviewer-agent decision endpoint. Body `{ decision: "approve"|"reject", note? }`. Caller must equal `tasks.verifyReviewerId`, **or** authenticate via the deprecated admin-secret path (in which case the decision is recorded as belonging to the named reviewer with `metadata.review.submittedBy = "admin"`, so the self-hosted dashboard can stand in as a human reviewer). Accepted from any active state (`assigned`/`in_progress`/`pending_verification`); if the task isn't already `pending_verification` the endpoint moves it there as it records the decision (so a reviewer can sign off without the worker first transitioning it). Terminal states (`completed`/`cancelled`) are rejected. Writes the decision into `metadata.review` and resolves it synchronously (runs the verification inline via the scheduler's `verifyTask`), so the response already reflects the final state — `completed` on approve, `assigned` on reject. The verify scheduler remains a fallback if the row can't be claimed inline.
 
 **Threads & messages**
@@ -132,7 +133,7 @@ Runs inside the API process — no separate daemon needed. On startup and every 
 2. Per task: tries **Rules** routing (`rules.ts`) — domain match, specialization match, load balancing. Candidates are pre-filtered to "online" agents (`lastSeenAt` within 10 min); see the auth section for what bumps that field.
 3. Falls back to **Claude routing** only when rules can't resolve. Requires `ANTHROPIC_API_KEY`; defaults to `claude-haiku-4-5-20251001` (override via `ROUTING_MODEL`).
 
-The blocked-task watcher detects human replies on threads referenced by `task.metadata.blockedThreadId` and resumes those tasks back to `assigned`.
+The blocked-task watcher detects human replies on threads referenced by `task.metadata.blockedThreadId` and resumes those tasks back to `assigned`. The proposed-task watcher emits a one-time `task.proposed_overdue` (notifying the project's orchestrators) when a worker's `proposed` task waits past `PROPOSED_OVERDUE_MS` without being committed, so proposals don't stall silently when no orchestrator is acting.
 
 **Message loop (opt-in):** when `ENABLE_MESSAGE_ROUTING=true`, the same scheduler runs `message-loop.ts` per project per tick. For each project's `role="orchestrator"` agent, it processes the agent's project-wide unread feed:
 - `status`/`reply` — mark read, no other action
@@ -146,8 +147,8 @@ The `scheduler` option on `buildServer()` is `false` in tests to avoid backgroun
 
 ### MCP server (packages/mcp-server)
 
-Twelve tools with model-agnostic descriptions (work with any MCP-compatible client):
-`create_task`, `get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`, `submit_review`. (`create_task` injects the caller as `createdBy`; status is derived from the assignee server-side; shell verify predicates stay orchestrator-gated — same surface the `relai task create` CLI command exposes to humans.)
+Thirteen tools with model-agnostic descriptions (work with any MCP-compatible client):
+`create_task`, `commit_task`, `get_my_tasks`, `update_task_status`, `send_message`, `get_unread_messages`, `mark_thread_read`, `list_threads`, `create_thread`, `conclude_plan`, `list_all_tasks`, `session_start`, `submit_review`. (`create_task` injects the caller as `createdBy`; status is derived from the assignee server-side; a worker's `create_task` is a proposal — see propose-vs-commit in the data model — and `commit_task` is the orchestrator's commit/reject of one; shell verify predicates stay orchestrator-gated — same surface the `relai task create`/`relai task commit` CLI commands expose to humans.)
 
 Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
@@ -178,6 +179,7 @@ The `relai` binary is the operator surface. It reads its config from `~/.config/
 - `relai task create [-t -d -p --to <agent|@auto> --domains --specialization --verify-kind <kind> --verify-reviewer <agent> ...]` — verifier flags: `--verify` (shell), `--verify-kind file_exists --verify-path`, `--verify-kind thread_concluded --verify-thread`, `--verify-kind reviewer_agent --verify-reviewer` (or shorthand `--review-by <agent>`)
 - `relai task start|done|block|cancel <id> [--note ...]`
 - `relai task review <id> --decision approve|reject [--note ...]` — submit a reviewer-agent decision (caller must be the named reviewer)
+- `relai task commit <id> [--to <agent|@auto>] [-t --title] [-p --priority] [--reject] [--note ...]` — orchestrator commits a worker's `proposed` task into the lifecycle (or `--reject` to cancel it). `relai inbox` lists proposals awaiting commit when you're an orchestrator.
 
 **Threads & messages**
 - `relai threads`, `relai thread new <title>`
@@ -195,7 +197,7 @@ The `--to <name>` flag in both `task create` and `send` resolves through `packag
 
 Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the project root (project-level) or `~/.claude.json` (global). Project-level is preferred — it keeps each project's agent identity isolated. The snippet wires the per-agent token into `API_SECRET` for the MCP server, which sends it as the bearer credential.
 
-**Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with twelve tools.
+**Tool slot limit**: Claude Code exposes a finite number of MCP tools per session. If you have many MCP servers, the relai tools may not surface. Disable unused MCP servers or move relai to `~/.claude.json` to prioritize it. The tools are working correctly if `/mcp` shows relai as connected with thirteen tools.
 
 **Repo path**: Relai stores `repoPath` on the agent record and shows it in setup instructions, but cannot enforce it for interactive sessions. Always start your agent session from the correct directory — the agent will work in whatever directory it was launched from.
 
@@ -209,6 +211,7 @@ Currently tested:
 - `packages/api/src/routes/invites.test.ts` — invite create + accept + expiry
 - `packages/api/src/routes/events.test.ts` — SSE subscription fan-out + persisted-event side effects
 - `packages/api/src/routes/session.test.ts` — `/session/start` bundle (tasks, unread, threads, recentEvents)
+- `packages/api/src/routes/propose-commit.test.ts` — propose-vs-commit: worker creates land in `proposed`, orchestrator/admin commit directly, and `POST /tasks/:id/commit` (assign/@auto/default, ratified edits, reject, 403/409/404, verify re-validation)
 - `packages/api/src/routes/notification-channels.test.ts` — webhook fan-out, HMAC signing, retry/backoff, circuit breaker
 - `packages/api/src/lib/router/scheduler.test.ts` — stall detection
 - `packages/api/src/lib/router/verify-scheduler.test.ts` — verification predicate execution and stuck-claim recovery
@@ -220,7 +223,7 @@ Currently tested:
 - `packages/api/src/lib/router/message-loop.test.ts` — handoff/finding/decision/question/escalation handling in the API's in-process loop
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~279 tests across the workspace (api alone: 182). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~339 tests across the workspace (api alone: ~201). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 
@@ -235,6 +238,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `ROUTING_MODEL` | `claude-haiku-4-5-20251001` | Model used for routing decisions |
 | `TASK_POLL_MS` | `15000` | Routing scheduler interval (ms) |
 | `REVIEW_OVERDUE_MS` | `600000` | How long a `reviewer_agent` task may sit in `pending_verification` awaiting a decision before the verify scheduler emits a one-time `task.review_overdue` event (notifies the reviewer + task subscribers). |
+| `PROPOSED_OVERDUE_MS` | `600000` | How long a worker's `proposed` task may sit awaiting an orchestrator's commit before the scheduler emits a one-time `task.proposed_overdue` event (notifies the project's orchestrators). |
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
 | `AGENT_ID` | — | Set after registering an agent |
 | `PROJECT_ID` | — | Set after creating a project |

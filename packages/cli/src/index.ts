@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
-import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand } from "./commands/tasks.js";
+import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand, taskCommitCommand } from "./commands/tasks.js";
 import { projectsListCommand, projectShowCommand, projectContextShowCommand, projectContextEditCommand } from "./commands/projects.js";
 import { agentsListCommand } from "./commands/agents.js";
 import { threadsCommand, threadNewCommand } from "./commands/threads.js";
@@ -122,6 +122,16 @@ task
   .option("-d, --decision <decision>", "approve | reject")
   .option("-n, --note <note>", "Optional rationale (recommended on reject)")
   .action(taskReviewCommand);
+
+task
+  .command("commit <id>")
+  .description("Commit a worker's proposed task into the lifecycle, or reject it (orchestrators only)")
+  .option("--to <agent>", "Assign to an agent (id or name) or '@auto'; omit for the project default")
+  .option("-t, --title <title>", "Ratify a new title as you commit")
+  .option("-p, --priority <priority>", "Ratify priority: low|normal|high|urgent")
+  .option("--reject", "Reject the proposal (cancels it) instead of committing")
+  .option("-n, --note <note>", "Rationale, especially on reject")
+  .action(taskCommitCommand);
 
 // ── threads ───────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ import { publish, ensureSubscription } from "../lib/events.js";
 import { assertProjectAccess } from "../lib/ownership.js";
 import { verifyTask } from "../lib/router/scheduler.js";
 import type { Db } from "@getrelai/db";
+import type { TaskStatus } from "@getrelai/types";
 
 // Lookup a task and verify the caller may access its project. Returns 404 to
 // avoid leaking task existence across tenants.
@@ -150,11 +151,33 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       effective = project?.defaultAssignee ?? undefined;
     }
 
-    // "@auto" means "let the routing scheduler pick" — leave assignee null,
-    // flag the task for auto-assignment, and keep status "pending".
-    const autoAssign = effective === "@auto";
-    const assignedTo = autoAssign ? undefined : effective;
-    const status = body.data.status ?? (assignedTo ? "assigned" : "pending");
+    // Propose-vs-commit fork. Committing work (giving it an owner + entering the
+    // lifecycle) is the orchestrator's act. The deprecated admin-secret path
+    // (no request.agent) stands in for the orchestrator. A plain worker's create
+    // is a *proposal*: it lands in "proposed", inert to the schedulers, with its
+    // suggested assignee kept as a non-binding hint. Same predicate the shell
+    // gate above uses.
+    const canCommit = !request.agent || request.agent.role === "orchestrator";
+
+    let autoAssign: boolean;
+    let assignedTo: string | undefined;
+    let status: TaskStatus;
+    let metadata = body.data.metadata as Record<string, unknown>;
+
+    if (canCommit) {
+      // "@auto" means "let the routing scheduler pick" — leave assignee null,
+      // flag the task for auto-assignment, and keep status "pending".
+      autoAssign = effective === "@auto";
+      assignedTo = autoAssign ? undefined : effective;
+      status     = body.data.status ?? (assignedTo ? "assigned" : "pending");
+    } else {
+      // Worker proposal: withhold ownership, ignore any client-supplied status,
+      // and stash the suggested assignee for the orchestrator to honor on commit.
+      autoAssign = false;
+      assignedTo = undefined;
+      status     = "proposed";
+      metadata   = { ...metadata, proposal: { suggestedAssignee: effective ?? null } };
+    }
 
     const [task] = await db.insert(tasks).values({
       id: newId("task"),
@@ -162,19 +185,41 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       assignedTo,
       autoAssign,
       status,
+      metadata,
     }).returning();
 
     await ensureSubscription(db, body.data.createdBy, "task", task.id);
-    await publish(db, {
-      id:         newId("evt"),
-      kind:       "task.created",
-      projectId:  task.projectId,
-      targetType: "task",
-      targetId:   task.id,
-      alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
-      payload:    { task },
-      createdAt:  task.createdAt.toISOString(),
-    });
+
+    if (status === "proposed") {
+      // Notify + auto-subscribe every orchestrator in the project so the
+      // proposal lands on a triage queue rather than relying on assignment.
+      const orchestrators = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.projectId, task.projectId), eq(agents.role, "orchestrator")));
+      for (const o of orchestrators) await ensureSubscription(db, o.id, "task", task.id);
+      await publish(db, {
+        id:         newId("evt"),
+        kind:       "task.proposed",
+        projectId:  task.projectId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: orchestrators.map((o) => ({ targetType: "agent", targetId: o.id })),
+        payload:    { task, proposedBy: task.createdBy },
+        createdAt:  task.createdAt.toISOString(),
+      });
+    } else {
+      await publish(db, {
+        id:         newId("evt"),
+        kind:       "task.created",
+        projectId:  task.projectId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+        payload:    { task },
+        createdAt:  task.createdAt.toISOString(),
+      });
+    }
 
     return reply.status(201).send({ data: task });
   });
@@ -416,5 +461,146 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     await verifyTask(db, task.id);
     const [resolved] = await db.select().from(tasks).where(eq(tasks.id, task.id));
     return { data: resolved ?? updated };
+  });
+
+  // ── Commit / reject a proposal ────────────────────────────────────────────
+  // A worker's create_task lands in "proposed"; committing it (assigning an
+  // owner and entering the lifecycle) is the orchestrator's act. The orchestrator
+  // may ratify edits in the same call and must re-validate any verify changes.
+  // Reject cancels the proposal and notifies the proposer.
+  const commitSchema = z.object({
+    decision:       z.enum(["commit", "reject"]).default("commit"),
+    assignedTo:     z.string().optional(),         // agent id | "@auto" | omit→project default
+    note:           z.string().max(2_000).optional(),
+    // Optional ratified edits the orchestrator applies as it commits.
+    title:          z.string().min(1).optional(),
+    description:    z.string().min(1).optional(),
+    priority:       z.enum(["low", "normal", "high", "urgent"]).optional(),
+    domains:        z.array(z.string()).optional(),
+    specialization: z.string().optional(),
+    verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
+    verifyCommand:    z.string().min(1).optional(),
+    verifyCwd:        z.string().optional(),
+    verifyPath:       z.string().min(1).optional(),
+    verifyThreadId:   z.string().min(1).optional(),
+    verifyReviewerId: z.string().min(1).optional(),
+    verifyTimeoutMs:  z.number().int().min(1_000).max(600_000).optional(),
+  });
+
+  fastify.post<{ Params: { id: string } }>("/tasks/:id/commit", async (request, reply) => {
+    const body = commitSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const scope = await loadTaskScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+    const task = scope.task;
+
+    // Only a proposal can be committed.
+    if (task.status !== "proposed") {
+      return reply.status(409).send({ error: { code: "wrong_state", message: `task is ${task.status}; only 'proposed' tasks can be committed` } });
+    }
+
+    // Commit is an orchestrator act; the admin-secret path stands in for one.
+    const canCommit = !request.agent || request.agent.role === "orchestrator";
+    if (!canCommit) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "only an orchestrator may commit a proposed task" } });
+    }
+
+    const committedBy = request.agent?.id ?? "admin";
+    const meta = (task.metadata ?? {}) as Record<string, unknown>;
+
+    if (body.data.decision === "reject") {
+      const proposal = (meta.proposal ?? {}) as Record<string, unknown>;
+      const [rejected] = await db.update(tasks)
+        .set({
+          status: "cancelled",
+          metadata: { ...meta, proposal: { ...proposal, rejectedBy: committedBy, rejectedAt: new Date().toISOString(), ...(body.data.note ? { note: body.data.note } : {}) } },
+          updatedAt: new Date(),
+        })
+        .where(eq(tasks.id, task.id))
+        .returning();
+      await publish(db, {
+        id:         newId("evt"),
+        kind:       "task.proposal_rejected",
+        projectId:  task.projectId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: [{ targetType: "agent", targetId: task.createdBy }],
+        payload:    { task: rejected, rejectedBy: committedBy, note: body.data.note },
+        createdAt:  rejected.updatedAt.toISOString(),
+      });
+      return { data: rejected };
+    }
+
+    // Re-validate any verify edits against the merged (existing + patch) config,
+    // mirroring PUT /tasks/:id. The shell-author gate is moot here (committers
+    // are orchestrators), but cross-kind and reviewer-existence checks still apply.
+    const touchesVerify =
+      "verifyKind" in body.data || "verifyCommand" in body.data || "verifyCwd" in body.data ||
+      "verifyPath" in body.data || "verifyThreadId" in body.data || "verifyReviewerId" in body.data ||
+      "verifyTimeoutMs" in body.data;
+    if (touchesVerify) {
+      const merged = {
+        verifyKind:       body.data.verifyKind       ?? task.verifyKind,
+        verifyCommand:    body.data.verifyCommand     ?? task.verifyCommand,
+        verifyPath:       body.data.verifyPath        ?? task.verifyPath,
+        verifyThreadId:   body.data.verifyThreadId    ?? task.verifyThreadId,
+        verifyReviewerId: body.data.verifyReviewerId  ?? task.verifyReviewerId,
+      };
+      if (!verifyConfigConsistent(merged)) {
+        return reply.status(400).send({ error: { code: "validation_error", message: VERIFY_MISMATCH_MSG } });
+      }
+      if (merged.verifyKind === "reviewer_agent") {
+        const [reviewer] = await db
+          .select({ id: agents.id, projectId: agents.projectId })
+          .from(agents)
+          .where(eq(agents.id, merged.verifyReviewerId!));
+        if (!reviewer || reviewer.projectId !== task.projectId) {
+          return reply.status(400).send({ error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" } });
+        }
+      }
+    }
+
+    // Resolve the effective assignee: explicit wins, else the project default.
+    let effective = body.data.assignedTo;
+    if (effective === undefined) {
+      const [project] = await db
+        .select({ defaultAssignee: projects.defaultAssignee })
+        .from(projects)
+        .where(eq(projects.id, task.projectId));
+      effective = project?.defaultAssignee ?? undefined;
+    }
+    const autoAssign = effective === "@auto";
+    const assignedTo = autoAssign ? undefined : effective ?? null;
+    const status = assignedTo ? "assigned" : "pending";
+
+    // Editable fields the orchestrator may ratify (omit assignment/decision/note).
+    const { decision: _d, assignedTo: _a, note: _n, ...edits } = body.data;
+
+    const [committed] = await db.update(tasks)
+      .set({
+        ...edits,
+        assignedTo,
+        autoAssign,
+        status,
+        metadata: { ...meta, commit: { committedBy, committedAt: new Date().toISOString() } },
+        updatedAt: new Date(),
+      })
+      .where(eq(tasks.id, task.id))
+      .returning();
+
+    if (committed.assignedTo) await ensureSubscription(db, committed.assignedTo, "task", committed.id);
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "task.committed",
+      projectId:  committed.projectId,
+      targetType: "task",
+      targetId:   committed.id,
+      alsoNotify: committed.assignedTo ? [{ targetType: "agent", targetId: committed.assignedTo }] : [],
+      payload:    { task: committed, committedBy },
+      createdAt:  committed.updatedAt.toISOString(),
+    });
+
+    return { data: committed };
   });
 };

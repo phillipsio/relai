@@ -171,6 +171,7 @@ The `relai` binary is the operator surface. It reads its config from `~/.config/
 - `relai project show [id]` — show the current (or specified) project's details
 - `relai agents` — list agents in the current project (online indicator + you marker)
 - `relai status` — agent identity, online agents, task summary, unread count
+- `relai watch [--kinds <list>]` — stream live SSE events you're subscribed to (new tasks, messages, reviews, verifications) until Ctrl-C, with reconnect/backoff. Self-subscribes to your own agent-target on startup (idempotent) so task-assignment events surface, which a plain `/events` subscription otherwise misses. Live-only; missed events are in `relai start`.
 
 **Tasks**
 - `relai tasks [--all] [--status ...]` — list (default: your assigned + in_progress)

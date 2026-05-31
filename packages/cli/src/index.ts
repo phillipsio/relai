@@ -13,6 +13,7 @@ import { statusCommand } from "./commands/status.js";
 import { startCommand } from "./commands/start.js";
 import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
 import { projectInviteCommand, loginCommand } from "./commands/invite.js";
+import { watchCommand } from "./commands/watch.js";
 
 // Read the version from package.json so `relai --version` always matches the
 // published package (dist/index.js → ../package.json; same shape when installed
@@ -53,6 +54,12 @@ program
   .command("start")
   .description("Show your session orientation: project context, your open tasks, unread messages, open threads")
   .action(startCommand);
+
+program
+  .command("watch")
+  .description("Stream live events you're subscribed to (new tasks, messages, reviews) until Ctrl-C")
+  .option("--kinds <list>", "Only show these event kinds (comma-separated, e.g. task.created,message.posted)")
+  .action(watchCommand);
 
 // ── tasks ─────────────────────────────────────────────────────────────────────
 

@@ -156,6 +156,11 @@ export class CliApiClient {
     const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     return this.request<SessionStart>("GET", `/session/start${qs}`);
   }
+
+  // Idempotent on the server: returns the existing row if already subscribed.
+  ensureSubscription(agentId: string, targetType: "thread" | "task" | "agent", targetId: string) {
+    return this.request<{ id: string }>("POST", "/subscriptions", { agentId, targetType, targetId });
+  }
 }
 
 export interface SessionStart {

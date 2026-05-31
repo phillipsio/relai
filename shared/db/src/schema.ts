@@ -119,9 +119,13 @@ export const threads = pgTable("threads", {
   id:        text("id").primaryKey(),
   projectId: text("project_id").references(() => projects.id).notNull(),
   title:     text("title").notNull(),
-  type:      text("type"),      // null = operational thread, "plan" = collaborative planning
+  type:      text("type"),      // null = operational thread, "plan" = collaborative planning (an "Epic")
   status:    text("status").notNull().default("open"),  // "open" | "concluded"
   summary:   text("summary"),  // conclusion written when status → "concluded"
+  // Back-link to the task this thread is the comment surface for (null for Epics
+  // and standalone threads). No hard FK — circular with tasks.threadId, same as
+  // verifyThreadId. The Issue↔Comments link for the unified UI.
+  taskId:    text("task_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -175,6 +179,11 @@ export const tasks = pgTable("tasks", {
   // scheduler skips the row this tick. The decision itself lives in
   // metadata.review (set by the review endpoint), not on the row.
   verifyReviewerId: text("verify_reviewer_id"),
+  // Unified-UI links (Path A). No hard FK (circular with threads). threadId is
+  // this Issue's lazily-created comment thread; epicId is the parent Epic (a
+  // "plan" thread) this Issue was spawned from. Formerly metadata.planThreadId.
+  threadId:        text("thread_id"),
+  epicId:          text("epic_id"),
   // Optional per-task override for the verification predicate timeout. Null
   // means use the executor default (60_000 ms). Stored as ms; Zod clamps to
   // [1_000, 600_000] (1s..10min) at the route layer.

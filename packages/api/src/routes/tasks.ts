@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray } from "drizzle-orm";
-import { tasks, projects, agents } from "@getrelai/db";
+import { eq, and, inArray, asc } from "drizzle-orm";
+import { tasks, projects, agents, threads, messages } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import { assertProjectAccess } from "../lib/ownership.js";
@@ -43,6 +43,26 @@ function verifyConfigConsistent(v: {
   return true;
 }
 
+// Lazily create (and link) the comment thread for an Issue. In the unified UI a
+// task's discussion lives on a linked thread; it's created on first access so
+// issues nobody comments on don't spawn empty threads. Idempotent: returns the
+// existing linked thread if present.
+async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
+  if (task.threadId) {
+    const [existing] = await db.select().from(threads).where(eq(threads.id, task.threadId));
+    if (existing) return existing;
+  }
+  const [thread] = await db.insert(threads).values({
+    id:        newId("thread"),
+    projectId: task.projectId,
+    title:     task.title,
+    type:      null,
+    taskId:    task.id,
+  }).returning();
+  await db.update(tasks).set({ threadId: thread.id, updatedAt: new Date() }).where(eq(tasks.id, task.id));
+  return thread;
+}
+
 const VERIFY_MISMATCH_MSG =
   "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId) and fields cannot cross kinds";
 
@@ -57,6 +77,8 @@ const createSchema = z.object({
   assignedTo:     z.string().optional(),
   domains:        z.array(z.string()).default([]),
   specialization: z.string().optional(),
+  // Parent Epic (a "plan" thread) this Issue is spawned from. Optional.
+  epicId:         z.string().optional(),
   metadata:       z.record(z.unknown()).default({}),
   // Optional verification predicate. When set, the `completed` transition is
   // gated: the API rewrites status to `pending_verification` and the
@@ -91,6 +113,8 @@ const updateSchema = z.object({
   priority:       z.enum(["low", "normal", "high", "urgent"]).optional(),
   assignedTo:     z.string().nullable().optional(),
   domains:        z.array(z.string()).optional(),
+  epicId:         z.string().nullable().optional(),
+  threadId:       z.string().nullable().optional(),
   metadata:       z.record(z.unknown()).optional(),
   // Verification predicate can be edited after creation (e.g. re-point a
   // reviewer). The PUT handler validates the merged config + re-applies the
@@ -224,14 +248,15 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     return reply.status(201).send({ data: task });
   });
 
-  fastify.get<{ Querystring: { projectId?: string; status?: string; assignedTo?: string } }>(
+  fastify.get<{ Querystring: { projectId?: string; status?: string; assignedTo?: string; epicId?: string } }>(
     "/tasks",
     async (request, reply) => {
-      const { projectId, status, assignedTo } = request.query;
+      const { projectId, status, assignedTo, epicId } = request.query;
 
       const conditions = [];
       if (projectId)  conditions.push(eq(tasks.projectId, projectId));
       if (assignedTo) conditions.push(eq(tasks.assignedTo, assignedTo));
+      if (epicId)     conditions.push(eq(tasks.epicId, epicId));
       if (status) {
         const statuses = status.split(",") as Array<typeof tasks.status._.data>;
         conditions.push(inArray(tasks.status, statuses));
@@ -472,6 +497,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     decision:       z.enum(["commit", "reject"]).default("commit"),
     assignedTo:     z.string().optional(),         // agent id | "@auto" | omit→project default
     note:           z.string().max(2_000).optional(),
+    epicId:         z.string().optional(),
     // Optional ratified edits the orchestrator applies as it commits.
     title:          z.string().min(1).optional(),
     description:    z.string().min(1).optional(),
@@ -602,5 +628,57 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     });
 
     return { data: committed };
+  });
+
+  // ── Issue comments (the unified-UI view of a task's linked thread) ─────────
+  // Reads/posts comments against the task's lazily-created comment thread, so the
+  // web Issue detail doesn't have to manage thread creation itself.
+  fastify.get<{ Params: { id: string } }>("/tasks/:id/comments", async (request, reply) => {
+    const scope = await loadTaskScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+    const thread = await ensureTaskThread(db, scope.task);
+    const rows = await db.select().from(messages).where(eq(messages.threadId, thread.id)).orderBy(asc(messages.createdAt));
+    return { data: { threadId: thread.id, comments: rows } };
+  });
+
+  const commentSchema = z.object({
+    body: z.string().min(1),
+    type: z.enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"]).optional(),
+  });
+
+  fastify.post<{ Params: { id: string } }>("/tasks/:id/comments", async (request, reply) => {
+    const body = commentSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const scope = await loadTaskScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+    const thread = await ensureTaskThread(db, scope.task);
+
+    // Caller identity, or "human" for the deprecated admin-secret path (matches
+    // the dashboard's "reply as human" semantics on the old Threads page).
+    const fromAgent = request.agent?.id ?? "human";
+    const [message] = await db.insert(messages).values({
+      id:        newId("msg"),
+      threadId:  thread.id,
+      fromAgent,
+      type:      body.data.type ?? "status",
+      body:      body.data.body,
+    }).returning();
+
+    // Only real agents get a subscription row (agentId has an FK); the "human"
+    // admin path is the dashboard, which reads via polling, not SSE.
+    if (request.agent) await ensureSubscription(db, request.agent.id, "thread", thread.id);
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "message.posted",
+      projectId:  thread.projectId,
+      targetType: "thread",
+      targetId:   thread.id,
+      alsoNotify: scope.task.assignedTo ? [{ targetType: "agent", targetId: scope.task.assignedTo }] : [],
+      payload:    { message },
+      createdAt:  message.createdAt.toISOString(),
+    });
+
+    return reply.status(201).send({ data: message });
   });
 };

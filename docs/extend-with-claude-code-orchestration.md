@@ -121,3 +121,30 @@ The one thing that does **not** get solved by this design is scheduler HA: the c
 - **Structured-output schema ownership.** Where do step output schemas live — hardcoded per workflow kind in the API, or declarable in `metadata.workflow`? Declarable is flexible but lets a worker define its own contract (trust boundary question).
 - **Human-approval agent identity.** Using `workerType='human'` + `reviewer_agent` conflates "automated reviewer" and "human gate." Is a distinct `human_approval` verifyKind worth the enum churn for clarity, or is the reviewer path enough?
 - **Mechanical-vs-judgmental split is a prompt heuristic.** The fixer's "apply only mechanical findings" boundary lives in prompt text, not enforced by relai. A fixer could over-reach. Do we need a structured `finding.severity`/`finding.mechanical` flag (already partially present in `findings[]`) that the controller, not the prompt, uses to decide what auto-applies?
+
+## 8. Backlog items this closes or advances
+
+Cross-referenced against the open items in `docs/relai-improvements.md`:
+
+| Backlog item | Sev | This design | Effect |
+|---|---|---|---|
+| B — No native task dependency/DAG (`dependsOn`/`blockedBy`) | 🔴 | §4.2 join/barrier | **Closes** (Phase 4) |
+| B — No formal human-approval gate (`verifyKind: human_approval`) | 🟡 | §4.5 | **Closes** (Phase 2) |
+| B — No collision guard for concurrent same-file edits | 🟡 | §4.4 partition + out-of-partition patch rejection | **Closes** (Phase 5) |
+| A — Task done while branch unpushed / no git-state awareness | 🔴 | §4.4 patch-through-metadata + §4.5 gate + §5 | **Closes** (Phases 2/5/6) |
+| A — Single-orchestrator bottleneck / trusted-senior auto-commit | 🔴 | controller auto-commits orchestrator-owned child tasks | Advances (Phase 3) |
+| C — Interactive agents stall mid-multi-step | 🟡 | `workflowController` re-queues the next step | Advances (Phase 3/4) |
+| A/D — structured status / loud `create_task` / dedupe | 🟡 | §4 structured outputs (`outputSchema`, `report_verdict`) | Advances (Phase 1) |
+
+### Dependency-ordered execution (do all, in this order)
+
+Each step is its own PR, gated by the review-fix-loop panel. Ordering follows the build dependencies, not the backlog severity:
+
+1. **Phase 1 — structured outputs** (`outputSchema`, `report_verdict`, `decision` payload schema). Foundation for the verdict contract; advances A/D. No scheduler change.
+2. **Phase 2 — `human_approval` verifyKind + HEAD-keyed receipt.** Closes the B human-gate item; standalone, depends on nothing.
+3. **Phase 3 — `workflowController` + `review_fix_loop`** (loop, iteration cap, blocked-on-max; orchestrator-owned auto-commit). Advances the A bottleneck + C stall items. Needs Phase 1's verdict schema.
+4. **Phase 4 — `dependsOn` join edge.** Closes the B dependency-DAG 🔴; unlocks fan-out/join generally. Needs Phase 3's controller.
+5. **Phase 5 — specialist-team, single-machine** (triage → partition → worktree specialists → `dependsOn` consolidator → shell verify → human_approval). Closes the B collision-guard item; needs Phases 2 + 4 and the worker switch to `git worktree add`.
+6. **Phase 6 — cross-machine** (patch-through-metadata transport / branch-per-worker fallback; clone-per-worker). Finishes the A git-state 🔴; needs Phase 5.
+
+Net over Phases 1–6: **closes 4 tracked items** (🔴 DAG, 🟡 human-gate, 🟡 collision-guard, 🔴 unpushed/git-state) and **advances 3 more**.

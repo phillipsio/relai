@@ -81,3 +81,18 @@ What carried the workflow (keep): the `reviewer_agent` gate + architect-as-revie
 - Per-agent tokens + project-scoped identities made spinning up heterogeneous workers (claude/gemini/headless) straightforward.
 - The thread as the coordination + audit log was genuinely useful for reconstructing state.
 - Admin-secret review path was a good escape hatch for coordinator fallback when the reviewer was absent.
+
+---
+
+## G. Cross-ref: Claude Code orchestration design (2026-06-02)
+`docs/extend-with-claude-code-orchestration.md` proposes extending relai to dispatch the review-fix-loop / specialist-team execution patterns as first-class job types. Mapped against the open items above, its phased rollout closes or advances several at once:
+
+- 🔴 **B — No native task dependency/DAG** → **closes** (design Phase 4: `dependsOn` join edge in a new `workflowController` watcher).
+- 🟡 **B — No formal human-approval gate** → **closes** (Phase 2: `human_approval` verifyKind + HEAD-keyed receipt — the same proposal, now load-bearing).
+- 🟡 **B — No collision guard for concurrent same-file edits** → **closes** (Phase 5: disjoint file-partition manifest + consolidator rejects out-of-partition patches = the file-claim mechanism).
+- 🔴 **A — Task done while branch unpushed / no git-state awareness** → **closes** (Phase 2/5/6: patch-through-metadata makes the patch the wire format, so there is no unpushed-branch to be inaccessible; §5 is exactly the "pretend agents are on different hosts" audit this item asks for).
+- 🔴 **A — Single-orchestrator routing bottleneck** → **advances** (Phase 3: controller auto-commits orchestrator-owned child tasks).
+- 🟡 **C — Interactive agents stall mid-multi-step** → **advances** (Phase 3/4: the controller re-queues the next step instead of relying on a human nudge).
+- 🟡 **A/D — structured status / loud `create_task` / dedupe** → **advances** (Phase 1: structured `outputSchema` / `report_verdict` contracts).
+
+Net over Phases 1–6: closes 4 tracked items, advances 3. See the design doc for integration points and the dependency-ordered PR sequence.

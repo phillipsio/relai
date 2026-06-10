@@ -109,7 +109,7 @@ async function routePendingTasks(db: Db, projectId: string): Promise<void> {
 
 // ── Blocked task watch ────────────────────────────────────────────────────────
 
-async function watchBlockedTasks(db: Db, projectId: string): Promise<void> {
+export async function watchBlockedTasks(db: Db, projectId: string): Promise<void> {
   const blocked = await db
     .select()
     .from(tasks)

@@ -417,6 +417,50 @@ describe("ownership: owner posts as human (unblock path)", () => {
   });
 });
 
+describe("ownership: owner action attribution", () => {
+  it("records committedBy as the owner id (not 'admin') on the service-admin commit path", async () => {
+    // A worker's create lands in "proposed"; the owner then commits it.
+    const agentHeaders = { Authorization: `Bearer ${agentAToken}`, "Content-Type": "application/json" };
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: agentHeaders,
+      body: JSON.stringify({ projectId: projectAId, createdBy: agentAId, title: "owner-commit", description: "x" }),
+    });
+    expect(create.json().data.status).toBe("proposed");
+    const id = create.json().data.id;
+
+    const commit = await app.inject({
+      method: "POST", url: `/tasks/${id}/commit`,
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ assignedTo: agentAId }),
+    });
+    expect(commit.statusCode).toBe(200);
+    expect(commit.json().data.metadata.commit.committedBy).toBe(userA);
+  });
+
+  it("records review submittedBy as the owner id (not 'admin') on the service-admin review path", async () => {
+    // reviewer_agent gate is unrestricted, so admin can author it.
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: adminHeaders(),
+      body: JSON.stringify({
+        projectId: projectAId, createdBy: agentAId, title: "owner-review", description: "x",
+        assignedTo: agentAId, verifyKind: "reviewer_agent", verifyReviewerId: agentAId,
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const id = create.json().data.id;
+
+    // Owner approves via the service-admin path; the decision is attributed to
+    // the owner, not the bare "admin" sentinel.
+    const review = await app.inject({
+      method: "POST", url: `/tasks/${id}/review`,
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ decision: "approve" }),
+    });
+    expect(review.statusCode).toBe(200);
+    expect(review.json().data.metadata.review.submittedBy).toBe(userA);
+  });
+});
+
 describe("ownership: legacy POST /projects without ownerId", () => {
   it("API_SECRET-created projects have null ownerId (self-host parity)", async () => {
     const res = await app.inject({

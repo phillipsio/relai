@@ -453,7 +453,10 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       decision:   body.data.decision,
       reviewerId: task.verifyReviewerId,
       decidedAt:  new Date().toISOString(),
-      ...(isAdminOverride ? { submittedBy: "admin" as const } : {}),
+      // Owner-authenticated callers (service-admin + X-Owner-Id, no agent) are
+      // recorded by their owner id; the bare "admin" sentinel is only the
+      // deprecated shared-secret path with no owner context.
+      ...(isAdminOverride ? { submittedBy: request.ownerId ?? "admin" } : {}),
       ...(body.data.note ? { note: body.data.note } : {}),
     };
     const meta = (task.metadata ?? {}) as Record<string, unknown>;
@@ -532,7 +535,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       return reply.status(403).send({ error: { code: "forbidden", message: "only an orchestrator may commit a proposed task" } });
     }
 
-    const committedBy = request.agent?.id ?? "admin";
+    // Prefer the agent id, then the owner id (operator ingress), falling back to
+    // the bare "admin" sentinel only for the deprecated shared-secret path.
+    const committedBy = request.agent?.id ?? request.ownerId ?? "admin";
     const meta = (task.metadata ?? {}) as Record<string, unknown>;
 
     if (body.data.decision === "reject") {

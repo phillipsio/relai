@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../../server.js";
-import { detectStalls, watchProposedTasks } from "./scheduler.js";
+import { detectStalls, watchProposedTasks, watchBlockedTasks } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
-import { createDb, tasks } from "@getrelai/db";
+import { createDb, tasks, subscriptions } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
@@ -216,5 +216,90 @@ describe("watchProposedTasks", () => {
     expect(events.some((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId)).toBe(false);
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect((row.metadata as Record<string, unknown>).proposedOverdueNotifiedAt).toBeUndefined();
+  });
+});
+
+describe("watchBlockedTasks (operator unblock path)", () => {
+  // The headline behavior of the operator ingress: a human reply on a blocked
+  // task's thread resumes the worker. This exercises the full path end-to-end.
+  async function makeBlockedTaskOnThread(): Promise<{ taskId: string; threadId: string }> {
+    const thread = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ projectId, title: "blocked-on-question" }),
+    });
+    const threadId = thread.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "needs-input", description: "x",
+        assignedTo: agentId, status: "in_progress",
+      }),
+    });
+    const taskId = create.json().data.id;
+
+    const db = createDb(DB_URL);
+    await db.update(tasks)
+      .set({ status: "blocked", metadata: { blockedThreadId: threadId } })
+      .where(eq(tasks.id, taskId));
+    return { taskId, threadId };
+  }
+
+  it("resumes a blocked task to 'assigned' and records the human reply", async () => {
+    const { taskId, threadId } = await makeBlockedTaskOnThread();
+
+    // A human reply on the blocking thread is the resume trigger. (Posted via
+    // the admin path, which passes fromAgent through — the owner MCP path
+    // stamps "human" server-side; that's covered in ownership.test.ts.)
+    const post = await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`, headers: ADMIN,
+      body: JSON.stringify({ fromAgent: "human", type: "reply", body: "use the staging DB" }),
+    });
+    expect(post.statusCode).toBe(201);
+
+    const db = createDb(DB_URL);
+    await watchBlockedTasks(db, projectId);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("assigned");
+    expect((row.metadata as Record<string, unknown>).humanReply).toBe("use the staging DB");
+
+    // The "human" sender has no agent row — the message route must skip the
+    // subscription insert (subscriptions.agentId is an FK) rather than 500.
+    const humanSubs = await db.select().from(subscriptions).where(eq(subscriptions.agentId, "human"));
+    expect(humanSubs).toEqual([]);
+  });
+
+  it("leaves a blocked task untouched when only the worker has posted (no human reply)", async () => {
+    const { taskId, threadId } = await makeBlockedTaskOnThread();
+
+    await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`, headers: ADMIN,
+      body: JSON.stringify({ fromAgent: agentId, type: "status", body: "still stuck" }),
+    });
+
+    const db = createDb(DB_URL);
+    await watchBlockedTasks(db, projectId);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("blocked");
+  });
+
+  it("ignores a blocked task with no blockedThreadId (malformed/unwatchable row)", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        projectId, createdBy: agentId, title: "blocked-no-thread", description: "x",
+        assignedTo: agentId, status: "in_progress",
+      }),
+    });
+    const taskId = create.json().data.id;
+    const db = createDb(DB_URL);
+    await db.update(tasks).set({ status: "blocked", metadata: {} }).where(eq(tasks.id, taskId));
+
+    await watchBlockedTasks(db, projectId); // must not throw
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("blocked");
   });
 });

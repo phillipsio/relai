@@ -58,6 +58,16 @@ TRANSPORT=http
 MCP_PORT=3001
 ```
 
+> **The HTTP/SSE transport is unauthenticated.** It accepts any `GET /sse` /
+> `POST /messages` with no credential check, and in owner mode the process
+> itself holds the `API_OWNER_TOKEN` god key and does all upstream auth — so
+> reaching `MCP_PORT` *is* possession of the key. The server therefore binds to
+> `127.0.0.1` by default (override only deliberately via `MCP_HOST`). To reach
+> it remotely, put an **authenticating** layer in front (a Cloudflare Tunnel +
+> Access policy, an authenticating reverse proxy, or a private VPN/Tailscale
+> network) — never bind it to `0.0.0.0` / expose `MCP_PORT` to the public
+> internet directly.
+
 ### 2. Make sure your projects have an owner
 
 `projects.ownerId` is null for self-hosted projects created via the legacy
@@ -87,9 +97,19 @@ correctly when you're back at your desk.
 v1 reuses `SERVICE_ADMIN_TOKEN` as the owner credential. That token is a **god
 key** — with a different `X-Owner-Id` it can act as any owner — and it lives on
 your phone. For a single-operator self-hosted box that's an acceptable tradeoff,
-but: firewall/scope the deployment, keep the token short-lived, and rotate
-readily. A dedicated scoped owner-token type (resolves to a fixed `users.id`,
-can't impersonate others) is the intended follow-up.
+but: keep the token short-lived and rotate readily. Two distinct exposures to
+keep straight:
+
+1. **The token on your phone.** Treat it like any root credential; rotate on
+   loss.
+2. **The owner-mode MCP server itself.** Because the HTTP transport is
+   unauthenticated and the server carries the god key internally (see Setup
+   step 1), reaching its port *is* possession of the key. The authenticating
+   layer in front of it is what actually protects you — not the token's secrecy.
+
+A dedicated scoped owner-token type (resolves to a fixed `users.id`, can't
+impersonate others) and requiring the credential on the `/sse` handshake are the
+intended follow-ups that would let the transport defend itself.
 
 ## Related: in-worker subagent fan-out
 

@@ -38,6 +38,14 @@ if (OWNER_MODE) {
     console.error("[relai-mcp] owner mode requires OWNER_ID (a 'usr_…' id) alongside API_OWNER_TOKEN");
     process.exit(1);
   }
+  // API_OWNER_TOKEN is a cross-project credential — with a different X-Owner-Id
+  // it can act as any owner. The HTTP transport below is unauthenticated, so
+  // this process must sit behind an authenticating proxy / bound to localhost,
+  // never exposed directly. See docs/operator-ingress.md.
+  console.error(
+    "[relai-mcp] owner mode: API_OWNER_TOKEN is a god-key credential — keep this server " +
+    "off the open internet (localhost bind + authenticating reverse proxy only).",
+  );
 } else {
   if (!API_SECRET) {
     console.error("[relai-mcp] API_SECRET is required");
@@ -142,6 +150,11 @@ async function main() {
     const http = await import("node:http");
 
     const port = Number(process.env.MCP_PORT ?? 3001);
+    // The HTTP/SSE transport is unauthenticated and, in owner mode, carries a
+    // god-key credential — so bind to loopback by default. Put an
+    // authenticating layer (tunnel/proxy/VPN) in front for remote access rather
+    // than binding to all interfaces. Override only deliberately via MCP_HOST.
+    const host = process.env.MCP_HOST ?? "127.0.0.1";
 
     const httpServer = http.createServer(async (req, res) => {
       if (req.method === "GET" && req.url === "/sse") {
@@ -154,8 +167,8 @@ async function main() {
       }
     });
 
-    httpServer.listen(port, () => {
-      console.error(`[relai-mcp] HTTP/SSE transport listening on port ${port}`);
+    httpServer.listen(port, host, () => {
+      console.error(`[relai-mcp] HTTP/SSE transport listening on ${host}:${port}`);
     });
   } else {
     console.error(`[relai-mcp] Unknown TRANSPORT: ${TRANSPORT}. Use 'stdio' or 'http'.`);

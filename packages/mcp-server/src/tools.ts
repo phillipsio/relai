@@ -4,7 +4,7 @@ import type { ApiClient } from "./api-client.js";
 // Each tool: name, description (written for any AI model), input schema, handler.
 // Descriptions are deliberately specific — vague descriptions produce wrong tool choices.
 
-export function buildTools(client: ApiClient, agentId: string, projectId: string) {
+export function buildTools(client: ApiClient, agentId: string, repoId: string) {
   return [
     {
       name: "create_task",
@@ -41,10 +41,10 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
         verifyKind?: string; verifyReviewerId?: string; verifyThreadId?: string;
         verifyPath?: string; verifyCommand?: string; verifyCwd?: string; verifyTimeoutMs?: number;
       }) => {
-        // createdBy + projectId are injected from this agent's identity. Status is
+        // createdBy + repoId are injected from this agent's identity. Status is
         // intentionally NOT set — the API derives it from the effective assignee.
         const task = await client.createTask({
-          projectId,
+          repoId,
           createdBy: agentId,
           title: input.title,
           description: input.description,
@@ -79,7 +79,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
       handler: async (input: { status?: string }) => {
         const status = input.status ?? "assigned";
         const statusFilter = status === "all" ? undefined : status;
-        const tasks = await client.getTasks({ projectId, assignedTo: agentId, status: statusFilter });
+        const tasks = await client.getTasks({ repoId, assignedTo: agentId, status: statusFilter });
         return {
           content: [{
             type: "text" as const,
@@ -174,7 +174,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
         "other agents. Always read messages before starting work on a related task.",
       inputSchema: z.object({}),
       handler: async () => {
-        const messages = await client.getUnread(agentId, projectId);
+        const messages = await client.getUnread(agentId, repoId);
         return {
           content: [{
             type: "text" as const,
@@ -213,7 +213,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
           .describe("Filter to a specific thread type. Use 'plan' to find collaborative planning discussions."),
       }),
       handler: async (input: { type?: string }) => {
-        const threads = await client.listThreads(projectId, input.type);
+        const threads = await client.listThreads(repoId, input.type);
         return {
           content: [{
             type: "text" as const,
@@ -239,7 +239,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
           .describe("Set to 'plan' to create a collaborative planning discussion."),
       }),
       handler: async (input: { title: string; type?: string }) => {
-        const thread = await client.createThread({ projectId, title: input.title, type: input.type });
+        const thread = await client.createThread({ repoId, title: input.title, type: input.type });
         return { content: [{ type: "text" as const, text: JSON.stringify(thread, null, 2) }] };
       },
     },
@@ -263,7 +263,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
     {
       name: "session_start",
       description:
-        "Get a single bundled snapshot of your current state in this project: your identity, the " +
+        "Get a single bundled snapshot of your current state in this repo: your identity, the " +
         "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +
         "human-readable label like 'Running' / 'Stalled' / 'Input required'), unread messages " +
         "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
@@ -272,7 +272,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
         "expose. Read the project context carefully before doing any work.",
       inputSchema: z.object({}),
       handler: async () => {
-        const session = await client.getSessionStart(projectId);
+        const session = await client.getSessionStart(repoId);
         return { content: [{ type: "text" as const, text: JSON.stringify(session, null, 2) }] };
       },
     },
@@ -290,7 +290,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
           .describe("Comma-separated statuses to filter by, e.g. 'pending,assigned'. Omit for all."),
       }),
       handler: async (input: { status?: string }) => {
-        const tasks = await client.getTasks({ projectId, status: input.status });
+        const tasks = await client.getTasks({ repoId, status: input.status });
         return {
           content: [{
             type: "text" as const,
@@ -368,7 +368,7 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
 // Operator (owner) toolset — used when the MCP server runs in owner mode (an
 // owner credential instead of a per-agent token). These act across ALL of the
 // owner's projects: the API scopes by the X-Owner-Id the client sends, and each
-// resource is addressed by its own id, so no projectId argument is needed. The
+// resource is addressed by its own id, so no repoId argument is needed. The
 // human (you, e.g. from a phone) drives these to triage and unblock work
 // remotely. Keep this set small — it's a different surface from the 13 agent
 // tools, not an extension of them.
@@ -380,7 +380,7 @@ export function buildOperatorTools(client: ApiClient) {
         "List everything across ALL your projects that needs you right now: tasks that are 'blocked' " +
         "(a worker is waiting on your input), 'pending_verification' (awaiting a review decision), or " +
         "'proposed' (a worker's task awaiting your commit). Call this first to see what to act on. Each " +
-        "task carries its projectId and, for blocked tasks, metadata.blockedThreadId — the thread to " +
+        "task carries its repoId and, for blocked tasks, metadata.blockedThreadId — the thread to " +
         "post a reply on (via reply_human) to resume the worker.",
       inputSchema: z.object({}),
       handler: async () => {

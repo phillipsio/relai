@@ -11,8 +11,8 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}` };
 
 let app: FastifyInstance;
-let projectId: string;
-let otherProjectId: string;
+let repoId: string;
+let otherRepoId: string;
 let agentId: string;
 let agentAuth: { Authorization: string };
 let otherAgentAuth: { Authorization: string };
@@ -23,25 +23,25 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: { ...ADMIN, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "__test__ session", context: "Read this first." }),
   });
   expect(project.statusCode).toBe(201);
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const otherProject = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: { ...ADMIN, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "__test__ session-other" }),
   });
   expect(otherProject.statusCode).toBe(201);
-  otherProjectId = otherProject.json().data.id;
+  otherRepoId = otherProject.json().data.id;
 
   const agent = await app.inject({
     method: "POST", url: "/agents",
     headers: { ...ADMIN, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, name: "session-test-agent", role: "worker", specialization: "tester" }),
+    body: JSON.stringify({ repoId, name: "session-test-agent", role: "worker", specialization: "tester" }),
   });
   expect(agent.statusCode).toBe(201);
   agentId = agent.json().data.id;
@@ -50,7 +50,7 @@ beforeAll(async () => {
   const otherAgent = await app.inject({
     method: "POST", url: "/agents",
     headers: { ...ADMIN, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId: otherProjectId, name: "other-agent", role: "worker" }),
+    body: JSON.stringify({ repoId: otherRepoId, name: "other-agent", role: "worker" }),
   });
   expect(otherAgent.statusCode).toBe(201);
   otherAgentAuth = { Authorization: `Bearer ${otherAgent.json().token}` };
@@ -60,7 +60,7 @@ beforeAll(async () => {
     method: "POST", url: "/tasks",
     headers: { ...ADMIN, "Content-Type": "application/json" },
     body: JSON.stringify({
-      projectId, createdBy: agentId, assignedTo: agentId,
+      repoId, createdBy: agentId, assignedTo: agentId,
       title: "running task", description: "x",
       status: "in_progress",
     }),
@@ -71,7 +71,7 @@ beforeAll(async () => {
     method: "POST", url: "/tasks",
     headers: { ...ADMIN, "Content-Type": "application/json" },
     body: JSON.stringify({
-      projectId, createdBy: agentId, assignedTo: agentId,
+      repoId, createdBy: agentId, assignedTo: agentId,
       title: "old task", description: "x",
       status: "completed",
     }),
@@ -81,7 +81,7 @@ beforeAll(async () => {
   const thread = await app.inject({
     method: "POST", url: "/threads",
     headers: { ...ADMIN, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, title: "session test thread" }),
+    body: JSON.stringify({ repoId, title: "session test thread" }),
   });
   expect(thread.statusCode).toBe(201);
   threadId = thread.json().data.id;
@@ -97,9 +97,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  for (const pid of [projectId, otherProjectId]) {
+  for (const pid of [repoId, otherRepoId]) {
     if (!pid) continue;
-    await app.inject({ method: "DELETE", url: `/projects/${pid}`, headers: ADMIN });
+    await app.inject({ method: "DELETE", url: `/repos/${pid}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -107,7 +107,7 @@ afterAll(async () => {
 describe("GET /session/start", () => {
   it("returns the bundled snapshot for the calling agent", async () => {
     const res = await app.inject({
-      method: "GET", url: `/session/start?projectId=${projectId}`,
+      method: "GET", url: `/session/start?repoId=${repoId}`,
       headers: agentAuth,
     });
     expect(res.statusCode).toBe(200);
@@ -116,8 +116,8 @@ describe("GET /session/start", () => {
     expect(data.agent.id).toBe(agentId);
     expect(data.agent.specialization).toBe("tester");
 
-    expect(data.project.id).toBe(projectId);
-    expect(data.project.context).toBe("Read this first.");
+    expect(data.repo.id).toBe(repoId);
+    expect(data.repo.context).toBe("Read this first.");
 
     // Open task only — completed task excluded.
     expect(data.tasks.length).toBe(1);
@@ -140,18 +140,18 @@ describe("GET /session/start", () => {
     expect(data.recentEvents[0].targetId).toBe(threadId);
   });
 
-  it("defaults projectId to the agent's own project", async () => {
+  it("defaults repoId to the agent's own project", async () => {
     const res = await app.inject({
       method: "GET", url: "/session/start",
       headers: agentAuth,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.project.id).toBe(projectId);
+    expect(res.json().data.repo.id).toBe(repoId);
   });
 
   it("rejects callers from another project", async () => {
     const res = await app.inject({
-      method: "GET", url: `/session/start?projectId=${projectId}`,
+      method: "GET", url: `/session/start?repoId=${repoId}`,
       headers: otherAgentAuth,
     });
     expect(res.statusCode).toBe(403);
@@ -159,7 +159,7 @@ describe("GET /session/start", () => {
 
   it("rejects the deprecated API_SECRET caller (no agent identity)", async () => {
     const res = await app.inject({
-      method: "GET", url: `/session/start?projectId=${projectId}`,
+      method: "GET", url: `/session/start?repoId=${repoId}`,
       headers: ADMIN,
     });
     expect(res.statusCode).toBe(403);
@@ -167,7 +167,7 @@ describe("GET /session/start", () => {
 
   it("requires a bearer token", async () => {
     const res = await app.inject({
-      method: "GET", url: `/session/start?projectId=${projectId}`,
+      method: "GET", url: `/session/start?repoId=${repoId}`,
     });
     expect(res.statusCode).toBe(401);
   });

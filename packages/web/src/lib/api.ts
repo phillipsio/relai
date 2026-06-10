@@ -1,6 +1,6 @@
 import type { WebConfig } from "./config";
 
-export interface ProjectRow {
+export interface RepoRow {
   id: string; name: string; description?: string | null; repoUrl?: string | null;
   defaultAssignee?: string | null; createdAt: string;
 }
@@ -21,7 +21,7 @@ export interface AgentRow {
   repoPath?: string | null; lastSeenAt: string;
 }
 export interface ThreadRow {
-  id: string; title: string; projectId: string;
+  id: string; title: string; repoId: string;
   type?: string | null; status: string; summary?: string | null;
   createdAt: string; messageCount: number;
 }
@@ -34,13 +34,13 @@ export interface MessageRow {
 export class WebApiClient {
   private baseUrl: string;
   private headers: Record<string, string>;
-  public projectId: string;
+  public repoId: string;
   public readonly apiUrl: string;
   public readonly apiSecret: string;
 
   constructor(config: WebConfig) {
     this.baseUrl = config.apiUrl.replace(/\/$/, "");
-    this.projectId = config.projectId;
+    this.repoId = config.repoId;
     this.apiUrl = config.apiUrl;
     this.apiSecret = config.apiSecret;
     this.headers = {
@@ -59,14 +59,14 @@ export class WebApiClient {
     return json.data as T;
   }
 
-  getProjects()  { return this.request<ProjectRow[]>("GET", "/projects"); }
-  createProject(name: string, description?: string, defaultAssignee?: string) {
-    return this.request<ProjectRow>("POST", "/projects", { name, description, defaultAssignee });
+  getRepos()  { return this.request<RepoRow[]>("GET", "/repos"); }
+  createRepo(name: string, description?: string, defaultAssignee?: string) {
+    return this.request<RepoRow>("POST", "/repos", { name, description, defaultAssignee });
   }
-  deleteProject(id: string) { return this.request<void>("DELETE", `/projects/${id}`); }
+  deleteRepo(id: string) { return this.request<void>("DELETE", `/repos/${id}`); }
 
   createTask(body: { title: string; description: string; specialization?: string; domains?: string[]; priority?: string; assignedTo?: string; epicId?: string; metadata?: Record<string, unknown> }) {
-    return this.request<TaskRow>("POST", "/tasks", { ...body, projectId: this.projectId, createdBy: "human" });
+    return this.request<TaskRow>("POST", "/tasks", { ...body, repoId: this.repoId, createdBy: "human" });
   }
   updateTask(id: string, body: { status?: string; assignedTo?: string | null; epicId?: string | null; priority?: string }) {
     return this.request<TaskRow>("PUT", `/tasks/${id}`, body);
@@ -86,23 +86,23 @@ export class WebApiClient {
     return this.request<MessageRow>("POST", `/tasks/${id}/comments`, { body, type });
   }
 
-  getAgents()  { return this.request<AgentRow[]>("GET", `/agents?projectId=${encodeURIComponent(this.projectId)}`); }
+  getAgents()  { return this.request<AgentRow[]>("GET", `/agents?repoId=${encodeURIComponent(this.repoId)}`); }
   deleteAgent(id: string) { return this.request<void>("DELETE", `/agents/${id}`); }
   createAgent(body: { name: string; role?: "orchestrator" | "worker"; tier?: number; specialization?: string; domains?: string[]; workerType?: string; repoPath?: string }) {
     return this.request<AgentRow>("POST", "/agents", {
       ...body,
-      projectId: this.projectId,
+      repoId: this.repoId,
       role: body.role ?? "worker",
     });
   }
   getTasks(status?: string, epicId?: string) {
-    const qs = new URLSearchParams({ projectId: this.projectId });
+    const qs = new URLSearchParams({ repoId: this.repoId });
     if (status) qs.set("status", status);
     if (epicId) qs.set("epicId", epicId);
     return this.request<TaskRow[]>("GET", `/tasks?${qs}`);
   }
   getThreads(type?: string) {
-    const qs = new URLSearchParams({ projectId: this.projectId });
+    const qs = new URLSearchParams({ repoId: this.repoId });
     if (type) qs.set("type", type);
     return this.request<ThreadRow[]>("GET", `/threads?${qs}`);
   }
@@ -113,7 +113,7 @@ export class WebApiClient {
     return this.request<void>("DELETE", `/threads/${threadId}`);
   }
   createPlan(title: string) {
-    return this.request<ThreadRow>("POST", "/threads", { projectId: this.projectId, title, type: "plan" });
+    return this.request<ThreadRow>("POST", "/threads", { repoId: this.repoId, title, type: "plan" });
   }
   getMessages(threadId: string) { return this.request<MessageRow[]>("GET", `/threads/${threadId}/messages`); }
   sendMessage(threadId: string, body: string) {

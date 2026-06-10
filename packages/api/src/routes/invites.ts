@@ -1,11 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { agents, invites, projects, tokens } from "@getrelai/db";
+import { agents, invites, repos, tokens } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js";
-import { assertProjectAccess } from "../lib/ownership.js";
+import { assertRepoAccess } from "../lib/ownership.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
@@ -25,11 +25,11 @@ const acceptSchema = z.object({
 });
 
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
-  fastify.post<{ Params: { id: string } }>("/projects/:id/invites", async (request, reply) => {
-    const access = await assertProjectAccess(request, db, request.params.id);
-    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
-    const [project] = await db.select().from(projects).where(eq(projects.id, request.params.id));
-    if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
+  fastify.post<{ Params: { id: string } }>("/repos/:id/invites", async (request, reply) => {
+    const access = await assertRepoAccess(request, db, request.params.id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
+    const [project] = await db.select().from(repos).where(eq(repos.id, request.params.id));
+    if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 
     const body = createSchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
@@ -38,7 +38,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     const ttl  = body.data.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     const [row] = await db.insert(invites).values({
       id:        newId("invite"),
-      projectId: project.id,
+      repoId: project.id,
       codeHash:  hashSecret(code),
       createdBy: request.agent?.id ?? null,
       suggestedName:           body.data.suggestedName           ?? null,
@@ -49,20 +49,20 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     return reply.status(201).send({ data: row, code });
   });
 
-  fastify.get<{ Params: { id: string } }>("/projects/:id/invites", async (request, reply) => {
-    const access = await assertProjectAccess(request, db, request.params.id);
-    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
-    const [project] = await db.select().from(projects).where(eq(projects.id, request.params.id));
-    if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
+  fastify.get<{ Params: { id: string } }>("/repos/:id/invites", async (request, reply) => {
+    const access = await assertRepoAccess(request, db, request.params.id);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
+    const [project] = await db.select().from(repos).where(eq(repos.id, request.params.id));
+    if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 
-    const rows = await db.select().from(invites).where(eq(invites.projectId, project.id));
+    const rows = await db.select().from(invites).where(eq(invites.repoId, project.id));
     return { data: rows };
   });
 
   fastify.delete<{ Params: { id: string } }>("/invites/:id", async (request, reply) => {
     const [existing] = await db.select().from(invites).where(eq(invites.id, request.params.id));
     if (!existing) return reply.status(404).send({ error: { code: "not_found", message: "Invite not found" } });
-    const access = await assertProjectAccess(request, db, existing.projectId);
+    const access = await assertRepoAccess(request, db, existing.repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Invite not found" } });
 
     await db.update(invites)
@@ -85,7 +85,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
 
     const [agent] = await db.insert(agents).values({
       id:             newId("agent"),
-      projectId:      invite.projectId,
+      repoId:      invite.repoId,
       name:           body.data.name,
       role:           body.data.role,
       specialization: body.data.specialization ?? invite.suggestedSpecialization ?? null,

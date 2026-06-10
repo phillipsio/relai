@@ -106,7 +106,7 @@ function McpJsonBlock({ api, agent }: { api: WebApiClient; agent: AgentRow }) {
           API_URL: api.apiUrl,
           API_SECRET: api.apiSecret,
           AGENT_ID: agent.id,
-          PROJECT_ID: api.projectId,
+          REPO_ID: api.repoId,
         },
       },
     },
@@ -114,7 +114,7 @@ function McpJsonBlock({ api, agent }: { api: WebApiClient; agent: AgentRow }) {
 
   return (
     <div className="space-y-1">
-      <p className="text-xs text-zinc-500 uppercase tracking-wider">Add to .mcp.json in your project root</p>
+      <p className="text-xs text-zinc-500 uppercase tracking-wider">Add to .mcp.json in your repo root</p>
       <p className="text-xs text-zinc-500">Replace <code className="text-zinc-400">/path/to/relai</code> with the absolute path to your Relai clone.</p>
       <div className="flex gap-2 items-start rounded-md bg-zinc-950 border border-zinc-800 p-3">
         <pre className="flex-1 text-xs text-zinc-300 font-mono whitespace-pre overflow-x-auto">{mcpBlock}</pre>
@@ -129,7 +129,7 @@ function SetupInstructions({ agent, api }: { agent: AgentRow; api: WebApiClient 
 
   const workerCmd = [
     `API_SECRET=${api.apiSecret}`,
-    `PROJECT_ID=${api.projectId}`,
+    `REPO_ID=${api.repoId}`,
     `pnpm start-worker ${agent.specialization ?? "claude"} \\`,
     `  --name ${agent.name} \\`,
     `  --repo ${repo}`,
@@ -239,7 +239,7 @@ function AddAgentForm({ api, hasOrchestrator, onClose }: { api: WebApiClient; ha
             className="rounded-md border border-zinc-700 bg-zinc-800 text-zinc-200 text-sm px-2 py-1.5 flex-1"
           >
             <option value="worker">Worker — executes assigned tasks</option>
-            <option value="orchestrator">Orchestrator — drives the project, receives escalations</option>
+            <option value="orchestrator">Orchestrator — drives the repo, receives escalations</option>
           </select>
           {role === "worker" && (
             <select
@@ -257,7 +257,7 @@ function AddAgentForm({ api, hasOrchestrator, onClose }: { api: WebApiClient; ha
         <p className="text-xs text-zinc-500">
           {role === "orchestrator"
             ? hasOrchestrator
-              ? "A project already has an orchestrator. Most teams want exactly one."
+              ? "A repo already has an orchestrator. Most teams want exactly one."
               : "Authors shell verifiers, owns @auto routing, fields escalations and broadcasts decisions."
             : "Workers execute tasks. Tier 2 workers receive escalations from tier 1; leave untiered for general roles."}
         </p>

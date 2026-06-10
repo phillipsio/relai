@@ -60,19 +60,19 @@ async function markThreadRead(db: Db, threadId: string, agentId: string): Promis
     .where(eq(messagesTable.threadId, threadId));
 }
 
-async function getOnlineWorkers(db: Db, projectId: string): Promise<Agent[]> {
+async function getOnlineWorkers(db: Db, repoId: string): Promise<Agent[]> {
   const all = await db
     .select()
     .from(agentsTable)
-    .where(and(eq(agentsTable.projectId, projectId), eq(agentsTable.role, "worker")));
+    .where(and(eq(agentsTable.repoId, repoId), eq(agentsTable.role, "worker")));
   return all.filter((a) => isOnline(a.lastSeenAt));
 }
 
-async function getActiveTaskCounts(db: Db, projectId: string): Promise<Record<string, number>> {
+async function getActiveTaskCounts(db: Db, repoId: string): Promise<Record<string, number>> {
   const rows = await db
     .select({ assignedTo: tasksTable.assignedTo, status: tasksTable.status })
     .from(tasksTable)
-    .where(eq(tasksTable.projectId, projectId));
+    .where(eq(tasksTable.repoId, repoId));
   const counts: Record<string, number> = {};
   for (const r of rows) {
     if (r.assignedTo && (r.status === "assigned" || r.status === "in_progress")) {
@@ -111,7 +111,7 @@ async function sendMessage(db: Db, args: SendArgs): Promise<Message> {
   await publish(db, {
     id:         newId("evt"),
     kind:       "message.posted",
-    projectId:  thread?.projectId ?? "",
+    repoId:  thread?.repoId ?? "",
     targetType: "thread",
     targetId:   args.threadId,
     alsoNotify: args.toAgent ? [{ targetType: "agent", targetId: args.toAgent }] : [],
@@ -123,7 +123,7 @@ async function sendMessage(db: Db, args: SendArgs): Promise<Message> {
 }
 
 interface CreateTaskArgs {
-  projectId:      string;
+  repoId:      string;
   createdBy:      string;
   title:          string;
   description:    string;
@@ -137,7 +137,7 @@ interface CreateTaskArgs {
 async function createTask(db: Db, args: CreateTaskArgs) {
   const [task] = await db.insert(tasksTable).values({
     id:             newId("task"),
-    projectId:      args.projectId,
+    repoId:      args.repoId,
     createdBy:      args.createdBy,
     title:          args.title,
     description:    args.description,
@@ -152,7 +152,7 @@ async function createTask(db: Db, args: CreateTaskArgs) {
   await publish(db, {
     id:         newId("evt"),
     kind:       "task.created",
-    projectId:  task.projectId,
+    repoId:  task.repoId,
     targetType: "task",
     targetId:   task.id,
     alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
@@ -195,7 +195,7 @@ async function claudeMessageRoute(
 
 async function executeClaudeAction(
   deps: MessageLoopDeps,
-  projectId: string,
+  repoId: string,
   orchestrator: Agent,
   msg: Message,
   action: Record<string, unknown>,
@@ -203,7 +203,7 @@ async function executeClaudeAction(
   switch (action.action) {
     case "create_task":
       await createTask(deps.db, {
-        projectId,
+        repoId,
         createdBy:      orchestrator.id,
         title:          action.taskTitle as string,
         description:    action.taskDescription as string,
@@ -228,7 +228,7 @@ async function executeClaudeAction(
       return;
 
     case "broadcast": {
-      const online = await getOnlineWorkers(deps.db, projectId);
+      const online = await getOnlineWorkers(deps.db, repoId);
       for (const a of online) {
         await sendMessage(deps.db, {
           threadId:  msg.threadId,
@@ -264,7 +264,7 @@ async function executeClaudeAction(
 
 export async function handleMessage(
   deps: MessageLoopDeps,
-  projectId: string,
+  repoId: string,
   orchestrator: Agent,
   msg: Message,
 ): Promise<void> {
@@ -281,8 +281,8 @@ export async function handleMessage(
     case "escalation": {
       console.warn(`[message-loop] ESCALATION from=${msg.fromAgent} thread=${msg.threadId}: ${msg.body}`);
 
-      const online = await getOnlineWorkers(deps.db, projectId);
-      const counts = await getActiveTaskCounts(deps.db, projectId);
+      const online = await getOnlineWorkers(deps.db, repoId);
+      const counts = await getActiveTaskCounts(deps.db, repoId);
 
       let seniors = online.filter((a) => a.tier === 2);
       if (seniors.length === 0) seniors = online.filter((a) => a.specialization === "architect");
@@ -306,7 +306,7 @@ export async function handleMessage(
       const senior = ranked[0].agent;
 
       const task = await createTask(deps.db, {
-        projectId,
+        repoId,
         createdBy:      orchestrator.id,
         title:          `Escalation from ${msg.fromAgent}`,
         description:    msg.body,
@@ -334,7 +334,7 @@ export async function handleMessage(
     }
 
     case "decision": {
-      const online = await getOnlineWorkers(deps.db, projectId);
+      const online = await getOnlineWorkers(deps.db, repoId);
       for (const a of online) {
         await sendMessage(deps.db, {
           threadId:  msg.threadId,
@@ -359,9 +359,9 @@ export async function handleMessage(
         break;
       }
       try {
-        const workers = await getOnlineWorkers(deps.db, projectId);
+        const workers = await getOnlineWorkers(deps.db, repoId);
         const action = await claudeMessageRoute(msg, workers, deps.anthropic, deps.model);
-        await executeClaudeAction(deps, projectId, orchestrator, msg, action);
+        await executeClaudeAction(deps, repoId, orchestrator, msg, action);
       } catch (err) {
         console.error(`[message-loop] Claude routing failed for ${msg.type} message ${msg.id}:`, err);
       }
@@ -374,16 +374,16 @@ export async function handleMessage(
 
 // ── Per-project cycle ────────────────────────────────────────────────────────
 
-export async function findOrchestratorAgent(db: Db, projectId: string): Promise<Agent | null> {
+export async function findOrchestratorAgent(db: Db, repoId: string): Promise<Agent | null> {
   const [orch] = await db
     .select()
     .from(agentsTable)
-    .where(and(eq(agentsTable.projectId, projectId), eq(agentsTable.role, "orchestrator")));
+    .where(and(eq(agentsTable.repoId, repoId), eq(agentsTable.role, "orchestrator")));
   return orch ?? null;
 }
 
-export async function runMessageLoopCycle(deps: MessageLoopDeps, projectId: string): Promise<void> {
-  const orchestrator = await findOrchestratorAgent(deps.db, projectId);
+export async function runMessageLoopCycle(deps: MessageLoopDeps, repoId: string): Promise<void> {
+  const orchestrator = await findOrchestratorAgent(deps.db, repoId);
   if (!orchestrator) return;
 
   // Fetch unread messages for the orchestrator across the whole project,
@@ -392,14 +392,14 @@ export async function runMessageLoopCycle(deps: MessageLoopDeps, projectId: stri
     .select({ messages: messagesTable })
     .from(messagesTable)
     .innerJoin(threadsTable, eq(messagesTable.threadId, threadsTable.id))
-    .where(sql`${threadsTable.projectId} = ${projectId} AND NOT (${messagesTable.readBy} @> ARRAY[${orchestrator.id}]::text[])`);
+    .where(sql`${threadsTable.repoId} = ${repoId} AND NOT (${messagesTable.readBy} @> ARRAY[${orchestrator.id}]::text[])`);
 
   const inbox = rows.map((r) => r.messages);
   if (inbox.length === 0) return;
 
   for (const msg of inbox) {
     try {
-      await handleMessage(deps, projectId, orchestrator, msg);
+      await handleMessage(deps, repoId, orchestrator, msg);
     } catch (err) {
       console.error(`[message-loop] handler error for message ${msg.id}:`, err);
     }

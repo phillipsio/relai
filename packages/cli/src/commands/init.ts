@@ -68,14 +68,14 @@ export async function initCommand() {
     default: true,
   });
 
-  let projectId: string;
+  let repoId: string;
 
   if (createNew) {
     const projectName = await input({ message: "Project name" });
     const s = ora("Creating project…").start();
     try {
-      const project = await client.createProject({ name: projectName });
-      projectId = project.id;
+      const project = await client.createRepo({ name: projectName });
+      repoId = project.id;
       s.succeed(chalk.green(`Project created: ${chalk.bold(project.name)}  ${chalk.dim(project.id)}`));
     } catch (err) {
       s.fail(chalk.red("Failed to create project"));
@@ -83,7 +83,7 @@ export async function initCommand() {
       process.exit(1);
     }
   } else {
-    projectId = await input({ message: "Project ID" });
+    repoId = await input({ message: "Project ID" });
   }
 
   // ── Agent ───────────────────────────────────────────────────────────────────
@@ -119,12 +119,12 @@ export async function initCommand() {
   const s = ora("Registering agent…").start();
   try {
     const { agent, token } = await client.registerAgent({
-      projectId, name: agentName, role,
+      repoId, name: agentName, role,
       specialization: specialization !== "custom" ? specialization : undefined,
       domains,
     });
 
-    writeConfig({ apiUrl, apiToken: token, agentId: agent.id, agentName: agent.name, projectId, specialization });
+    writeConfig({ apiUrl, apiToken: token, agentId: agent.id, agentName: agent.name, repoId, specialization });
     s.succeed(chalk.green("Agent registered"));
 
     console.log(`
@@ -148,7 +148,7 @@ ${chalk.cyan(JSON.stringify({
         API_URL: apiUrl,
         API_SECRET: token,
         AGENT_ID: agent.id,
-        PROJECT_ID: projectId,
+        REPO_ID: repoId,
       },
     },
   },

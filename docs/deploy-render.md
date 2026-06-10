@@ -74,12 +74,12 @@ The cloud's `drizzle.config.ts` filters to `cloud_*` tables, so this only adds t
 
 1. Open `https://relai-cloud.onrender.com`.
 2. Sign in with your email — Resend should deliver the magic link.
-3. Create a project. Confirm it appears via the OSS API:
+3. Create a repo. Confirm it appears via the OSS API:
    ```bash
-   curl https://relai-api.onrender.com/projects \
+   curl https://relai-api.onrender.com/repos \
      -H "Authorization: Bearer <API_SECRET>"
    ```
-4. Create an agent from the project page; copy the one-time token.
+4. Create an agent from the repo page; copy the one-time token.
 5. Re-create the agent with the same name from a second browser session — should be blocked by the 3-agent free-tier limit.
 
 ## Schema migrations after the first deploy

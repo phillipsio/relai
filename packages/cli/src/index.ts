@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand, taskCommitCommand } from "./commands/tasks.js";
-import { projectsListCommand, projectShowCommand, projectContextShowCommand, projectContextEditCommand } from "./commands/projects.js";
+import { reposListCommand, repoShowCommand, repoContextShowCommand, repoContextEditCommand } from "./commands/repos.js";
 import { agentsListCommand } from "./commands/agents.js";
 import { threadsCommand, threadNewCommand } from "./commands/threads.js";
 import { sendCommand } from "./commands/send.js";
@@ -12,7 +12,7 @@ import { inboxCommand } from "./commands/inbox.js";
 import { statusCommand } from "./commands/status.js";
 import { startCommand } from "./commands/start.js";
 import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
-import { projectInviteCommand, loginCommand } from "./commands/invite.js";
+import { repoInviteCommand, loginCommand } from "./commands/invite.js";
 import { watchCommand } from "./commands/watch.js";
 
 // Read the version from package.json so `relai --version` always matches the
@@ -166,54 +166,54 @@ program
 // ── discovery ────────────────────────────────────────────────────────────────
 
 program
-  .command("projects")
-  .description("List all projects on this server")
-  .action(projectsListCommand);
+  .command("repos")
+  .description("List all repos on this server")
+  .action(reposListCommand);
 
 program
   .command("agents")
-  .description("List agents in the current project")
+  .description("List agents in the current repo")
   .action(agentsListCommand);
 
 // ── login ────────────────────────────────────────────────────────────────────
 
 program
   .command("login")
-  .description("Log in to a project on this machine using an invite code or an agent token")
-  .option("--invite <code>", "Invite code from `relai project invite`")
+  .description("Log in to a repo on this machine using an invite code or an agent token")
+  .option("--invite <code>", "Invite code from `relai repo invite`")
   .option("--token <token>", "Per-agent token (from the cloud dashboard)")
   .option("--api <url>", "API URL (skips prompt)")
   .option("--working-dir <path>", "Override the working directory (defaults to CWD)")
   .action(loginCommand);
 
-// ── project invite ───────────────────────────────────────────────────────────
+// ── repo invite ───────────────────────────────────────────────────────────
 
-const project = program.command("project").description("Project operations");
+const repo = program.command("repo").description("Repo operations");
 
-project
+repo
   .command("show [id]")
-  .description("Show a project's details (defaults to the current project)")
-  .action(projectShowCommand);
+  .description("Show a repo's details (defaults to the current repo)")
+  .action(repoShowCommand);
 
-const projectContext = project.command("context").description("View or edit the project's pinned context (read by every agent on session start)");
+const repoContext = repo.command("context").description("View or edit the repo's pinned context (read by every agent on session start)");
 
-projectContext
+repoContext
   .command("show")
   .description("Print the current pinned context")
-  .action(projectContextShowCommand);
+  .action(repoContextShowCommand);
 
-projectContext
+repoContext
   .command("edit")
   .description("Open the pinned context in $EDITOR")
-  .action(projectContextEditCommand);
+  .action(repoContextEditCommand);
 
-project
+repo
   .command("invite")
-  .description("Create an invite code for another agent to join this project")
+  .description("Create an invite code for another agent to join this repo")
   .option("-n, --name <name>", "Suggested agent name (the new agent can override)")
   .option("-s, --specialization <s>", "Suggested specialization")
   .option("--ttl <seconds>", "Expiry in seconds (default: 7 days)")
-  .action(projectInviteCommand);
+  .action(repoInviteCommand);
 
 // ── token ────────────────────────────────────────────────────────────────────
 

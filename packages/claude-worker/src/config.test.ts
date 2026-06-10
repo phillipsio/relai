@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 
 const REQUIRED_ENV: Record<string, string> = {
   AGENT_ID: "agent_test",
-  PROJECT_ID: "proj_test",
+  REPO_ID: "proj_test",
   API_SECRET: "secret",
   REPO_PATH: "/workspace/repo",
 };
@@ -27,7 +27,7 @@ describe("loadConfig", () => {
   it("loads valid config from env", () => {
     const cfg = loadConfig();
     expect(cfg.agentId).toBe("agent_test");
-    expect(cfg.projectId).toBe("proj_test");
+    expect(cfg.repoId).toBe("proj_test");
     expect(cfg.apiSecret).toBe("secret");
     expect(cfg.repoPath).toBe("/workspace/repo");
   });

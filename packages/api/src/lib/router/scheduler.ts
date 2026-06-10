@@ -34,12 +34,12 @@ function getAnthropic(): Anthropic | null {
 
 // ── Task routing ──────────────────────────────────────────────────────────────
 
-async function routePendingTasks(db: Db, projectId: string): Promise<void> {
+async function routePendingTasks(db: Db, repoId: string): Promise<void> {
   const pending = await db
     .select()
     .from(tasks)
     .where(and(
-      eq(tasks.projectId, projectId),
+      eq(tasks.repoId, repoId),
       eq(tasks.status, "pending"),
       eq(tasks.autoAssign, true),
     ));
@@ -49,7 +49,7 @@ async function routePendingTasks(db: Db, projectId: string): Promise<void> {
   const workers = await db
     .select()
     .from(agents)
-    .where(and(eq(agents.projectId, projectId), eq(agents.role, "worker")));
+    .where(and(eq(agents.repoId, repoId), eq(agents.role, "worker")));
 
   if (workers.length === 0) return;
 
@@ -58,7 +58,7 @@ async function routePendingTasks(db: Db, projectId: string): Promise<void> {
     .select({ assignedTo: tasks.assignedTo })
     .from(tasks)
     .where(and(
-      eq(tasks.projectId, projectId),
+      eq(tasks.repoId, repoId),
       inArray(tasks.status, ["assigned", "in_progress"]),
     ));
   const taskCounts: Record<string, number> = {};
@@ -109,11 +109,11 @@ async function routePendingTasks(db: Db, projectId: string): Promise<void> {
 
 // ── Blocked task watch ────────────────────────────────────────────────────────
 
-export async function watchBlockedTasks(db: Db, projectId: string): Promise<void> {
+export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
   const blocked = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "blocked")));
+    .where(and(eq(tasks.repoId, repoId), eq(tasks.status, "blocked")));
 
   const watchable = blocked.filter(
     (t) => typeof (t.metadata as Record<string, unknown>).blockedThreadId === "string"
@@ -153,7 +153,7 @@ export async function watchBlockedTasks(db: Db, projectId: string): Promise<void
 // failure mode review_overdue addresses for the reviewer gate. createdAt is the
 // "proposed since" proxy. Re-subscribes orchestrators in case any registered
 // after the proposal was created.
-export async function watchProposedTasks(db: Db, projectId: string): Promise<void> {
+export async function watchProposedTasks(db: Db, repoId: string): Promise<void> {
   const overdueMs = Number(process.env.PROPOSED_OVERDUE_MS ?? 600_000);
   const cutoff = new Date(Date.now() - overdueMs);
 
@@ -161,7 +161,7 @@ export async function watchProposedTasks(db: Db, projectId: string): Promise<voi
     .select()
     .from(tasks)
     .where(and(
-      eq(tasks.projectId, projectId),
+      eq(tasks.repoId, repoId),
       eq(tasks.status, "proposed"),
       lt(tasks.createdAt, cutoff),
     ));
@@ -171,7 +171,7 @@ export async function watchProposedTasks(db: Db, projectId: string): Promise<voi
   const orchestrators = await db
     .select({ id: agents.id })
     .from(agents)
-    .where(and(eq(agents.projectId, projectId), eq(agents.role, "orchestrator")));
+    .where(and(eq(agents.repoId, repoId), eq(agents.role, "orchestrator")));
 
   for (const task of overdue) {
     const meta = (task.metadata ?? {}) as Record<string, unknown>;
@@ -186,7 +186,7 @@ export async function watchProposedTasks(db: Db, projectId: string): Promise<voi
     await publish(db, {
       id:         newId("evt"),
       kind:       "task.proposed_overdue",
-      projectId:  task.projectId,
+      repoId:  task.repoId,
       targetType: "task",
       targetId:   task.id,
       alsoNotify: orchestrators.map((o) => ({ targetType: "agent", targetId: o.id })),
@@ -198,7 +198,7 @@ export async function watchProposedTasks(db: Db, projectId: string): Promise<voi
 
 // ── Stall detection ───────────────────────────────────────────────────────────
 
-export async function detectStalls(db: Db, projectId: string): Promise<void> {
+export async function detectStalls(db: Db, repoId: string): Promise<void> {
   const thresholdMs = stallThresholdMs();
   const cutoff = new Date(Date.now() - thresholdMs);
 
@@ -206,7 +206,7 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
     .update(tasks)
     .set({ stalledAt: new Date() })
     .where(and(
-      eq(tasks.projectId, projectId),
+      eq(tasks.repoId, repoId),
       eq(tasks.status, "in_progress"),
       isNull(tasks.stalledAt),
       lt(tasks.updatedAt, cutoff),
@@ -218,7 +218,7 @@ export async function detectStalls(db: Db, projectId: string): Promise<void> {
     await publish(db, {
       id:         newId("evt"),
       kind:       "task.stalled",
-      projectId:  task.projectId,
+      repoId:  task.repoId,
       targetType: "task",
       targetId:   task.id,
       alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
@@ -277,7 +277,7 @@ const VERIFIERS: Record<VerifyKind, VerifierEntry> = {
 
 export async function verifyPending(
   db: Db,
-  projectId: string,
+  repoId: string,
   exec: VerifyExec = runVerification,
 ): Promise<void> {
   const stuckCutoff = new Date(Date.now() - VERIFY_STUCK_MS);
@@ -288,7 +288,7 @@ export async function verifyPending(
     .select()
     .from(tasks)
     .where(and(
-      eq(tasks.projectId, projectId),
+      eq(tasks.repoId, repoId),
       eq(tasks.status, "pending_verification"),
       or(isNull(tasks.verifyingAt), lt(tasks.verifyingAt, stuckCutoff)),
     ));
@@ -379,7 +379,7 @@ async function verifyOne(
           await publish(db, {
             id:         newId("evt"),
             kind:       "task.review_overdue",
-            projectId:  task.projectId,
+            repoId:  task.repoId,
             targetType: "task",
             targetId:   task.id,
             alsoNotify: task.verifyReviewerId ? [{ targetType: "agent", targetId: task.verifyReviewerId }] : [],
@@ -442,7 +442,7 @@ async function verifyOne(
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.verified",
-        projectId:  task.projectId,
+        repoId:  task.repoId,
         targetType: "task",
         targetId:   task.id,
         alsoNotify: updated.assignedTo ? [{ targetType: "agent", targetId: updated.assignedTo }] : [],
@@ -473,7 +473,7 @@ async function verifyOne(
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.verification_failed",
-        projectId:  task.projectId,
+        repoId:  task.repoId,
         targetType: "task",
         targetId:   task.id,
         alsoNotify: updated.assignedTo ? [{ targetType: "agent", targetId: updated.assignedTo }] : [],
@@ -493,22 +493,22 @@ async function verifyOne(
 
 // ── Project-scoped cycle ──────────────────────────────────────────────────────
 
-async function runCycle(db: Db, projectId: string): Promise<void> {
+async function runCycle(db: Db, repoId: string): Promise<void> {
   const tasks: Promise<void>[] = [
-    routePendingTasks(db, projectId).catch((err) =>
-      console.error(`[scheduler] routing error project=${projectId}:`, err)
+    routePendingTasks(db, repoId).catch((err) =>
+      console.error(`[scheduler] routing error project=${repoId}:`, err)
     ),
-    watchBlockedTasks(db, projectId).catch((err) =>
-      console.error(`[scheduler] blocked-watch error project=${projectId}:`, err)
+    watchBlockedTasks(db, repoId).catch((err) =>
+      console.error(`[scheduler] blocked-watch error project=${repoId}:`, err)
     ),
-    watchProposedTasks(db, projectId).catch((err) =>
-      console.error(`[scheduler] proposed-watch error project=${projectId}:`, err)
+    watchProposedTasks(db, repoId).catch((err) =>
+      console.error(`[scheduler] proposed-watch error project=${repoId}:`, err)
     ),
-    detectStalls(db, projectId).catch((err) =>
-      console.error(`[scheduler] stall-detect error project=${projectId}:`, err)
+    detectStalls(db, repoId).catch((err) =>
+      console.error(`[scheduler] stall-detect error project=${repoId}:`, err)
     ),
-    verifyPending(db, projectId).catch((err) =>
-      console.error(`[scheduler] verify error project=${projectId}:`, err)
+    verifyPending(db, repoId).catch((err) =>
+      console.error(`[scheduler] verify error project=${repoId}:`, err)
     ),
   ];
 
@@ -516,8 +516,8 @@ async function runCycle(db: Db, projectId: string): Promise<void> {
     const ai = getAnthropic();
     const model = process.env.ROUTING_MODEL ?? "claude-haiku-4-5-20251001";
     tasks.push(
-      runMessageLoopCycle({ db, anthropic: ai, model }, projectId).catch((err) =>
-        console.error(`[scheduler] message-loop error project=${projectId}:`, err)
+      runMessageLoopCycle({ db, anthropic: ai, model }, repoId).catch((err) =>
+        console.error(`[scheduler] message-loop error project=${repoId}:`, err)
       )
     );
   }
@@ -534,27 +534,27 @@ export function startRoutingScheduler(db: Db): void {
       // pending+autoAssign tasks (routing) or blocked tasks with thread metadata
       // (resume watcher). One cycle per affected project.
       const auto = await db
-        .selectDistinct({ projectId: tasks.projectId })
+        .selectDistinct({ repoId: tasks.repoId })
         .from(tasks)
         .where(and(eq(tasks.status, "pending"), eq(tasks.autoAssign, true)));
 
       const blocked = await db
-        .selectDistinct({ projectId: tasks.projectId })
+        .selectDistinct({ repoId: tasks.repoId })
         .from(tasks)
         .where(eq(tasks.status, "blocked"));
 
       const inProgress = await db
-        .selectDistinct({ projectId: tasks.projectId })
+        .selectDistinct({ repoId: tasks.repoId })
         .from(tasks)
         .where(and(eq(tasks.status, "in_progress"), isNull(tasks.stalledAt)));
 
       const verifying = await db
-        .selectDistinct({ projectId: tasks.projectId })
+        .selectDistinct({ repoId: tasks.repoId })
         .from(tasks)
         .where(eq(tasks.status, "pending_verification"));
 
       const proposed = await db
-        .selectDistinct({ projectId: tasks.projectId })
+        .selectDistinct({ repoId: tasks.repoId })
         .from(tasks)
         .where(eq(tasks.status, "proposed"));
 
@@ -565,21 +565,21 @@ export function startRoutingScheduler(db: Db): void {
       // per tick when the cycle would otherwise be idle).
       const messageProjects = messageRoutingEnabled()
         ? await db
-            .selectDistinct({ projectId: agents.projectId })
+            .selectDistinct({ repoId: agents.repoId })
             .from(agents)
             .where(eq(agents.role, "orchestrator"))
         : [];
 
-      const projectIds = Array.from(new Set([
-        ...auto.map((r) => r.projectId),
-        ...blocked.map((r) => r.projectId),
-        ...inProgress.map((r) => r.projectId),
-        ...verifying.map((r) => r.projectId),
-        ...proposed.map((r) => r.projectId),
-        ...messageProjects.map((r) => r.projectId),
+      const repoIds = Array.from(new Set([
+        ...auto.map((r) => r.repoId),
+        ...blocked.map((r) => r.repoId),
+        ...inProgress.map((r) => r.repoId),
+        ...verifying.map((r) => r.repoId),
+        ...proposed.map((r) => r.repoId),
+        ...messageProjects.map((r) => r.repoId),
       ]));
 
-      await Promise.all(projectIds.map((id) => runCycle(db, id)));
+      await Promise.all(repoIds.map((id) => runCycle(db, id)));
     } catch (err) {
       console.error("[scheduler] tick error:", err);
     }

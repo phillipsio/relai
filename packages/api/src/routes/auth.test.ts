@@ -11,7 +11,7 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}` };
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let agentId: string;
 let plaintextToken: string;
 
@@ -20,17 +20,17 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: { ...ADMIN, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "__test__ auth" }),
   });
   expect(project.statusCode).toBe(201);
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const agent = await app.inject({
     method: "POST", url: "/agents",
     headers: { ...ADMIN, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, name: "auth-test-agent", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "auth-test-agent", role: "worker" }),
   });
   expect(agent.statusCode).toBe(201);
   agentId = agent.json().data.id;
@@ -39,8 +39,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -80,7 +80,7 @@ describe("auth: service-admin token + X-Owner-Id", () => {
   it("rejects service-admin auth without X-Owner-Id", async () => {
     process.env.SERVICE_ADMIN_TOKEN = SERVICE_TOKEN;
     const res = await app.inject({
-      method: "GET", url: "/projects",
+      method: "GET", url: "/repos",
       headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
     });
     expect(res.statusCode).toBe(400);
@@ -89,7 +89,7 @@ describe("auth: service-admin token + X-Owner-Id", () => {
 
   it("rejects malformed X-Owner-Id", async () => {
     const res = await app.inject({
-      method: "GET", url: "/projects",
+      method: "GET", url: "/repos",
       headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": "not-a-user-id" },
     });
     expect(res.statusCode).toBe(400);
@@ -98,7 +98,7 @@ describe("auth: service-admin token + X-Owner-Id", () => {
 
   it("accepts service-admin with a usr_ X-Owner-Id and scopes results", async () => {
     const res = await app.inject({
-      method: "GET", url: "/projects",
+      method: "GET", url: "/repos",
       headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": "usr_nonexistent" },
     });
     // Auth passes (200), and scope filter returns no projects for the unknown user.
@@ -108,7 +108,7 @@ describe("auth: service-admin token + X-Owner-Id", () => {
 
   it("falls back to API_SECRET when SERVICE_ADMIN_TOKEN does not match", async () => {
     const res = await app.inject({
-      method: "GET", url: "/projects",
+      method: "GET", url: "/repos",
       headers: { Authorization: `Bearer ${SECRET}` },
     });
     expect(res.statusCode).toBe(200);

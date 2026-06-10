@@ -28,11 +28,11 @@ async function post(endpoint: string, body: unknown) {
 async function main() {
   if (!SECRET) { console.error("Error: API_SECRET must be set."); process.exit(1); }
 
-  const projectId = process.argv[2];
+  const repoId = process.argv[2];
   const name      = process.argv[3];
   const presetKey = process.argv[4] ?? "writer";
 
-  if (!projectId || !name) {
+  if (!repoId || !name) {
     console.error("Usage: tsx scripts/add-agent.ts <project-id> <name> [preset]");
     console.error(`Presets: ${Object.keys(ROLE_PRESETS).join(", ")}`);
     process.exit(1);
@@ -45,7 +45,7 @@ async function main() {
   }
 
   const { data: agent } = await post("/agents", {
-    projectId, name,
+    repoId, name,
     role:           preset.role,
     specialization: preset.specialization,
     tier:           preset.tier,

@@ -21,7 +21,7 @@ export async function startCommand() {
   const spinner = ora("Loading session...").start();
   let session;
   try {
-    session = await client.getSessionStart(config.projectId);
+    session = await client.getSessionStart(config.repoId);
   } catch (err) {
     spinner.fail(chalk.red("Failed to load session"));
     console.error(chalk.dim(String(err)));
@@ -30,14 +30,14 @@ export async function startCommand() {
   spinner.stop();
 
   console.log();
-  console.log(chalk.bold(`${session.project.name}`) + chalk.dim(`  ${session.project.id}`));
+  console.log(chalk.bold(`${session.repo.name}`) + chalk.dim(`  ${session.repo.id}`));
   console.log(chalk.dim(`you: ${session.agent.name}${session.agent.specialization ? ` (${session.agent.specialization})` : ""}`));
 
   // Project context — the "everyone-reads-this" blob, surfaced first.
-  if (session.project.context) {
+  if (session.repo.context) {
     console.log();
     console.log(chalk.bold("Project context"));
-    for (const line of session.project.context.split("\n")) {
+    for (const line of session.repo.context.split("\n")) {
       console.log(`  ${line}`);
     }
   }

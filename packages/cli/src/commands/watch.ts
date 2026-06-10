@@ -5,7 +5,7 @@ import { CliApiClient } from "../api.js";
 export interface WatchEvent {
   id: string;
   kind: string;
-  projectId: string;
+  repoId: string;
   targetType: string;
   targetId: string;
   payload: Record<string, unknown>;
@@ -141,7 +141,7 @@ export async function watchCommand(options: { kinds?: string }): Promise<void> {
     console.error(chalk.yellow(`Warning: could not self-subscribe; new-task events may not show (${(err as Error).message})`));
   }
 
-  console.log(chalk.bold("relai watch") + chalk.dim(` — ${config.agentName} · ${config.projectId}`));
+  console.log(chalk.bold("relai watch") + chalk.dim(` — ${config.agentName} · ${config.repoId}`));
   console.log(chalk.dim(
     `Streaming live events you're subscribed to. Ctrl-C to stop.` +
     (kinds ? ` Filtering: ${[...kinds].join(", ")}` : "") +

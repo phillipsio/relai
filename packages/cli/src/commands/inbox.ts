@@ -21,10 +21,10 @@ export async function inboxCommand(options: { read?: boolean }) {
 
   try {
     const [messages, pendingTasks, proposedTasks, agents] = await Promise.all([
-      client.getUnread(config.agentId, config.projectId),
-      client.getTasks({ projectId: config.projectId, status: "pending_verification" }),
-      client.getTasks({ projectId: config.projectId, status: "proposed" }),
-      client.getAgents(config.projectId),
+      client.getUnread(config.agentId, config.repoId),
+      client.getTasks({ repoId: config.repoId, status: "pending_verification" }),
+      client.getTasks({ repoId: config.repoId, status: "proposed" }),
+      client.getAgents(config.repoId),
     ]);
     spinner.stop();
 

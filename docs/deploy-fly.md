@@ -82,13 +82,13 @@ curl -i https://<your-app-name>.fly.dev/health \
 # → 200 with the health payload
 ```
 
-## 7. Bootstrap a project + agent
+## 7. Bootstrap a repo + agent
 
 Either against the deployed API directly with the seed script:
 
 ```bash
 API_SECRET=<your-secret> API_URL=https://<your-app-name>.fly.dev \
-  tsx scripts/seed.ts demo-project demo-agent orchestrator
+  tsx scripts/seed.ts demo-repo demo-agent orchestrator
 ```
 
 …or via the CLI from a fresh machine:
@@ -116,5 +116,5 @@ of 1–3s on the next request). For an "always warm" demo set it to `1` instead
 - The web dashboard is not deployed by this config — host it on Vercel/Netlify
   or add a separate Fly app.
 - Verification predicates (`verifyCommand`) execute inside the API process.
-  Self-hosted only; not safe for hosted multi-tenant. See AGENTS.md / project
+  Self-hosted only; not safe for hosted multi-tenant. See AGENTS.md / repo
   state for the sandbox plan.

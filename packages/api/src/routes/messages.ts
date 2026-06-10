@@ -4,13 +4,13 @@ import { eq, sql, asc } from "drizzle-orm";
 import { messages, threads, tasks } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertProjectAccess } from "../lib/ownership.js";
+import { assertRepoAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 async function assertThreadAccess(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
   const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
   if (!thread) return { ok: false as const, status: 404 as const };
-  const access = await assertProjectAccess(request, db, thread.projectId);
+  const access = await assertRepoAccess(request, db, thread.repoId);
   if (!access.ok) return { ok: false as const, status: 404 as const };
   return { ok: true as const, thread };
 }
@@ -65,7 +65,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       if (thread) {
         await db.insert(tasks).values({
           id:             newId("task"),
-          projectId:      thread.projectId,
+          repoId:      thread.repoId,
           title:          body.data.body.trimStart().slice(0, 80).trimEnd(),
           description:    body.data.body,
           priority:       "urgent",
@@ -95,7 +95,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     await publish(db, {
       id:         newId("evt"),
       kind:       "message.posted",
-      projectId:  thread?.projectId ?? "",
+      repoId:  thread?.repoId ?? "",
       targetType: "thread",
       targetId:   request.params.id,
       alsoNotify: body.data.toAgent
@@ -133,20 +133,20 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     }
   );
 
-  fastify.get<{ Querystring: { agentId: string; projectId: string } }>("/messages/unread", async (request, reply) => {
-    const { agentId, projectId } = request.query;
+  fastify.get<{ Querystring: { agentId: string; repoId: string } }>("/messages/unread", async (request, reply) => {
+    const { agentId, repoId } = request.query;
     if (!agentId)   return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
-    if (!projectId) return reply.status(400).send({ error: { code: "validation_error", message: "projectId required" } });
+    if (!repoId) return reply.status(400).send({ error: { code: "validation_error", message: "repoId required" } });
 
-    const access = await assertProjectAccess(request, db, projectId);
-    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
+    const access = await assertRepoAccess(request, db, repoId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
     const rows = await db
       .select({ messages })
       .from(messages)
       .innerJoin(threads, eq(messages.threadId, threads.id))
       .where(
-        sql`${threads.projectId} = ${projectId} AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`,
+        sql`${threads.repoId} = ${repoId} AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`,
       );
 
     return { data: rows.map((r) => r.messages) };

@@ -14,7 +14,7 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let agentAId: string;
 let agentBId: string;
 
@@ -23,27 +23,27 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects", headers: ADMIN,
+    method: "POST", url: "/repos", headers: ADMIN,
     body: JSON.stringify({ name: "__test__ events" }),
   });
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const a = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
-    body: JSON.stringify({ projectId, name: "agent-a", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "agent-a", role: "worker" }),
   });
   agentAId = a.json().data.id;
 
   const b = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
-    body: JSON.stringify({ projectId, name: "agent-b", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "agent-b", role: "worker" }),
   });
   agentBId = b.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -89,7 +89,7 @@ describe("auto-subscribe + publish on message post", () => {
   beforeAll(async () => {
     const t = await app.inject({
       method: "POST", url: "/threads", headers: ADMIN,
-      body: JSON.stringify({ projectId, title: "events-test thread" }),
+      body: JSON.stringify({ repoId, title: "events-test thread" }),
     });
     threadId = t.json().data.id;
   });
@@ -137,7 +137,7 @@ describe("auto-subscribe + publish on task create/update", () => {
     const res = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentAId,
+        repoId, createdBy: agentAId,
         title: "Event-test task", description: "test",
       }),
     });
@@ -155,7 +155,7 @@ describe("auto-subscribe + publish on task create/update", () => {
   it("emits task.updated on PUT /tasks/:id", async () => {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
-      body: JSON.stringify({ projectId, createdBy: agentAId, title: "x", description: "y" }),
+      body: JSON.stringify({ repoId, createdBy: agentAId, title: "x", description: "y" }),
     });
     const taskId = create.json().data.id;
 

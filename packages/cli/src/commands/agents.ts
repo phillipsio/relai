@@ -9,7 +9,7 @@ export async function agentsListCommand() {
 
   const spinner = ora("Fetching agents...").start();
   try {
-    const agents = await client.getAgents(config.projectId);
+    const agents = await client.getAgents(config.repoId);
     spinner.stop();
 
     if (agents.length === 0) {

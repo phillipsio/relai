@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Bootstraps a fresh database with one project and one agent,
- * then prints the IDs and patches .env with AGENT_ID and PROJECT_ID.
+ * then prints the IDs and patches .env with AGENT_ID and REPO_ID.
  *
  * Usage:
  *   API_SECRET=changeme tsx scripts/seed.ts [project-name] [agent-name] [preset]
@@ -41,14 +41,14 @@ async function post(endpoint: string, body: unknown) {
   return res.json() as Promise<{ data: Record<string, unknown> }>;
 }
 
-function patchEnv(projectId: string, agentId: string) {
+function patchEnv(repoId: string, agentId: string) {
   if (!fs.existsSync(ENV_PATH)) {
     console.log(`  (no .env at ${ENV_PATH} — skipping patch)`);
     return;
   }
   let src = fs.readFileSync(ENV_PATH, "utf8");
   src = src.replace(/^AGENT_ID=.*$/m,   `AGENT_ID=${agentId}`);
-  src = src.replace(/^PROJECT_ID=.*$/m, `PROJECT_ID=${projectId}`);
+  src = src.replace(/^REPO_ID=.*$/m, `REPO_ID=${repoId}`);
   fs.writeFileSync(ENV_PATH, src);
   console.log(`  .env patched`);
 }
@@ -71,14 +71,14 @@ async function main() {
 
   console.log(`\nSeeding against ${API_URL}…\n`);
 
-  const { data: project } = await post("/projects", {
+  const { data: project } = await post("/repos", {
     name: projectName,
     description: "Created by seed script",
   });
   console.log(`✓ Project:        ${project.id}  (${project.name})`);
 
   const { data: agent } = await post("/agents", {
-    projectId:      project.id,
+    repoId:      project.id,
     name:           agentName,
     role:           preset.role,
     specialization: preset.specialization,
@@ -94,7 +94,7 @@ async function main() {
   console.log(`
 Done. Add these to your MCP server config:
   AGENT_ID=${agent.id}
-  PROJECT_ID=${project.id}
+  REPO_ID=${project.id}
 
 To add more agents to this project:
   API_SECRET=... tsx scripts/add-agent.ts ${project.id} <name> <preset>

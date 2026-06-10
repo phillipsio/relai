@@ -15,7 +15,7 @@ const AUTH = { Authorization: `Bearer ${SECRET}` };
 
 // ── shared state ──────────────────────────────────────────────────────────────
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let agentId: string;
 let taskId: string;
 let threadId: string;
@@ -26,17 +26,17 @@ beforeAll(async () => {
 
   // Seed a test project to anchor all test data.
   const res = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: { ...AUTH, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "__test__ api-routes", description: "vitest cleanup target" }),
   });
   expect(res.statusCode).toBe(201);
-  projectId = res.json().data.id;
+  repoId = res.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: AUTH });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: AUTH });
   }
   await app?.close();
 });
@@ -68,10 +68,10 @@ describe("auth", () => {
 });
 
 // ── projects ──────────────────────────────────────────────────────────────────
-describe("POST /projects", () => {
+describe("POST /repos", () => {
   it("rejects missing name", async () => {
     const res = await app.inject({
-      method: "POST", url: "/projects",
+      method: "POST", url: "/repos",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({ description: "no name" }),
     });
@@ -80,40 +80,40 @@ describe("POST /projects", () => {
   });
 });
 
-describe("GET /projects", () => {
+describe("GET /repos", () => {
   it("returns all projects including the test project", async () => {
-    const res = await app.inject({ method: "GET", url: "/projects", headers: AUTH });
+    const res = await app.inject({ method: "GET", url: "/repos", headers: AUTH });
     expect(res.statusCode).toBe(200);
     const data = res.json().data as Array<{ id: string }>;
     expect(Array.isArray(data)).toBe(true);
-    expect(data.some((p) => p.id === projectId)).toBe(true);
+    expect(data.some((p) => p.id === repoId)).toBe(true);
   });
 });
 
-describe("GET /projects/:id", () => {
+describe("GET /repos/:id", () => {
   it("returns the test project", async () => {
     const res = await app.inject({
-      method: "GET", url: `/projects/${projectId}`,
+      method: "GET", url: `/repos/${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.id).toBe(projectId);
+    expect(res.json().data.id).toBe(repoId);
     expect(res.json().data.name).toBe("__test__ api-routes");
   });
 
   it("returns 404 for unknown id", async () => {
     const res = await app.inject({
-      method: "GET", url: "/projects/proj_nonexistent",
+      method: "GET", url: "/repos/repo_nonexistent",
       headers: AUTH,
     });
     expect(res.statusCode).toBe(404);
   });
 });
 
-describe("PUT /projects/:id", () => {
+describe("PUT /repos/:id", () => {
   it("updates the pinned context blob", async () => {
     const res = await app.inject({
-      method: "PUT", url: `/projects/${projectId}`,
+      method: "PUT", url: `/repos/${repoId}`,
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({ context: "Local Postgres on 5433. Use the WSL venv. Don't run db:push during a rename." }),
     });
@@ -123,7 +123,7 @@ describe("PUT /projects/:id", () => {
 
   it("clears context when set to null", async () => {
     const res = await app.inject({
-      method: "PUT", url: `/projects/${projectId}`,
+      method: "PUT", url: `/repos/${repoId}`,
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({ context: null }),
     });
@@ -139,7 +139,7 @@ describe("POST /agents", () => {
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId,
+        repoId,
         name: "test-worker",
         role: "worker",
         specialization: "tester",
@@ -159,7 +159,7 @@ describe("POST /agents", () => {
     const res = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "bad", role: "janitor" }),
+      body: JSON.stringify({ repoId, name: "bad", role: "janitor" }),
     });
     expect(res.statusCode).toBe(400);
   });
@@ -187,9 +187,9 @@ describe("PUT /agents/:id/heartbeat", () => {
 });
 
 describe("GET /agents", () => {
-  it("returns agents filtered by projectId", async () => {
+  it("returns agents filtered by repoId", async () => {
     const res = await app.inject({
-      method: "GET", url: `/agents?projectId=${projectId}`,
+      method: "GET", url: `/agents?repoId=${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -205,7 +205,7 @@ describe("POST /tasks", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId,
+        repoId,
         createdBy: agentId,
         title: "Write vitest integration tests",
         description: "Cover all API routes with inject()",
@@ -228,7 +228,7 @@ describe("POST /tasks", () => {
     const res = await app.inject({
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, createdBy: agentId, title: "no desc" }),
+      body: JSON.stringify({ repoId, createdBy: agentId, title: "no desc" }),
     });
     expect(res.statusCode).toBe(400);
   });
@@ -238,7 +238,7 @@ describe("POST /tasks", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId,
+        repoId, createdBy: agentId,
         title: "auto routed", description: "auto routed",
         assignedTo: "@auto",
       }),
@@ -253,18 +253,18 @@ describe("POST /tasks", () => {
   it("falls back to project's defaultAssignee when assignee is omitted", async () => {
     // create a project with defaultAssignee="@auto"
     const proj = await app.inject({
-      method: "POST", url: "/projects",
+      method: "POST", url: "/repos",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({ name: "__test__ auto-default", defaultAssignee: "@auto" }),
     });
     expect(proj.statusCode).toBe(201);
-    const autoProjectId = proj.json().data.id;
+    const autoRepoId = proj.json().data.id;
 
     const res = await app.inject({
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId: autoProjectId, createdBy: agentId,
+        repoId: autoRepoId, createdBy: agentId,
         title: "inherits @auto", description: "inherits @auto",
       }),
     });
@@ -275,14 +275,14 @@ describe("POST /tasks", () => {
     expect(task.status).toBe("pending");
 
     // cleanup
-    await app.inject({ method: "DELETE", url: `/projects/${autoProjectId}`, headers: AUTH });
+    await app.inject({ method: "DELETE", url: `/repos/${autoRepoId}`, headers: AUTH });
   });
 });
 
 describe("GET /tasks", () => {
-  it("returns tasks filtered by projectId", async () => {
+  it("returns tasks filtered by repoId", async () => {
     const res = await app.inject({
-      method: "GET", url: `/tasks?projectId=${projectId}`,
+      method: "GET", url: `/tasks?repoId=${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -292,7 +292,7 @@ describe("GET /tasks", () => {
 
   it("filters by status=pending", async () => {
     const res = await app.inject({
-      method: "GET", url: `/tasks?projectId=${projectId}&status=pending`,
+      method: "GET", url: `/tasks?repoId=${repoId}&status=pending`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -303,7 +303,7 @@ describe("GET /tasks", () => {
 
   it("returns no test task for status=completed", async () => {
     const res = await app.inject({
-      method: "GET", url: `/tasks?projectId=${projectId}&status=completed`,
+      method: "GET", url: `/tasks?repoId=${repoId}&status=completed`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -314,7 +314,7 @@ describe("GET /tasks", () => {
   it("filters by assignedTo", async () => {
     // Task is unassigned, so filtering by agentId should return nothing yet.
     const res = await app.inject({
-      method: "GET", url: `/tasks?projectId=${projectId}&assignedTo=${agentId}`,
+      method: "GET", url: `/tasks?repoId=${repoId}&assignedTo=${agentId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -388,7 +388,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId,
+        repoId,
         createdBy: agentId,
         title: "verified task",
         description: "needs predicate",
@@ -413,7 +413,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId,
+        repoId,
         createdBy: agentId,
         title: "timed verify",
         description: "long-running predicate",
@@ -430,7 +430,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyCommand: "true", verifyTimeoutMs: 500,
       }),
     });
@@ -440,7 +440,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyCommand: "true", verifyTimeoutMs: 700_000,
       }),
     });
@@ -452,7 +452,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId,
+        repoId, createdBy: agentId,
         title: "build artifact", description: "must produce dist/index.js",
         verifyKind: "file_exists",
         verifyPath: "dist/index.js",
@@ -477,7 +477,7 @@ describe("PUT /tasks/:id", () => {
     const mkAgent = async (name: string) => {
       const r = await app.inject({
         method: "POST", url: "/agents", headers: { ...AUTH, "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, name, role: "worker" }),
+        body: JSON.stringify({ repoId, name, role: "worker" }),
       });
       return r.json().data.id as string;
     };
@@ -486,7 +486,7 @@ describe("PUT /tasks/:id", () => {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "review me", description: "x",
+        repoId, createdBy: agentId, title: "review me", description: "x",
         verifyKind: "reviewer_agent", verifyReviewerId: revA,
       }),
     });
@@ -504,7 +504,7 @@ describe("PUT /tasks/:id", () => {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "fe task", description: "x",
+        repoId, createdBy: agentId, title: "fe task", description: "x",
         verifyKind: "file_exists", verifyPath: "dist/x",
       }),
     });
@@ -521,7 +521,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind: "file_exists",
       }),
     });
@@ -533,7 +533,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind: "shell",
       }),
     });
@@ -544,7 +544,7 @@ describe("PUT /tasks/:id", () => {
     const t = await app.inject({
       method: "POST", url: "/threads",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, title: "plan-thread" }),
+      body: JSON.stringify({ repoId, title: "plan-thread" }),
     });
     const threadId = t.json().data.id;
 
@@ -552,7 +552,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId,
+        repoId, createdBy: agentId,
         title: "ship it", description: "after the plan concludes",
         verifyKind:     "thread_concluded",
         verifyThreadId: threadId,
@@ -576,7 +576,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind: "thread_concluded",
       }),
     });
@@ -588,7 +588,7 @@ describe("PUT /tasks/:id", () => {
     const orchRes = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "lead", role: "orchestrator", specialization: "architect" }),
+      body: JSON.stringify({ repoId, name: "lead", role: "orchestrator", specialization: "architect" }),
     });
     const orchToken = orchRes.json().token as string;
     const orchId    = orchRes.json().data.id as string;
@@ -596,7 +596,7 @@ describe("PUT /tasks/:id", () => {
     const workerRes = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "shell-worker", role: "worker", specialization: "tester" }),
+      body: JSON.stringify({ repoId, name: "shell-worker", role: "worker", specialization: "tester" }),
     });
     const workerToken = workerRes.json().token as string;
     const workerId    = workerRes.json().data.id as string;
@@ -606,7 +606,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: workerId, title: "x", description: "x",
+        repoId, createdBy: workerId, title: "x", description: "x",
         verifyCommand: "rm -rf /",
       }),
     });
@@ -618,7 +618,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: workerId, title: "fx", description: "x",
+        repoId, createdBy: workerId, title: "fx", description: "x",
         verifyKind: "file_exists", verifyPath: "/tmp/x",
       }),
     });
@@ -629,7 +629,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: orchId, title: "shell", description: "x",
+        repoId, createdBy: orchId, title: "shell", description: "x",
         verifyCommand: "true",
       }),
     });
@@ -641,7 +641,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind:    "file_exists",
         verifyPath:    "/tmp/x",
         verifyCommand: "echo no",
@@ -654,7 +654,7 @@ describe("PUT /tasks/:id", () => {
     const reviewer = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "rev-ok", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-ok", role: "worker" }),
     });
     const reviewerId = reviewer.json().data.id;
 
@@ -662,7 +662,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "needs review", description: "x",
+        repoId, createdBy: agentId, title: "needs review", description: "x",
         verifyKind:       "reviewer_agent",
         verifyReviewerId: reviewerId,
       }),
@@ -678,7 +678,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind: "reviewer_agent",
       }),
     });
@@ -687,15 +687,15 @@ describe("PUT /tasks/:id", () => {
 
   it("rejects kind=reviewer_agent when the reviewer is from another project", async () => {
     const otherProj = await app.inject({
-      method: "POST", url: "/projects",
+      method: "POST", url: "/repos",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({ name: "__test__ other-rev" }),
     });
-    const otherProjectId = otherProj.json().data.id;
+    const otherRepoId = otherProj.json().data.id;
     const stranger = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: otherProjectId, name: "stranger", role: "worker" }),
+      body: JSON.stringify({ repoId: otherRepoId, name: "stranger", role: "worker" }),
     });
     const strangerId = stranger.json().data.id;
 
@@ -703,14 +703,14 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "x", description: "x",
+        repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind:       "reviewer_agent",
         verifyReviewerId: strangerId,
       }),
     });
     expect(res.statusCode).toBe(400);
 
-    await app.inject({ method: "DELETE", url: `/projects/${otherProjectId}`, headers: AUTH });
+    await app.inject({ method: "DELETE", url: `/repos/${otherRepoId}`, headers: AUTH });
   });
 
   it("leaves completed alone when no verifyCommand", async () => {
@@ -718,7 +718,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId,
+        repoId,
         createdBy: agentId,
         title: "ungated task",
         description: "no predicate",
@@ -741,7 +741,7 @@ describe("POST /tasks/:id/review", () => {
     const reviewer = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: reviewerName, role: "worker" }),
+      body: JSON.stringify({ repoId, name: reviewerName, role: "worker" }),
     });
     const reviewerId    = reviewer.json().data.id as string;
     const reviewerToken = reviewer.json().token as string;
@@ -750,7 +750,7 @@ describe("POST /tasks/:id/review", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId,
+        repoId, createdBy: agentId,
         title: "review-me", description: "x",
         assignedTo: agentId,
         verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
@@ -803,7 +803,7 @@ describe("POST /tasks/:id/review", () => {
     const other = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "rev-endpoint-2-imposter", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-endpoint-2-imposter", role: "worker" }),
     });
     const otherToken = other.json().token as string;
 
@@ -823,7 +823,7 @@ describe("POST /tasks/:id/review", () => {
     const reviewer = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "rev-endpoint-3", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-endpoint-3", role: "worker" }),
     });
     const reviewerToken = reviewer.json().token as string;
     const reviewerId    = reviewer.json().data.id as string;
@@ -831,7 +831,7 @@ describe("POST /tasks/:id/review", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "open", description: "x",
+        repoId, createdBy: agentId, title: "open", description: "x",
         assignedTo: agentId,
         verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
       }),
@@ -865,7 +865,7 @@ describe("POST /tasks/:id/review", () => {
     const reviewer = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "rev-endpoint-terminal", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-endpoint-terminal", role: "worker" }),
     });
     const reviewerToken = reviewer.json().token as string;
     const reviewerId    = reviewer.json().data.id as string;
@@ -873,7 +873,7 @@ describe("POST /tasks/:id/review", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "cancel-me", description: "x",
+        repoId, createdBy: agentId, title: "cancel-me", description: "x",
         assignedTo: agentId,
         verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
       }),
@@ -898,7 +898,7 @@ describe("POST /tasks/:id/review", () => {
     const caller = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, name: "rev-endpoint-4-caller", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-endpoint-4-caller", role: "worker" }),
     });
     const callerToken = caller.json().token as string;
 
@@ -906,7 +906,7 @@ describe("POST /tasks/:id/review", () => {
       method: "POST", url: "/tasks",
       headers: { ...AUTH, "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "plain", description: "x",
+        repoId, createdBy: agentId, title: "plain", description: "x",
         assignedTo: agentId,
       }),
     });
@@ -1003,12 +1003,12 @@ describe("POST /threads", () => {
     const res = await app.inject({
       method: "POST", url: "/threads",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, title: "Auth design discussion" }),
+      body: JSON.stringify({ repoId, title: "Auth design discussion" }),
     });
     expect(res.statusCode).toBe(201);
     const thread = res.json().data;
     expect(thread.title).toBe("Auth design discussion");
-    expect(thread.projectId).toBe(projectId);
+    expect(thread.repoId).toBe(repoId);
     expect(thread.id).toMatch(/^thread_/);
     threadId = thread.id;
   });
@@ -1017,16 +1017,16 @@ describe("POST /threads", () => {
     const res = await app.inject({
       method: "POST", url: "/threads",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId }),
+      body: JSON.stringify({ repoId }),
     });
     expect(res.statusCode).toBe(400);
   });
 });
 
 describe("GET /threads", () => {
-  it("returns threads filtered by projectId", async () => {
+  it("returns threads filtered by repoId", async () => {
     const res = await app.inject({
-      method: "GET", url: `/threads?projectId=${projectId}`,
+      method: "GET", url: `/threads?repoId=${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -1089,7 +1089,7 @@ describe("POST /threads/:id/messages", () => {
       body: JSON.stringify({ fromAgent: agentId, type: "escalation", body: uniq }),
     });
     expect(post.statusCode).toBe(201);
-    const tasksRes = await app.inject({ method: "GET", url: `/tasks?projectId=${projectId}`, headers: AUTH });
+    const tasksRes = await app.inject({ method: "GET", url: `/tasks?repoId=${repoId}`, headers: AUTH });
     const found = (tasksRes.json().data as Array<{ title: string }>).some((t) => t.title === uniq);
     expect(found).toBe(false);
   });
@@ -1102,7 +1102,7 @@ describe("POST /threads/:id/messages", () => {
       body: JSON.stringify({ fromAgent: agentId, type: "escalation", body: uniq, spawnTask: true }),
     });
     expect(post.statusCode).toBe(201);
-    const tasksRes = await app.inject({ method: "GET", url: `/tasks?projectId=${projectId}`, headers: AUTH });
+    const tasksRes = await app.inject({ method: "GET", url: `/tasks?repoId=${repoId}`, headers: AUTH });
     const task = (tasksRes.json().data as Array<{ title: string; priority: string }>).find((t) => t.title === uniq);
     expect(task).toBeDefined();
     expect(task!.priority).toBe("urgent");
@@ -1125,7 +1125,7 @@ describe("GET /threads/:id/messages", () => {
 describe("GET /messages/unread", () => {
   it("returns unread messages scoped to the project", async () => {
     const res = await app.inject({
-      method: "GET", url: `/messages/unread?agentId=${agentId}&projectId=${projectId}`,
+      method: "GET", url: `/messages/unread?agentId=${agentId}&repoId=${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
@@ -1135,13 +1135,13 @@ describe("GET /messages/unread", () => {
 
   it("requires agentId query param", async () => {
     const res = await app.inject({
-      method: "GET", url: `/messages/unread?projectId=${projectId}`,
+      method: "GET", url: `/messages/unread?repoId=${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it("requires projectId query param", async () => {
+  it("requires repoId query param", async () => {
     const res = await app.inject({
       method: "GET", url: `/messages/unread?agentId=${agentId}`,
       headers: AUTH,

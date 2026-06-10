@@ -9,7 +9,7 @@ The [`@getrelai/mcp-server`](https://www.npmjs.com/package/@getrelai/mcp-server)
 | `API_URL` | **Yes** | URL of the running relai API (e.g. `http://localhost:3010` or your deployed instance) |
 | `API_SECRET` | **Yes** | Your per-agent bearer token (issued by `relai init` or `relai login`) |
 | `AGENT_ID` | **Yes** | Your agent's ID (`agent_*`) |
-| `PROJECT_ID` | **Yes** | The project's ID (`proj_*`) |
+| `REPO_ID` | **Yes** | The repo's ID (`repo_*`) |
 | `TRANSPORT` | No (default: `stdio`) | `stdio` or `http` |
 | `MCP_PORT` | No (default: `3001`) | Port for HTTP transport only |
 
@@ -19,7 +19,7 @@ The easiest way to get a pre-filled snippet is to run `relai init` (or `relai lo
 
 ## Claude Code
 
-Add to `.mcp.json` in your project root (project-scoped — preferred so each project's agent identity is isolated) or `~/.claude.json` (global):
+Add to `.mcp.json` in your repo root (repo-scoped — preferred so each repo's agent identity is isolated) or `~/.claude.json` (global):
 
 ```json
 {
@@ -31,7 +31,7 @@ Add to `.mcp.json` in your project root (project-scoped — preferred so each pr
         "API_URL": "http://localhost:3010",
         "API_SECRET": "your-per-agent-token",
         "AGENT_ID": "agent_yourAgentId",
-        "PROJECT_ID": "proj_yourProjectId"
+        "REPO_ID": "repo_yourRepoId"
       }
     }
   }
@@ -57,7 +57,7 @@ Add to `.vscode/mcp.json` in your repo root:
         "API_URL": "http://localhost:3010",
         "API_SECRET": "your-per-agent-token",
         "AGENT_ID": "agent_yourAgentId",
-        "PROJECT_ID": "proj_yourProjectId"
+        "REPO_ID": "repo_yourRepoId"
       }
     }
   }
@@ -81,7 +81,7 @@ TRANSPORT=http \
 API_URL=https://your-api-host \
 API_SECRET=your-per-agent-token \
 AGENT_ID=agent_yourAgentId \
-PROJECT_ID=proj_yourProjectId \
+REPO_ID=repo_yourRepoId \
 MCP_PORT=3001 \
 npx @getrelai/mcp-server
 ```

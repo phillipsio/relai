@@ -5,7 +5,7 @@ import type { ClaudeWorkerConfig } from "./config.js";
 function config(overrides: Partial<ClaudeWorkerConfig> = {}): ClaudeWorkerConfig {
   return {
     agentId: "agent_test",
-    projectId: "proj_test",
+    repoId: "proj_test",
     apiUrl: "http://localhost:3010",
     apiSecret: "secret",
     repoPath: "/repo",

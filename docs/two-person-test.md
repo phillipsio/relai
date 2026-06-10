@@ -7,7 +7,7 @@ If anything in this runbook is annoying, that friction *is* the test signal — 
 ## Prerequisites
 
 **On your (host) machine:**
-- Docker (for Postgres) and Node.js 20+ / pnpm 9+ (already required by the project)
+- Docker (for Postgres) and Node.js 20+ / pnpm 9+ (already required by the repo)
 - A way for your coworker's machine to reach the API:
   - **Quickest:** `ngrok http 3010` (no install, public HTTPS URL, 2-minute setup)
   - **Tailscale / WireGuard:** if you both have it, the API host is just reachable on the tailnet
@@ -57,19 +57,19 @@ relai init
 Walk through the prompts:
 - **API URL:** the public one from step 2 (or `http://localhost:3010` if you're on the host)
 - **API admin secret:** the `API_SECRET` from `.env`
-- **Create new project:** yes
-- **Project name:** something memorable
+- **Create new repo:** yes
+- **Repo name:** something memorable
 - **Agent name:** e.g. `jim-host`
 - **Specialization:** `architect` or whatever fits
 
 After this, `~/.config/relai/config.json` holds your per-agent token. The admin secret is no longer needed for day-to-day calls.
 
-If you also want to drive relai from this machine via Claude Code (recommended), copy the printed MCP snippet into your project's `.mcp.json`.
+If you also want to drive relai from this machine via Claude Code (recommended), copy the printed MCP snippet into your repo's `.mcp.json`.
 
 ## 4. Host side — invite your coworker
 
 ```bash
-relai project invite \
+relai repo invite \
   --name <coworker-suggested-name> \
   --specialization writer \
   --ttl 86400
@@ -96,11 +96,11 @@ Prompts:
 - **Agent name:** their choice (the suggestion you set is the default)
 - **Specialization:** their choice
 
-This creates an agent record in your project, mints a per-agent token for them, and writes `~/.config/relai/config.json` on their machine. They never see your admin secret.
+This creates an agent record in your repo, mints a per-agent token for them, and writes `~/.config/relai/config.json` on their machine. They never see your admin secret.
 
 ## 6. Coworker side — wire up MCP
 
-`relai login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their project's `.mcp.json` (or `~/.claude.json`). The `npx @getrelai/mcp-server` command pulls the package from npm — no clone required for the MCP server itself.
+`relai login` prints a ready-to-paste `mcpServers` block at the end of step 5. Drop it into their repo's `.mcp.json` (or `~/.claude.json`). The `npx @getrelai/mcp-server` command pulls the package from npm — no clone required for the MCP server itself.
 
 Restart their MCP client. Confirm via `/mcp` (or equivalent) that `relai` shows as connected with 10 tools.
 
@@ -109,7 +109,7 @@ Restart their MCP client. Confirm via `/mcp` (or equivalent) that `relai` shows 
 In your Claude Code session (host):
 
 ```
-You: Use the relai tools to create a task in this project titled "Audit the
+You: Use the relai tools to create a task in this repo titled "Audit the
 auth flow" with description "Walk the new per-agent token path end-to-end
 and flag anything weird." Assign it to <coworker's agent id>.
 ```
@@ -145,8 +145,8 @@ If you don't have a real coworker on hand, you can play both sides from the same
 ```bash
 # Terminal A — "host" identity, default config dir
 relai init
-# … walk through prompts, create project, register as e.g. "jim-host"
-relai project invite --name fake-coworker --ttl 3600
+# … walk through prompts, create repo, register as e.g. "jim-host"
+relai repo invite --name fake-coworker --ttl 3600
 # Copy the printed `relai login --invite ...` line.
 
 # Terminal B — "coworker" identity, separate config dir
@@ -166,7 +166,7 @@ This validates the full auth + invite + per-agent-token + event-fan-out path; on
 
 ## Solo test, multi-identity via git worktrees (closer to a real two-person setup)
 
-`RELAI_CONFIG_DIR` isolates the CLI config but **doesn't isolate `.mcp.json`** — every Claude Code session opened in this checkout reads the same project-level `.mcp.json` and so picks up the same agent token. Worker processes also share the working tree, so file edits race.
+`RELAI_CONFIG_DIR` isolates the CLI config but **doesn't isolate `.mcp.json`** — every Claude Code session opened in this checkout reads the same repo-level `.mcp.json` and so picks up the same agent token. Worker processes also share the working tree, so file edits race.
 
 Git worktrees fix this without needing a second machine. Each identity gets its own checkout (own `.mcp.json`, own working tree) but everyone hits the same shared API and DB.
 
@@ -189,11 +189,11 @@ cd ../relai-bob
 export RELAI_CONFIG_DIR=$PWD/.relai-config
 
 # Get an invite from the host terminal:
-#   (in main checkout) relai project invite --name bob --ttl 3600
+#   (in main checkout) relai repo invite --name bob --ttl 3600
 relai login --invite inv_<...> --api http://localhost:3010
 
 # Paste the printed mcpServers block into THIS worktree's .mcp.json.
-# Because Claude Code resolves .mcp.json from the project root it's launched in,
+# Because Claude Code resolves .mcp.json from the repo root it's launched in,
 # starting `claude` from ../relai-bob picks up Bob's token; from the main
 # checkout it picks up the host's token. No collision.
 ```
@@ -225,4 +225,4 @@ Real friction is the point. Note (somewhere — a thread in relai itself works):
 - Anything that felt obviously slow, redundant, or surprising.
 
 Feed the findings back into the design doc at
-`~/.claude/projects/-Users-jim-PhpstormProjects-relai/memory/project_cli_design.md`.
+`~/.claude/repos/-Users-jim-PhpstormProjects-relai/memory/project_cli_design.md`.

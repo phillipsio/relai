@@ -9,13 +9,13 @@ import { Dashboard } from "./pages/Dashboard";
 import { Issues } from "./pages/Issues";
 import { Epics } from "./pages/Epics";
 import { Agents } from "./pages/Agents";
-import { Projects } from "./pages/Projects";
+import { Repos } from "./pages/Repos";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
-function Shell({ api, onProjectSwitch, onLogout }: {
+function Shell({ api, onRepoSwitch, onLogout }: {
   api: WebApiClient;
-  onProjectSwitch: (projectId: string) => void;
+  onRepoSwitch: (repoId: string) => void;
   onLogout: () => void;
 }) {
   const navCls = ({ isActive }: { isActive: boolean }) =>
@@ -44,12 +44,12 @@ function Shell({ api, onProjectSwitch, onLogout }: {
         <NavLink to="/agents" className={navCls}>
           <Bot className="h-4 w-4" /> Agents
         </NavLink>
-        <NavLink to="/projects" className={navCls}>
-          <FolderOpen className="h-4 w-4" /> Projects
+        <NavLink to="/repos" className={navCls}>
+          <FolderOpen className="h-4 w-4" /> Repos
         </NavLink>
         <div className="flex-1" />
         <div className="border-t border-zinc-800 pt-2">
-          <p className="px-3 py-1.5 text-xs text-zinc-600 font-mono truncate">{api.projectId}</p>
+          <p className="px-3 py-1.5 text-xs text-zinc-600 font-mono truncate">{api.repoId}</p>
           <button
             onClick={onLogout}
             className="flex items-center gap-2 w-full rounded-md px-3 py-2 text-sm text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/50 transition-colors"
@@ -65,7 +65,7 @@ function Shell({ api, onProjectSwitch, onLogout }: {
           <Route path="/issues"   element={<Issues api={api} />} />
           <Route path="/epics"    element={<Epics api={api} />} />
           <Route path="/agents"   element={<Agents api={api} />} />
-          <Route path="/projects" element={<Projects api={api} onSwitch={onProjectSwitch} />} />
+          <Route path="/repos" element={<Repos api={api} onSwitch={onRepoSwitch} />} />
         </Routes>
       </main>
     </div>
@@ -83,12 +83,12 @@ export default function App() {
     if (cfg) setApi(new WebApiClient(cfg));
   }
 
-  function handleProjectSwitch(projectId: string) {
-    if (!projectId) { clearConfig(); setApi(null); return; }
+  function handleRepoSwitch(repoId: string) {
+    if (!repoId) { clearConfig(); setApi(null); return; }
     const cfg = getConfig();
     if (cfg) {
-      saveConfig({ ...cfg, projectId });
-      setApi(new WebApiClient({ ...cfg, projectId }));
+      saveConfig({ ...cfg, repoId });
+      setApi(new WebApiClient({ ...cfg, repoId }));
     }
   }
 
@@ -102,7 +102,7 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
-        <Shell api={api} onProjectSwitch={handleProjectSwitch} onLogout={handleLogout} />
+        <Shell api={api} onRepoSwitch={handleRepoSwitch} onLogout={handleLogout} />
       </BrowserRouter>
     </QueryClientProvider>
   );

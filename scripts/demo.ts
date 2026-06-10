@@ -68,14 +68,14 @@ async function main() {
   // ── Cleanup ──────────────────────────────────────────────────────────────
   header("Setup");
 
-  const existing = await api<{ id: string; name: string }[]>("GET", "/projects");
+  const existing = await api<{ id: string; name: string }[]>("GET", "/repos");
   const old = existing.filter((p) => p.name === "demo-project");
   if (old.length > 0) {
     info(`Removing ${old.length} previous demo project(s)...`);
-    for (const p of old) await api("DELETE", `/projects/${p.id}`);
+    for (const p of old) await api("DELETE", `/repos/${p.id}`);
   }
 
-  const project = await api<{ id: string; name: string }>("POST", "/projects", {
+  const project = await api<{ id: string; name: string }>("POST", "/repos", {
     name: "demo-project",
     description: "Live AI Orchestrator demo",
   });
@@ -85,7 +85,7 @@ async function main() {
   type Agent = { id: string; name: string };
 
   const copilot = await api<Agent>("POST", "/agents", {
-    projectId: project.id, name: "copilot",
+    repoId: project.id, name: "copilot",
     role: "worker", specialization: "reviewer", tier: 1,
     domains: ["review", "docs", "tickets", "pr", "code-quality"],
   });
@@ -93,7 +93,7 @@ async function main() {
   ok(`Copilot  ${c.dim}tier-1 · reviewer${c.reset}   ${c.dim}${copilot.id}${c.reset}`);
 
   const claude = await api<Agent>("POST", "/agents", {
-    projectId: project.id, name: "claude",
+    repoId: project.id, name: "claude",
     role: "worker", specialization: "architect", tier: 2,
     domains: ["architecture", "design", "implementation", "planning"],
   });
@@ -115,12 +115,12 @@ async function main() {
 
   // Task 1: code review (→ Copilot tier-1)
   const thread1 = await api<{ id: string }>("POST", "/threads", {
-    projectId: project.id,
+    repoId: project.id,
     title: "Review: api/src/lib/routing.ts",
   });
 
   const task1 = await api<{ id: string; status: string; assignedTo: string }>("POST", "/tasks", {
-    projectId: project.id,
+    repoId: project.id,
     createdBy: claude.id,
     title: "Review routing.ts for correctness",
     description: [
@@ -139,12 +139,12 @@ async function main() {
 
   // Task 2: document the routing module (→ Copilot tier-1)
   const thread2 = await api<{ id: string }>("POST", "/threads", {
-    projectId: project.id,
+    repoId: project.id,
     title: "Docs: routing module",
   });
 
   const task2 = await api<{ id: string; status: string; assignedTo: string }>("POST", "/tasks", {
-    projectId: project.id,
+    repoId: project.id,
     createdBy: claude.id,
     title: "Write docs for the routing module",
     description: [
@@ -166,13 +166,13 @@ async function main() {
   console.log(`  Run this in a new terminal:\n`);
   console.log(`  ${c.dim}GITHUB_TOKEN=<your-token> \\${c.reset}`);
   console.log(`  ${c.dim}AGENT_ID=${copilot.id} \\${c.reset}`);
-  console.log(`  ${c.dim}PROJECT_ID=${project.id} \\${c.reset}`);
+  console.log(`  ${c.dim}REPO_ID=${project.id} \\${c.reset}`);
   console.log(`  ${c.dim}ORCHESTRATOR_API_SECRET=${SECRET} \\${c.reset}`);
   console.log(`  ${c.dim}REPO_PATH=$(pwd) \\${c.reset}`);
   console.log(`  ${c.cyan}pnpm --filter @getrelai/copilot-worker dev${c.reset}`);
 
   console.log(`\n  Register Claude Code as tier-2 (run in your Claude Code session):`);
-  console.log(`  ${c.dim}AGENT_ID=${claude.id}   PROJECT_ID=${project.id}${c.reset}`);
+  console.log(`  ${c.dim}AGENT_ID=${claude.id}   REPO_ID=${project.id}${c.reset}`);
 
   console.log(`\n  Watch Threads in the UI — Copilot will pick up both tasks within 15s.\n`);
 }

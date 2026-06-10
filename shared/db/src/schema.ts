@@ -44,7 +44,7 @@ export const users = pgTable("users", {
 
 // ── Projects ────────────────────────────────────────────────────────────────
 
-export const projects = pgTable("projects", {
+export const repos = pgTable("repos", {
   id:          text("id").primaryKey(),
   name:        text("name").notNull(),
   // Tenant owner for hosted deployments. Null for self-hosted (single-tenant)
@@ -68,7 +68,7 @@ export const projects = pgTable("projects", {
 
 export const agents = pgTable("agents", {
   id:             text("id").primaryKey(),
-  projectId:      text("project_id").references(() => projects.id).notNull(),
+  repoId:      text("repo_id").references(() => repos.id).notNull(),
   name:           text("name").notNull(),
   role:           agentRoleEnum("role").notNull(),
   specialization: text("specialization"),   // e.g. "architect", "writer", "reviewer" — user-defined, nullable
@@ -101,7 +101,7 @@ export const tokens = pgTable("tokens", {
 
 export const invites = pgTable("invites", {
   id:                     text("id").primaryKey(),
-  projectId:              text("project_id").references(() => projects.id, { onDelete: "cascade" }).notNull(),
+  repoId:              text("repo_id").references(() => repos.id, { onDelete: "cascade" }).notNull(),
   codeHash:               text("code_hash").notNull().unique(),
   createdBy:              text("created_by").references(() => agents.id),
   suggestedName:          text("suggested_name"),
@@ -117,7 +117,7 @@ export const invites = pgTable("invites", {
 
 export const threads = pgTable("threads", {
   id:        text("id").primaryKey(),
-  projectId: text("project_id").references(() => projects.id).notNull(),
+  repoId: text("repo_id").references(() => repos.id).notNull(),
   title:     text("title").notNull(),
   type:      text("type"),      // null = operational thread, "plan" = collaborative planning (an "Epic")
   status:    text("status").notNull().default("open"),  // "open" | "concluded"
@@ -147,7 +147,7 @@ export const messages = pgTable("messages", {
 
 export const tasks = pgTable("tasks", {
   id:          text("id").primaryKey(),
-  projectId:   text("project_id").references(() => projects.id).notNull(),
+  repoId:   text("repo_id").references(() => repos.id).notNull(),
   title:       text("title").notNull(),
   description: text("description").notNull(),
   status:      taskStatusEnum("status").notNull().default("pending"),
@@ -255,7 +255,7 @@ export const verificationLog = pgTable("verification_log", {
 // missed since their last read. SSE remains the live channel; this is history.
 export const events = pgTable("events", {
   id:         text("id").primaryKey(),
-  projectId:  text("project_id").references(() => projects.id, { onDelete: "cascade" }).notNull(),
+  repoId:  text("repo_id").references(() => repos.id, { onDelete: "cascade" }).notNull(),
   kind:       text("kind").notNull(),
   targetType: text("target_type").notNull(),  // "thread" | "task" | "agent"
   targetId:   text("target_id").notNull(),

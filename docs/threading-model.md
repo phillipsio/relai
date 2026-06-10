@@ -139,7 +139,7 @@ The principle: **plan threads are broad, task threads are tight.**
 
 | Thread kind | Default audience | Purpose |
 |---|---|---|
-| Plan | Project-wide. Every (online) agent can see and post. | Divergent input, decisions, cross-cutting coordination. |
+| Plan | Repo-wide. Every (online) agent can see and post. | Divergent input, decisions, cross-cutting coordination. |
 | Task | Scoped to participants: assignee, reviewer, creator, plus opt-in. | Execution coordination for one task. |
 
 Corollary: task-level messages must **not** fan out to the plan thread. Give a
@@ -205,7 +205,7 @@ ad-hoc tasks without a plan still work.
 ### Sketch (not a commitment)
 
 - `threads.kind`: `plan | task` (today's `type` is `null | "plan"`; formalize it).
-  Plan threads default to project-wide subscription; task threads default to the
+  Plan threads default to repo-wide subscription; task threads default to the
   participant set.
 - `threads.taskId` (nullable), `tasks.threadId` (nullable), `tasks.planThreadId`
   (nullable).
@@ -232,7 +232,7 @@ ad-hoc tasks without a plan still work.
   channel goes quiet and people drift back to the plan thread (the exact failure
   we are fixing). This is the same gap hit in `relai watch`: agents were never
   auto-subscribed to their own target.
-- **Notification overload.** Project-wide plan subscription can spam everyone.
+- **Notification overload.** Repo-wide plan subscription can spam everyone.
   Lean on `relai watch --kinds` and per-thread mute, and keep task chatter off
   the plan thread by construction.
 
@@ -251,14 +251,14 @@ ad-hoc tasks without a plan still work.
 
 ## Open questions for the owner
 
-1. Should plan threads auto-subscribe **all** project agents, or only **online**
+1. Should plan threads auto-subscribe **all** repo agents, or only **online**
    ones, or be opt-in-but-broadly-discoverable?
 2. Task thread creation: **lazy** (on first message / assignment, recommended) or
    **eager** (every task gets one)?
 3. Should `conclude_plan` stay a pure discussion checkpoint, or also **emit
    candidate tasks** for the orchestrator to confirm (tighter plan-to-task
    handoff, more product surface)?
-4. Do we need an explicit long-lived **project coordination** thread, or is "a
+4. Do we need an explicit long-lived **repo coordination** thread, or is "a
    plan thread that stays open" enough? (I lean: enough.)
 
 ## Open thinking (evolving, nothing solidified)
@@ -337,7 +337,7 @@ Consequences to sit with (not decided):
   throughput and can go down (a worker ran out of credits this session; the same
   can hit the orchestrator, and then nothing commits). Real teams delegate: a
   child deliberation can have its own shepherd, so "orchestrator" may be
-  per-subtree, not one-per-project. Ties to the lead-orchestrator/role-collision
+  per-subtree, not one-per-repo. Ties to the lead-orchestrator/role-collision
   backlog item.
 - **Balance.** The gate is at the commitment boundary, not inside execution. Once
   a worker owns a task, they have autonomy within it and its thread; the
@@ -347,7 +347,7 @@ Consequences to sit with (not decided):
 ### Fluid positions (staffing layer)
 
 Positions may need to be fluid: re-staffed when agents drop out or fail, and
-expanded when projects or plans grow. The reframe that makes this clean: a
+expanded when repos or plans grow. The reframe that makes this clean: a
 position is a hat, not an identity. Separate the durable **structure** (the
 deliberation/commitment tree) from a fluid **staffing layer** on top (who
 shepherds plan X, who owns commitment Y). The tree persists; the bindings move.
@@ -356,7 +356,7 @@ Both triggers are then the same operation, "re-bind assignments":
 
 - agent drops out / fails → re-staff its boxes (promote a successor shepherd,
   re-pool its commitments)
-- plan / project grows → add boxes (sub-plans) and staff them (delegate
+- plan / repo grows → add boxes (sub-plans) and staff them (delegate
   sub-shepherds)
 
 Same mechanism for failure-resilience and for scale. relai already has much of the

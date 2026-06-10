@@ -1,7 +1,7 @@
 export interface WebConfig {
   apiUrl: string;
   apiSecret: string;
-  projectId: string;
+  repoId: string;
 }
 
 const KEY = "relai_config";

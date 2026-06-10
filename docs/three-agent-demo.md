@@ -44,10 +44,10 @@ relai init   # API URL = http://localhost:3010, paste API_SECRET
 From the orchestrator's terminal:
 
 ```bash
-relai project invite -n claude-worker -s writer --ttl 1h
+relai repo invite -n claude-worker -s writer --ttl 1h
 # → prints a code, e.g. inv_xxx
 
-relai project invite -n claude-reviewer -s reviewer --ttl 1h
+relai repo invite -n claude-reviewer -s reviewer --ttl 1h
 # → prints a second code
 ```
 
@@ -81,7 +81,7 @@ In a dedicated terminal:
 cd ~/clones/relai-worker
 RELAI_CONFIG_DIR=~/.config/relai-worker \
   AGENT_ID=$(jq -r .agentId ~/.config/relai-worker/config.json) \
-  PROJECT_ID=$(jq -r .projectId ~/.config/relai-worker/config.json) \
+  REPO_ID=$(jq -r .repoId ~/.config/relai-worker/config.json) \
   CLAUDE_WORKER_SPECIALIZATION=writer \
   pnpm --filter @getrelai/claude-worker dev
 ```
@@ -93,7 +93,7 @@ The worker now polls `get_my_tasks` on its interval, spawning a fresh headless C
 From the orchestrator (the main repo terminal):
 
 ```bash
-# Confirm the worker and reviewer are visible in the project
+# Confirm the worker and reviewer are visible in the repo
 relai agents
 
 # Assign work to the worker, gate completion on the reviewer's approval.

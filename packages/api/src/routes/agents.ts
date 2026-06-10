@@ -1,14 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray } from "drizzle-orm";
-import { agents, tokens, projects } from "@getrelai/db";
+import { agents, tokens, repos } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
-import { assertProjectAccess, assertAgentAccess } from "../lib/ownership.js";
+import { assertRepoAccess, assertAgentAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 const registerSchema = z.object({
-  projectId:      z.string(),
+  repoId:      z.string(),
   name:           z.string().min(1),
   role:           z.enum(["orchestrator", "worker"]),
   specialization: z.string().optional(),
@@ -23,12 +23,12 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     const body = registerSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    const access = await assertProjectAccess(request, db, body.data.projectId);
-    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
+    const access = await assertRepoAccess(request, db, body.data.repoId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
     const [agent] = await db.insert(agents).values({
       id:             newId("agent"),
-      projectId:      body.data.projectId,
+      repoId:      body.data.repoId,
       name:           body.data.name,
       role:           body.data.role,
       specialization: body.data.specialization ?? null,
@@ -90,32 +90,32 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     return reply.status(204).send();
   });
 
-  fastify.get<{ Querystring: { projectId?: string } }>("/agents", async (request, reply) => {
-    const { projectId } = request.query;
+  fastify.get<{ Querystring: { repoId?: string } }>("/agents", async (request, reply) => {
+    const { repoId } = request.query;
 
     // Per-agent caller: only their own project's agents.
     if (request.agent) {
-      const rows = await db.select().from(agents).where(eq(agents.projectId, request.agent.projectId));
+      const rows = await db.select().from(agents).where(eq(agents.repoId, request.agent.repoId));
       return { data: rows };
     }
 
-    // Service-admin: filter to projects owned by this tenant.
+    // Service-admin: filter to repos owned by this tenant.
     if (request.ownerId) {
-      const ownedProjectIds = (await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.ownerId, request.ownerId))).map((p) => p.id);
-      if (ownedProjectIds.length === 0) return { data: [] };
-      const where = projectId
-        ? and(inArray(agents.projectId, ownedProjectIds), eq(agents.projectId, projectId))!
-        : inArray(agents.projectId, ownedProjectIds);
+      const ownedRepoIds = (await db
+        .select({ id: repos.id })
+        .from(repos)
+        .where(eq(repos.ownerId, request.ownerId))).map((p) => p.id);
+      if (ownedRepoIds.length === 0) return { data: [] };
+      const where = repoId
+        ? and(inArray(agents.repoId, ownedRepoIds), eq(agents.repoId, repoId))!
+        : inArray(agents.repoId, ownedRepoIds);
       const rows = await db.select().from(agents).where(where);
       return { data: rows };
     }
 
     // Legacy API_SECRET: full visibility.
-    const rows = projectId
-      ? await db.select().from(agents).where(eq(agents.projectId, projectId))
+    const rows = repoId
+      ? await db.select().from(agents).where(eq(agents.repoId, repoId))
       : await db.select().from(agents);
     return { data: rows };
   });

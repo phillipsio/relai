@@ -30,7 +30,7 @@ function writeMcpConfig(): string {
           API_URL: config.apiUrl,
           API_SECRET: config.apiSecret,
           AGENT_ID: config.agentId,
-          PROJECT_ID: config.projectId,
+          REPO_ID: config.repoId,
         },
       },
     },

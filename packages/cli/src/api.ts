@@ -27,24 +27,24 @@ export class CliApiClient {
     return json;
   }
 
-  createProject(body: { name: string; description?: string }) {
-    return this.request<{ id: string; name: string }>("POST", "/projects", body);
+  createRepo(body: { name: string; description?: string }) {
+    return this.request<{ id: string; name: string }>("POST", "/repos", body);
   }
 
-  listProjects() {
-    return this.request<ProjectRow[]>("GET", "/projects");
+  listRepos() {
+    return this.request<RepoRow[]>("GET", "/repos");
   }
 
-  getProject(id: string) {
-    return this.request<ProjectRow>("GET", `/projects/${id}`);
+  getRepo(id: string) {
+    return this.request<RepoRow>("GET", `/repos/${id}`);
   }
 
-  updateProject(id: string, body: Partial<Pick<ProjectRow, "name" | "description" | "repoUrl" | "defaultAssignee" | "context">>) {
-    return this.request<ProjectRow>("PUT", `/projects/${id}`, body);
+  updateRepo(id: string, body: Partial<Pick<RepoRow, "name" | "description" | "repoUrl" | "defaultAssignee" | "context">>) {
+    return this.request<RepoRow>("PUT", `/repos/${id}`, body);
   }
 
   createTask(body: {
-    projectId: string;
+    repoId: string;
     createdBy: string;
     title: string;
     description: string;
@@ -62,7 +62,7 @@ export class CliApiClient {
     return this.request<TaskRow>("POST", "/tasks", body);
   }
 
-  async registerAgent(body: { projectId: string; name: string; role: string; specialization?: string; domains: string[] }) {
+  async registerAgent(body: { repoId: string; name: string; role: string; specialization?: string; domains: string[] }) {
     const res = await this.requestRaw<{
       data: { id: string; name: string; specialization?: string };
       token: string;
@@ -79,11 +79,11 @@ export class CliApiClient {
     return this.requestRaw<void>("DELETE", `/tokens/${tokenId}`);
   }
 
-  async createInvite(projectId: string, body: { suggestedName?: string; suggestedSpecialization?: string; ttlSeconds?: number }) {
+  async createInvite(repoId: string, body: { suggestedName?: string; suggestedSpecialization?: string; ttlSeconds?: number }) {
     const res = await this.requestRaw<{
       data: { id: string; expiresAt: string; suggestedName?: string | null; suggestedSpecialization?: string | null };
       code: string;
-    }>("POST", `/projects/${projectId}/invites`, body);
+    }>("POST", `/repos/${repoId}/invites`, body);
     return { invite: res.data, code: res.code };
   }
 
@@ -96,13 +96,13 @@ export class CliApiClient {
     domains?: string[];
   }) {
     const res = await this.requestRaw<{
-      data: { id: string; name: string; projectId: string; specialization?: string | null };
+      data: { id: string; name: string; repoId: string; specialization?: string | null };
       token: string;
     }>("POST", "/auth/accept-invite", body);
     return { agent: res.data, token: res.token };
   }
 
-  getTasks(params: { projectId: string; assignedTo?: string; status?: string }) {
+  getTasks(params: { repoId: string; assignedTo?: string; status?: string }) {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v != null) as [string, string][]
     );
@@ -130,11 +130,11 @@ export class CliApiClient {
     return this.request<TaskRow>("POST", `/tasks/${id}/commit`, body);
   }
 
-  listThreads(projectId: string) {
-    return this.request<ThreadRow[]>("GET", `/threads?projectId=${encodeURIComponent(projectId)}`);
+  listThreads(repoId: string) {
+    return this.request<ThreadRow[]>("GET", `/threads?repoId=${encodeURIComponent(repoId)}`);
   }
 
-  createThread(body: { projectId: string; title: string }) {
+  createThread(body: { repoId: string; title: string }) {
     return this.request<ThreadRow>("POST", "/threads", body);
   }
 
@@ -148,8 +148,8 @@ export class CliApiClient {
     return this.request<MessageRow>("POST", `/threads/${threadId}/messages`, body);
   }
 
-  getUnread(agentId: string, projectId: string) {
-    const qs = new URLSearchParams({ agentId, projectId });
+  getUnread(agentId: string, repoId: string) {
+    const qs = new URLSearchParams({ agentId, repoId });
     return this.request<MessageRow[]>("GET", `/messages/unread?${qs}`);
   }
 
@@ -157,16 +157,16 @@ export class CliApiClient {
     return this.request<unknown>("PUT", `/threads/${threadId}/messages/read`, { agentId });
   }
 
-  getAgents(projectId: string) {
-    return this.request<AgentRow[]>("GET", `/agents?projectId=${encodeURIComponent(projectId)}`);
+  getAgents(repoId: string) {
+    return this.request<AgentRow[]>("GET", `/agents?repoId=${encodeURIComponent(repoId)}`);
   }
 
   heartbeat(agentId: string) {
     return this.request<unknown>("PUT", `/agents/${agentId}/heartbeat`, {});
   }
 
-  getSessionStart(projectId?: string) {
-    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  getSessionStart(repoId?: string) {
+    const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
     return this.request<SessionStart>("GET", `/session/start${qs}`);
   }
 
@@ -184,7 +184,7 @@ export interface SessionStart {
     workerType: string | null;
     repoPath: string | null;
   };
-  project: {
+  repo: {
     id: string;
     name: string;
     context: string | null;
@@ -217,7 +217,7 @@ export interface TaskRow {
 export interface ThreadRow {
   id: string;
   title: string;
-  projectId: string;
+  repoId: string;
   createdAt: string;
 }
 
@@ -242,7 +242,7 @@ export interface AgentRow {
   lastSeenAt: string;
 }
 
-export interface ProjectRow {
+export interface RepoRow {
   id: string;
   name: string;
   description?: string | null;

@@ -18,7 +18,7 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -26,21 +26,21 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects", headers: ADMIN,
+    method: "POST", url: "/repos", headers: ADMIN,
     body: JSON.stringify({ name: "__test__ verify" }),
   });
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const a = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
-    body: JSON.stringify({ projectId, name: "verify-agent", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "verify-agent", role: "worker" }),
   });
   agentId = a.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -49,7 +49,7 @@ async function makePendingVerificationTask(verifyCommand: string, verifyTimeoutM
   const create = await app.inject({
     method: "POST", url: "/tasks", headers: ADMIN,
     body: JSON.stringify({
-      projectId, createdBy: agentId, title: "verify-test", description: "x",
+      repoId, createdBy: agentId, title: "verify-test", description: "x",
       assignedTo: agentId, verifyCommand,
       ...(verifyTimeoutMs !== undefined ? { verifyTimeoutMs } : {}),
     }),
@@ -74,7 +74,7 @@ describe("verifyPending", () => {
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
 
-    await verifyPending(db, projectId, async () => ({
+    await verifyPending(db, repoId, async () => ({
       exitCode: 0, stdout: "ok", stderr: "", durationMs: 12, timedOut: false,
     }));
 
@@ -100,7 +100,7 @@ describe("verifyPending", () => {
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
 
-    await verifyPending(db, projectId, async () => ({
+    await verifyPending(db, repoId, async () => ({
       exitCode: 2, stdout: "", stderr: "boom", durationMs: 7, timedOut: false,
     }));
 
@@ -125,7 +125,7 @@ describe("verifyPending", () => {
     const db = createDb(DB_URL);
 
     const observed: Array<{ command: string; timeoutMs: number | undefined }> = [];
-    await verifyPending(db, projectId, async (command, _cwd, timeoutMs) => {
+    await verifyPending(db, repoId, async (command, _cwd, timeoutMs) => {
       observed.push({ command, timeoutMs });
       return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
     });
@@ -150,7 +150,7 @@ describe("verifyPending", () => {
       const create = await app.inject({
         method: "POST", url: "/tasks", headers: ADMIN,
         body: JSON.stringify({
-          projectId, createdBy: agentId, title: "fx", description: "x",
+          repoId, createdBy: agentId, title: "fx", description: "x",
           assignedTo: agentId,
           verifyKind: "file_exists",
           verifyPath: "artifact.txt",
@@ -165,7 +165,7 @@ describe("verifyPending", () => {
 
       const db = createDb(DB_URL);
       let shellExecCalled = false;
-      await verifyPending(db, projectId, async () => {
+      await verifyPending(db, repoId, async () => {
         shellExecCalled = true;
         return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
       });
@@ -187,7 +187,7 @@ describe("verifyPending", () => {
       const create = await app.inject({
         method: "POST", url: "/tasks", headers: ADMIN,
         body: JSON.stringify({
-          projectId, createdBy: agentId, title: "fx-miss", description: "x",
+          repoId, createdBy: agentId, title: "fx-miss", description: "x",
           assignedTo: agentId,
           verifyKind: "file_exists",
           verifyPath: "ghost.txt",
@@ -201,7 +201,7 @@ describe("verifyPending", () => {
       });
 
       const db = createDb(DB_URL);
-      await verifyPending(db, projectId);
+      await verifyPending(db, repoId);
 
       const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
       expect(row.status).toBe("assigned");
@@ -216,14 +216,14 @@ describe("verifyPending", () => {
   it("kind=thread_concluded passes when the referenced thread is concluded", async () => {
     const t = await app.inject({
       method: "POST", url: "/threads", headers: ADMIN,
-      body: JSON.stringify({ projectId, title: "plan" }),
+      body: JSON.stringify({ repoId, title: "plan" }),
     });
     const threadId = t.json().data.id;
 
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "tc", description: "x",
+        repoId, createdBy: agentId, title: "tc", description: "x",
         assignedTo: agentId,
         verifyKind:     "thread_concluded",
         verifyThreadId: threadId,
@@ -243,7 +243,7 @@ describe("verifyPending", () => {
 
     const db = createDb(DB_URL);
     let shellExecCalled = false;
-    await verifyPending(db, projectId, async () => {
+    await verifyPending(db, repoId, async () => {
       shellExecCalled = true;
       return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
     });
@@ -259,14 +259,14 @@ describe("verifyPending", () => {
   it("kind=thread_concluded fails when the thread is still open", async () => {
     const t = await app.inject({
       method: "POST", url: "/threads", headers: ADMIN,
-      body: JSON.stringify({ projectId, title: "open-plan" }),
+      body: JSON.stringify({ repoId, title: "open-plan" }),
     });
     const threadId = t.json().data.id;
 
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "tc-open", description: "x",
+        repoId, createdBy: agentId, title: "tc-open", description: "x",
         assignedTo: agentId,
         verifyKind:     "thread_concluded",
         verifyThreadId: threadId,
@@ -279,7 +279,7 @@ describe("verifyPending", () => {
     });
 
     const db = createDb(DB_URL);
-    await verifyPending(db, projectId);
+    await verifyPending(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("assigned");
@@ -291,14 +291,14 @@ describe("verifyPending", () => {
     // Reviewer agent in the same project.
     const reviewer = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ projectId, name: "rev-approve", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-approve", role: "worker" }),
     });
     const reviewerId = reviewer.json().data.id;
 
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "ra", description: "x",
+        repoId, createdBy: agentId, title: "ra", description: "x",
         assignedTo: agentId,
         verifyKind:       "reviewer_agent",
         verifyReviewerId: reviewerId,
@@ -315,7 +315,7 @@ describe("verifyPending", () => {
     // First tick — no decision yet → row should remain pending_verification
     // with verifyingAt cleared, no log row written.
     let shellExecCalled = false;
-    await verifyPending(db, projectId, async () => {
+    await verifyPending(db, repoId, async () => {
       shellExecCalled = true;
       return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
     });
@@ -333,7 +333,7 @@ describe("verifyPending", () => {
       .set({ metadata: { review: { decision: "approve", reviewerId, decidedAt: new Date().toISOString() } } })
       .where(eq(tasks.id, taskId));
 
-    await verifyPending(db, projectId);
+    await verifyPending(db, repoId);
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("completed");
     const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
@@ -344,14 +344,14 @@ describe("verifyPending", () => {
   it("kind=reviewer_agent fails when a reject decision is recorded", async () => {
     const reviewer = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ projectId, name: "rev-reject", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-reject", role: "worker" }),
     });
     const reviewerId = reviewer.json().data.id;
 
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "ra-rej", description: "x",
+        repoId, createdBy: agentId, title: "ra-rej", description: "x",
         assignedTo: agentId,
         verifyKind:       "reviewer_agent",
         verifyReviewerId: reviewerId,
@@ -368,7 +368,7 @@ describe("verifyPending", () => {
       .set({ metadata: { review: { decision: "reject", reviewerId, decidedAt: new Date().toISOString(), note: "needs tests" } } })
       .where(eq(tasks.id, taskId));
 
-    await verifyPending(db, projectId);
+    await verifyPending(db, repoId);
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("assigned");
     const meta = row.metadata as Record<string, unknown>;
@@ -378,13 +378,13 @@ describe("verifyPending", () => {
   it("emits task.review_overdue once when a reviewer task awaits past the threshold", async () => {
     const reviewer = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ projectId, name: "rev-overdue", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "rev-overdue", role: "worker" }),
     });
     const reviewerId = reviewer.json().data.id;
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "ra-overdue", description: "x",
+        repoId, createdBy: agentId, title: "ra-overdue", description: "x",
         assignedTo: agentId, verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
       }),
     });
@@ -402,8 +402,8 @@ describe("verifyPending", () => {
     process.env.REVIEW_OVERDUE_MS = "0"; // any wait counts as overdue
     try {
       const db = createDb(DB_URL);
-      await verifyPending(db, projectId); // emits + sets the flag
-      await verifyPending(db, projectId); // flag set → must NOT re-emit
+      await verifyPending(db, repoId); // emits + sets the flag
+      await verifyPending(db, repoId); // flag set → must NOT re-emit
 
       const overdue = captured.filter((e) => e.kind === "task.review_overdue" && e.targetId === taskId);
       expect(overdue).toHaveLength(1);
@@ -431,7 +431,7 @@ describe("verifyPending", () => {
       .where(eq(tasks.id, taskId));
 
     let execCalled = false;
-    await verifyPending(db, projectId, async () => {
+    await verifyPending(db, repoId, async () => {
       execCalled = true;
       return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
     });

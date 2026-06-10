@@ -19,7 +19,7 @@ export type TaskPriority = "low" | "normal" | "high" | "urgent";
 
 export interface Task {
   id: string;
-  projectId: string;
+  repoId: string;
   title: string;
   description: string;
   status: TaskStatus;
@@ -56,7 +56,7 @@ export interface Message {
 
 export interface Thread {
   id: string;
-  projectId: string;
+  repoId: string;
   title: string;
   createdAt: Date;
 }
@@ -71,8 +71,8 @@ export interface RoutingDecision {
   rationale: string;
 }
 
-// Projects
-export interface Project {
+// Repos
+export interface Repo {
   id: string;
   name: string;
   repoUrl?: string;

@@ -16,7 +16,7 @@ function evt(overrides: Partial<WatchEvent> = {}): WatchEvent {
   return {
     id: "evt_1",
     kind: "task.created",
-    projectId: "proj_1",
+    repoId: "proj_1",
     targetType: "task",
     targetId: "task_1",
     payload: {},

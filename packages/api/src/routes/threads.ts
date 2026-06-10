@@ -1,22 +1,22 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, sql, and, inArray } from "drizzle-orm";
-import { threads, messages, tasks, projects } from "@getrelai/db";
+import { threads, messages, tasks, repos } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish } from "../lib/events.js";
-import { assertProjectAccess } from "../lib/ownership.js";
+import { assertRepoAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 async function loadThreadScoped(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
   const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
   if (!thread) return { ok: false as const, status: 404 as const };
-  const access = await assertProjectAccess(request, db, thread.projectId);
+  const access = await assertRepoAccess(request, db, thread.repoId);
   if (!access.ok) return { ok: false as const, status: 404 as const };
   return { ok: true as const, thread };
 }
 
 const createSchema = z.object({
-  projectId: z.string(),
+  repoId: z.string(),
   title: z.string().min(1),
   type: z.enum(["plan"]).optional(),
 });
@@ -30,12 +30,12 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     const body = createSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    const access = await assertProjectAccess(request, db, body.data.projectId);
-    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
+    const access = await assertRepoAccess(request, db, body.data.repoId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
     const [thread] = await db.insert(threads).values({
       id: newId("thread"),
-      projectId: body.data.projectId,
+      repoId: body.data.repoId,
       title: body.data.title,
       type: body.data.type ?? null,
     }).returning();
@@ -43,7 +43,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     await publish(db, {
       id:         newId("evt"),
       kind:       "thread.created",
-      projectId:  thread.projectId,
+      repoId:  thread.repoId,
       targetType: "thread",
       targetId:   thread.id,
       payload:    { thread },
@@ -53,22 +53,22 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     return reply.status(201).send({ data: thread });
   });
 
-  fastify.get<{ Querystring: { projectId?: string; type?: string } }>("/threads", async (request, reply) => {
-    const { projectId, type } = request.query;
+  fastify.get<{ Querystring: { repoId?: string; type?: string } }>("/threads", async (request, reply) => {
+    const { repoId, type } = request.query;
 
     const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof inArray>> = [];
-    if (projectId) conditions.push(eq(threads.projectId, projectId));
+    if (repoId) conditions.push(eq(threads.repoId, repoId));
     if (type)      conditions.push(eq(threads.type, type));
 
     if (request.agent) {
-      conditions.push(eq(threads.projectId, request.agent.projectId));
+      conditions.push(eq(threads.repoId, request.agent.repoId));
     } else if (request.ownerId) {
-      const ownedProjectIds = (await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.ownerId, request.ownerId))).map((p) => p.id);
-      if (ownedProjectIds.length === 0) return { data: [] };
-      conditions.push(inArray(threads.projectId, ownedProjectIds));
+      const ownedRepoIds = (await db
+        .select({ id: repos.id })
+        .from(repos)
+        .where(eq(repos.ownerId, request.ownerId))).map((p) => p.id);
+      if (ownedRepoIds.length === 0) return { data: [] };
+      conditions.push(inArray(threads.repoId, ownedRepoIds));
     }
 
     const where = conditions.length === 0
@@ -81,7 +81,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       .select({
         id: threads.id,
         title: threads.title,
-        projectId: threads.projectId,
+        repoId: threads.repoId,
         type: threads.type,
         status: threads.status,
         summary: threads.summary,
@@ -123,7 +123,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     await publish(db, {
       id:         newId("evt"),
       kind:       "thread.concluded",
-      projectId:  thread.projectId,
+      repoId:  thread.repoId,
       targetType: "thread",
       targetId:   thread.id,
       payload:    { thread },

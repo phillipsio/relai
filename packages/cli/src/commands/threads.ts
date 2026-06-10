@@ -10,7 +10,7 @@ export async function threadsCommand() {
   const spinner = ora("Fetching threads...").start();
 
   try {
-    const threads = await client.listThreads(config.projectId);
+    const threads = await client.listThreads(config.repoId);
     spinner.stop();
 
     if (threads.length === 0) {
@@ -38,7 +38,7 @@ export async function threadNewCommand(title: string) {
   const spinner = ora("Creating thread...").start();
 
   try {
-    const thread = await client.createThread({ projectId: config.projectId, title });
+    const thread = await client.createThread({ repoId: config.repoId, title });
     spinner.succeed(chalk.green(`Thread created: ${chalk.bold(thread.id)}`));
     console.log(chalk.dim(`  "${thread.title}"`));
   } catch (err) {

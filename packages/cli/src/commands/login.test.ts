@@ -8,7 +8,7 @@ import { loginCommand } from "./invite.js";
 const REPO_URL = "git@github.com:phillipsio/relai.git";
 const OTHER_URL = "git@github.com:phillipsio/other.git";
 
-interface MockProject {
+interface MockRepo {
   id: string;
   name: string;
   repoUrl: string | null;
@@ -17,12 +17,12 @@ interface MockProject {
 function setupFetchMock(opts: {
   agentId?: string;
   agentName?: string;
-  projectId?: string;
-  project: MockProject;
+  repoId?: string;
+  repo: MockRepo;
 }) {
   const agentId = opts.agentId ?? "agent_a";
   const agentName = opts.agentName ?? "alice";
-  const projectId = opts.projectId ?? opts.project.id;
+  const repoId = opts.repoId ?? opts.repo.id;
 
   const fetchMock = vi.fn(async (url: string) => {
     const u = new URL(url);
@@ -30,16 +30,16 @@ function setupFetchMock(opts: {
       return new Response(JSON.stringify({
         data: {
           agent: { id: agentId, name: agentName, specialization: null, workerType: null, repoPath: null },
-          project: { id: projectId, name: opts.project.name, context: null, defaultAssignee: null },
+          repo: { id: repoId, name: opts.repo.name, context: null, defaultAssignee: null },
           tasks: [],
           unreadMessages: [],
           openThreads: [],
         },
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (u.pathname === `/projects/${projectId}`) {
+    if (u.pathname === `/repos/${repoId}`) {
       return new Response(JSON.stringify({
-        data: { id: opts.project.id, name: opts.project.name, repoUrl: opts.project.repoUrl, createdAt: new Date().toISOString() },
+        data: { id: opts.repo.id, name: opts.repo.name, repoUrl: opts.repo.repoUrl, createdAt: new Date().toISOString() },
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ error: { code: "NOT_FOUND", message: `unmocked ${u.pathname}` } }), { status: 404 });
@@ -86,7 +86,7 @@ describe("loginCommand", () => {
 
   it("succeeds from a clean clone of the right repo and writes agents.json", async () => {
     gitInit(workdir, REPO_URL);
-    setupFetchMock({ project: { id: "proj_1", name: "relai", repoUrl: REPO_URL } });
+    setupFetchMock({ repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL } });
 
     await loginCommand({ token: "t_abc", api: "http://localhost:3010", workingDir: workdir });
 
@@ -101,7 +101,7 @@ describe("loginCommand", () => {
 
   it("refuses login when CWD is an unrelated repo", async () => {
     gitInit(workdir, OTHER_URL);
-    setupFetchMock({ project: { id: "proj_1", name: "relai", repoUrl: REPO_URL } });
+    setupFetchMock({ repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL } });
 
     await expect(
       loginCommand({ token: "t_abc", api: "http://localhost:3010", workingDir: workdir }),
@@ -112,8 +112,8 @@ describe("loginCommand", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
-  it("refuses login when CWD is not a git repo and project has a repoUrl", async () => {
-    setupFetchMock({ project: { id: "proj_1", name: "relai", repoUrl: REPO_URL } });
+  it("refuses login when CWD is not a git repo and repo has a repoUrl", async () => {
+    setupFetchMock({ repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL } });
 
     await expect(
       loginCommand({ token: "t_abc", api: "http://localhost:3010", workingDir: workdir }),
@@ -128,14 +128,14 @@ describe("loginCommand", () => {
     gitInit(workdir, REPO_URL);
     setupFetchMock({
       agentId: "agent_a", agentName: "alice",
-      project: { id: "proj_1", name: "relai", repoUrl: REPO_URL },
+      repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL },
     });
     await loginCommand({ token: "t_abc", api: "http://localhost:3010", workingDir: workdir });
 
     // Now second agent tries
     setupFetchMock({
       agentId: "agent_b", agentName: "bob",
-      project: { id: "proj_1", name: "relai", repoUrl: REPO_URL },
+      repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL },
     });
     errSpy.mockClear();
 
@@ -157,14 +157,14 @@ describe("loginCommand", () => {
     gitInit(workdir, REPO_URL);
     setupFetchMock({
       agentId: "agent_a", agentName: "alice",
-      project: { id: "proj_1", name: "relai", repoUrl: REPO_URL },
+      repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL },
     });
     await loginCommand({ token: "t_abc", api: "http://localhost:3010", workingDir: workdir });
 
     // Re-login same agent, different token
     setupFetchMock({
       agentId: "agent_a", agentName: "alice",
-      project: { id: "proj_1", name: "relai", repoUrl: REPO_URL },
+      repo: { id: "repo_1", name: "relai", repoUrl: REPO_URL },
     });
     await loginCommand({ token: "t_xyz", api: "http://localhost:3010", workingDir: workdir });
 

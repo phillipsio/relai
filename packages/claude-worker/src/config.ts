@@ -2,7 +2,7 @@ export type Specialization = "reviewer" | "architect" | "writer" | "tester" | "d
 
 export interface ClaudeWorkerConfig {
   agentId: string;
-  projectId: string;
+  repoId: string;
   apiUrl: string;
   apiSecret: string;
   repoPath: string;
@@ -15,7 +15,7 @@ export interface ClaudeWorkerConfig {
 }
 
 export function loadConfig(): ClaudeWorkerConfig {
-  const required = ["AGENT_ID", "PROJECT_ID", "API_SECRET", "REPO_PATH"];
+  const required = ["AGENT_ID", "REPO_ID", "API_SECRET", "REPO_PATH"];
   const missing = required.filter((k) => !process.env[k]);
   if (missing.length) throw new Error(`Missing required env vars: ${missing.join(", ")}`);
 
@@ -27,7 +27,7 @@ export function loadConfig(): ClaudeWorkerConfig {
 
   return {
     agentId:        process.env.AGENT_ID!,
-    projectId:      process.env.PROJECT_ID!,
+    repoId:      process.env.REPO_ID!,
     apiUrl:         process.env.API_URL ?? "http://localhost:3010",
     apiSecret:      process.env.API_SECRET!,
     repoPath:       process.env.REPO_PATH!,

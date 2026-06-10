@@ -16,7 +16,7 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let agentAId: string;
 let agentBId: string;
 
@@ -25,27 +25,27 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects", headers: ADMIN,
+    method: "POST", url: "/repos", headers: ADMIN,
     body: JSON.stringify({ name: "__test__ notif" }),
   });
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const a = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
-    body: JSON.stringify({ projectId, name: "notif-a", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "notif-a", role: "worker" }),
   });
   agentAId = a.json().data.id;
 
   const b = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
-    body: JSON.stringify({ projectId, name: "notif-b", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "notif-b", role: "worker" }),
   });
   agentBId = b.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -164,7 +164,7 @@ describe("webhook delivery", () => {
 
     const t = await app.inject({
       method: "POST", url: "/threads", headers: ADMIN,
-      body: JSON.stringify({ projectId, title: "delivery thread" }),
+      body: JSON.stringify({ repoId, title: "delivery thread" }),
     });
     threadId = t.json().data.id;
 
@@ -186,7 +186,7 @@ describe("webhook delivery", () => {
   const event = (): AppEvent => ({
     id:         "evt_test_1",
     kind:       "message.posted",
-    projectId,
+    repoId,
     targetType: "thread",
     targetId:   threadId,
     payload:    { hello: "world" },

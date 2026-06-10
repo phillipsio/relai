@@ -37,7 +37,7 @@ export class ApiClient {
   }
 
   // Tasks
-  getTasks(params: { projectId?: string; status?: string; assignedTo?: string }) {
+  getTasks(params: { repoId?: string; status?: string; assignedTo?: string }) {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
     return this.request<unknown[]>("GET", `/tasks?${qs}`);
   }
@@ -47,7 +47,7 @@ export class ApiClient {
   }
 
   createTask(body: {
-    projectId: string;
+    repoId: string;
     createdBy: string;
     title: string;
     description: string;
@@ -117,8 +117,8 @@ export class ApiClient {
     return this.request<unknown[]>("GET", `/threads/${threadId}/messages`);
   }
 
-  getUnread(agentId: string, projectId: string) {
-    return this.request<unknown[]>("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}&projectId=${encodeURIComponent(projectId)}`);
+  getUnread(agentId: string, repoId: string) {
+    return this.request<unknown[]>("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}&repoId=${encodeURIComponent(repoId)}`);
   }
 
   markRead(threadId: string, agentId: string) {
@@ -126,7 +126,7 @@ export class ApiClient {
   }
 
   // Agents
-  registerAgent(body: { projectId: string; name: string; role: string; domains?: string[] }) {
+  registerAgent(body: { repoId: string; name: string; role: string; domains?: string[] }) {
     return this.request<unknown>("POST", "/agents", body);
   }
 
@@ -134,17 +134,17 @@ export class ApiClient {
     return this.request<unknown>("PUT", `/agents/${agentId}/heartbeat`, {});
   }
 
-  listAgents(projectId: string) {
-    return this.request<unknown[]>("GET", `/agents?projectId=${encodeURIComponent(projectId)}`);
+  listAgents(repoId: string) {
+    return this.request<unknown[]>("GET", `/agents?repoId=${encodeURIComponent(repoId)}`);
   }
 
   // Threads
-  createThread(body: { projectId: string; title: string; type?: string }) {
+  createThread(body: { repoId: string; title: string; type?: string }) {
     return this.request<unknown>("POST", "/threads", body);
   }
 
-  listThreads(projectId: string, type?: string) {
-    const qs = new URLSearchParams({ projectId });
+  listThreads(repoId: string, type?: string) {
+    const qs = new URLSearchParams({ repoId });
     if (type) qs.set("type", type);
     return this.request<unknown[]>("GET", `/threads?${qs}`);
   }
@@ -154,8 +154,8 @@ export class ApiClient {
   }
 
   // Session
-  getSessionStart(projectId?: string) {
-    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  getSessionStart(repoId?: string) {
+    const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
     return this.request<unknown>("GET", `/session/start${qs}`);
   }
 }

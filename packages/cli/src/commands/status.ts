@@ -11,9 +11,9 @@ export async function statusCommand() {
 
   try {
     const [agents, tasks, unread] = await Promise.all([
-      client.getAgents(config.projectId),
-      client.getTasks({ projectId: config.projectId }),
-      client.getUnread(config.agentId, config.projectId),
+      client.getAgents(config.repoId),
+      client.getTasks({ repoId: config.repoId }),
+      client.getUnread(config.agentId, config.repoId),
     ]);
     spinner.stop();
 
@@ -21,7 +21,7 @@ export async function statusCommand() {
     console.log(chalk.bold("You"));
     console.log(`  ${chalk.dim("name:")}    ${config.agentName}`);
     console.log(`  ${chalk.dim("id:")}      ${config.agentId}`);
-    console.log(`  ${chalk.dim("project:")} ${config.projectId}`);
+    console.log(`  ${chalk.dim("repo:")} ${config.repoId}`);
     console.log(`  ${chalk.dim("api:")}     ${config.apiUrl}`);
 
     console.log();

@@ -8,12 +8,12 @@ import type { CliApiClient } from "../api.js";
  */
 export async function resolveAgentRef(
   client: CliApiClient,
-  projectId: string,
+  repoId: string,
   ref: string,
 ): Promise<string> {
   if (ref === "@auto" || ref.startsWith("agent_")) return ref;
 
-  const agents = await client.getAgents(projectId);
+  const agents = await client.getAgents(repoId);
   const needle = ref.toLowerCase();
   const matches = agents.filter((a) => a.name.toLowerCase() === needle);
 

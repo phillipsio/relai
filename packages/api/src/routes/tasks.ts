@@ -1,10 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray, asc } from "drizzle-orm";
-import { tasks, projects, agents, threads, messages } from "@getrelai/db";
+import { tasks, repos, agents, threads, messages } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertProjectAccess } from "../lib/ownership.js";
+import { assertRepoAccess } from "../lib/ownership.js";
 import { verifyTask } from "../lib/router/scheduler.js";
 import type { Db } from "@getrelai/db";
 import type { TaskStatus } from "@getrelai/types";
@@ -14,7 +14,7 @@ import type { TaskStatus } from "@getrelai/types";
 async function loadTaskScoped(request: import("fastify").FastifyRequest, db: Db, taskId: string) {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) return { ok: false as const, status: 404 as const };
-  const access = await assertProjectAccess(request, db, task.projectId);
+  const access = await assertRepoAccess(request, db, task.repoId);
   if (!access.ok) return { ok: false as const, status: 404 as const };
   return { ok: true as const, task };
 }
@@ -54,7 +54,7 @@ async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
   }
   const [thread] = await db.insert(threads).values({
     id:        newId("thread"),
-    projectId: task.projectId,
+    repoId: task.repoId,
     title:     task.title,
     type:      null,
     taskId:    task.id,
@@ -67,7 +67,7 @@ const VERIFY_MISMATCH_MSG =
   "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId) and fields cannot cross kinds";
 
 const createSchema = z.object({
-  projectId:      z.string(),
+  repoId:      z.string(),
   createdBy:      z.string(),
   title:          z.string().min(1),
   description:    z.string().min(1),
@@ -133,8 +133,8 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const body = createSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    const access = await assertProjectAccess(request, db, body.data.projectId);
-    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Project not found" } });
+    const access = await assertRepoAccess(request, db, body.data.repoId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
     // Authoring a shell predicate runs arbitrary commands inside the API
     // process. Restrict to orchestrators and the deprecated admin-secret
@@ -155,10 +155,10 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // project. Catches typos and prevents pointing at agents from other tenants.
     if (body.data.verifyKind === "reviewer_agent") {
       const [reviewer] = await db
-        .select({ id: agents.id, projectId: agents.projectId })
+        .select({ id: agents.id, repoId: agents.repoId })
         .from(agents)
         .where(eq(agents.id, body.data.verifyReviewerId!));
-      if (!reviewer || reviewer.projectId !== body.data.projectId) {
+      if (!reviewer || reviewer.repoId !== body.data.repoId) {
         return reply.status(400).send({
           error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" },
         });
@@ -169,9 +169,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     let effective = body.data.assignedTo;
     if (effective === undefined) {
       const [project] = await db
-        .select({ defaultAssignee: projects.defaultAssignee })
-        .from(projects)
-        .where(eq(projects.id, body.data.projectId));
+        .select({ defaultAssignee: repos.defaultAssignee })
+        .from(repos)
+        .where(eq(repos.id, body.data.repoId));
       effective = project?.defaultAssignee ?? undefined;
     }
 
@@ -220,12 +220,12 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       const orchestrators = await db
         .select({ id: agents.id })
         .from(agents)
-        .where(and(eq(agents.projectId, task.projectId), eq(agents.role, "orchestrator")));
+        .where(and(eq(agents.repoId, task.repoId), eq(agents.role, "orchestrator")));
       for (const o of orchestrators) await ensureSubscription(db, o.id, "task", task.id);
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.proposed",
-        projectId:  task.projectId,
+        repoId:  task.repoId,
         targetType: "task",
         targetId:   task.id,
         alsoNotify: orchestrators.map((o) => ({ targetType: "agent", targetId: o.id })),
@@ -236,7 +236,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.created",
-        projectId:  task.projectId,
+        repoId:  task.repoId,
         targetType: "task",
         targetId:   task.id,
         alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
@@ -248,13 +248,13 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     return reply.status(201).send({ data: task });
   });
 
-  fastify.get<{ Querystring: { projectId?: string; status?: string; assignedTo?: string; epicId?: string } }>(
+  fastify.get<{ Querystring: { repoId?: string; status?: string; assignedTo?: string; epicId?: string } }>(
     "/tasks",
     async (request, reply) => {
-      const { projectId, status, assignedTo, epicId } = request.query;
+      const { repoId, status, assignedTo, epicId } = request.query;
 
       const conditions = [];
-      if (projectId)  conditions.push(eq(tasks.projectId, projectId));
+      if (repoId)  conditions.push(eq(tasks.repoId, repoId));
       if (assignedTo) conditions.push(eq(tasks.assignedTo, assignedTo));
       if (epicId)     conditions.push(eq(tasks.epicId, epicId));
       if (status) {
@@ -264,15 +264,15 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
 
       // Per-agent caller: scope to the agent's project.
       if (request.agent) {
-        conditions.push(eq(tasks.projectId, request.agent.projectId));
+        conditions.push(eq(tasks.repoId, request.agent.repoId));
       } else if (request.ownerId) {
-        // Service-admin: scope to projects owned by this tenant.
-        const ownedProjectIds = (await db
-          .select({ id: projects.id })
-          .from(projects)
-          .where(eq(projects.ownerId, request.ownerId))).map((p) => p.id);
-        if (ownedProjectIds.length === 0) return { data: [] };
-        conditions.push(inArray(tasks.projectId, ownedProjectIds));
+        // Service-admin: scope to repos owned by this tenant.
+        const ownedRepoIds = (await db
+          .select({ id: repos.id })
+          .from(repos)
+          .where(eq(repos.ownerId, request.ownerId))).map((p) => p.id);
+        if (ownedRepoIds.length === 0) return { data: [] };
+        conditions.push(inArray(tasks.repoId, ownedRepoIds));
       }
 
       const rows = conditions.length > 0
@@ -322,10 +322,10 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       }
       if (merged.verifyKind === "reviewer_agent") {
         const [reviewer] = await db
-          .select({ id: agents.id, projectId: agents.projectId })
+          .select({ id: agents.id, repoId: agents.repoId })
           .from(agents)
           .where(eq(agents.id, merged.verifyReviewerId!));
-        if (!reviewer || reviewer.projectId !== existing.projectId) {
+        if (!reviewer || reviewer.repoId !== existing.repoId) {
           return reply.status(400).send({ error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" } });
         }
       }
@@ -378,7 +378,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     await publish(db, {
       id:         newId("evt"),
       kind:       "task.updated",
-      projectId:  task.projectId,
+      repoId:  task.repoId,
       targetType: "task",
       targetId:   task.id,
       alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
@@ -393,7 +393,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.review_requested",
-        projectId:  task.projectId,
+        repoId:  task.repoId,
         targetType: "task",
         targetId:   task.id,
         alsoNotify: [{ targetType: "agent", targetId: reviewerToNotify }],
@@ -474,7 +474,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     await publish(db, {
       id:         newId("evt"),
       kind:       "task.review_submitted",
-      projectId:  task.projectId,
+      repoId:  task.repoId,
       targetType: "task",
       targetId:   task.id,
       alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
@@ -553,7 +553,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.proposal_rejected",
-        projectId:  task.projectId,
+        repoId:  task.repoId,
         targetType: "task",
         targetId:   task.id,
         alsoNotify: [{ targetType: "agent", targetId: task.createdBy }],
@@ -583,10 +583,10 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       }
       if (merged.verifyKind === "reviewer_agent") {
         const [reviewer] = await db
-          .select({ id: agents.id, projectId: agents.projectId })
+          .select({ id: agents.id, repoId: agents.repoId })
           .from(agents)
           .where(eq(agents.id, merged.verifyReviewerId!));
-        if (!reviewer || reviewer.projectId !== task.projectId) {
+        if (!reviewer || reviewer.repoId !== task.repoId) {
           return reply.status(400).send({ error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" } });
         }
       }
@@ -596,9 +596,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     let effective = body.data.assignedTo;
     if (effective === undefined) {
       const [project] = await db
-        .select({ defaultAssignee: projects.defaultAssignee })
-        .from(projects)
-        .where(eq(projects.id, task.projectId));
+        .select({ defaultAssignee: repos.defaultAssignee })
+        .from(repos)
+        .where(eq(repos.id, task.repoId));
       effective = project?.defaultAssignee ?? undefined;
     }
     const autoAssign = effective === "@auto";
@@ -624,7 +624,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     await publish(db, {
       id:         newId("evt"),
       kind:       "task.committed",
-      projectId:  committed.projectId,
+      repoId:  committed.repoId,
       targetType: "task",
       targetId:   committed.id,
       alsoNotify: committed.assignedTo ? [{ targetType: "agent", targetId: committed.assignedTo }] : [],
@@ -676,7 +676,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     await publish(db, {
       id:         newId("evt"),
       kind:       "message.posted",
-      projectId:  thread.projectId,
+      repoId:  thread.repoId,
       targetType: "thread",
       targetId:   thread.id,
       alsoNotify: scope.task.assignedTo ? [{ targetType: "agent", targetId: scope.task.assignedTo }] : [],

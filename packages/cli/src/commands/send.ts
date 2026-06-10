@@ -34,7 +34,7 @@ export async function sendCommand(
   }
 
   const toAgent = options.to
-    ? await resolveAgentRef(client, config.projectId, options.to)
+    ? await resolveAgentRef(client, config.repoId, options.to)
     : undefined;
 
   const spinner = ora("Sending...").start();

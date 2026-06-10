@@ -4,13 +4,13 @@ import { editor } from "@inquirer/prompts";
 import { requireConfig } from "../config.js";
 import { CliApiClient } from "../api.js";
 
-export async function projectsListCommand() {
+export async function reposListCommand() {
   const config = requireConfig();
   const client = new CliApiClient(config);
 
   const spinner = ora("Fetching projects...").start();
   try {
-    const projects = await client.listProjects();
+    const projects = await client.listRepos();
     spinner.stop();
 
     if (projects.length === 0) {
@@ -20,7 +20,7 @@ export async function projectsListCommand() {
 
     console.log();
     for (const p of projects) {
-      const here = p.id === config.projectId ? chalk.green("●") : " ";
+      const here = p.id === config.repoId ? chalk.green("●") : " ";
       console.log(`${here} ${chalk.bold(p.id)}  ${p.name}`);
       if (p.description) console.log(chalk.dim(`    ${p.description}`));
     }
@@ -32,17 +32,17 @@ export async function projectsListCommand() {
   }
 }
 
-export async function projectShowCommand(id?: string) {
+export async function repoShowCommand(id?: string) {
   const config = requireConfig();
   const client = new CliApiClient(config);
-  const projectId = id ?? config.projectId;
+  const repoId = id ?? config.repoId;
 
   const spinner = ora("Fetching project...").start();
   try {
     const [project, agents, tasks] = await Promise.all([
-      client.getProject(projectId),
-      client.getAgents(projectId),
-      client.getTasks({ projectId }),
+      client.getRepo(repoId),
+      client.getAgents(repoId),
+      client.getTasks({ repoId }),
     ]);
     spinner.stop();
 
@@ -67,13 +67,13 @@ export async function projectShowCommand(id?: string) {
   }
 }
 
-export async function projectContextShowCommand() {
+export async function repoContextShowCommand() {
   const config = requireConfig();
   const client = new CliApiClient(config);
   try {
-    const project = await client.getProject(config.projectId);
+    const project = await client.getRepo(config.repoId);
     if (!project.context) {
-      console.log(chalk.dim("(no context set — use `relai project context edit` to add some)"));
+      console.log(chalk.dim("(no context set — use `relai repo context edit` to add some)"));
       return;
     }
     console.log(project.context);
@@ -83,18 +83,18 @@ export async function projectContextShowCommand() {
   }
 }
 
-export async function projectContextEditCommand() {
+export async function repoContextEditCommand() {
   const config = requireConfig();
   const client = new CliApiClient(config);
   try {
-    const project = await client.getProject(config.projectId);
+    const project = await client.getRepo(config.repoId);
     const next = await editor({
       message: `Project context for ${project.name} — saved on quit`,
       default: project.context ?? "",
       waitForUseInput: false,
     });
     const trimmed = next.trim() === "" ? null : next;
-    await client.updateProject(config.projectId, { context: trimmed });
+    await client.updateRepo(config.repoId, { context: trimmed });
     console.log(chalk.green(trimmed ? "✓ Context saved" : "✓ Context cleared"));
   } catch (err) {
     console.error(chalk.red(`Failed: ${String(err)}`));

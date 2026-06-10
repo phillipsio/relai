@@ -4,7 +4,7 @@ import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { ChevronRight } from "lucide-react";
 import { saveConfig } from "../lib/config";
-import type { ProjectRow } from "../lib/api";
+import type { RepoRow } from "../lib/api";
 
 async function apiFetch<T>(url: string, secret: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -57,29 +57,29 @@ function StepConnect({ onDone }: { onDone: (base: string, secret: string) => voi
   );
 }
 
-// ── Step 2: Pick project ──────────────────────────────────────────────────────
+// ── Step 2: Pick repo ──────────────────────────────────────────────────────
 
-function StepProject({ base, secret, onDone }: { base: string; secret: string; onDone: (p: ProjectRow) => void }) {
-  const [projects, setProjects] = useState<ProjectRow[] | null>(null);
+function StepRepo({ base, secret, onDone }: { base: string; secret: string; onDone: (p: RepoRow) => void }) {
+  const [repos, setRepos] = useState<RepoRow[] | null>(null);
   const [error, setError]       = useState("");
 
   useState(() => {
-    apiFetch<ProjectRow[]>(`${base}/projects`, secret)
-      .then(setProjects)
+    apiFetch<RepoRow[]>(`${base}/repos`, secret)
+      .then(setRepos)
       .catch((err) => setError(err.message));
   });
 
-  if (projects === null && !error) {
-    return <p className="text-sm text-zinc-500 py-4 text-center">Loading projects…</p>;
+  if (repos === null && !error) {
+    return <p className="text-sm text-zinc-500 py-4 text-center">Loading repos…</p>;
   }
 
   return (
     <div className="space-y-2">
       {error && <p className="text-xs text-red-400">{error}</p>}
-      {(projects ?? []).length === 0 && (
-        <p className="text-sm text-zinc-500 py-4 text-center">No projects found. Create one via the CLI first.</p>
+      {(repos ?? []).length === 0 && (
+        <p className="text-sm text-zinc-500 py-4 text-center">No repos found. Create one via the CLI first.</p>
       )}
-      {(projects ?? []).map((p) => (
+      {(repos ?? []).map((p) => (
         <button
           key={p.id}
           onClick={() => onDone(p)}
@@ -99,7 +99,7 @@ function StepProject({ base, secret, onDone }: { base: string; secret: string; o
 
 // ── Root wizard ───────────────────────────────────────────────────────────────
 
-const STEPS = ["Connect", "Project"] as const;
+const STEPS = ["Connect", "Repo"] as const;
 type Step = typeof STEPS[number];
 
 export function Setup({ onDone }: { onDone: () => void }) {
@@ -110,11 +110,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const stepIndex = STEPS.indexOf(step);
 
   function handleConnect(b: string, s: string) {
-    setBase(b); setSecret(s); setStep("Project");
+    setBase(b); setSecret(s); setStep("Repo");
   }
 
-  function handleProject(p: ProjectRow) {
-    saveConfig({ apiUrl: base, apiSecret: secret, projectId: p.id });
+  function handleRepo(p: RepoRow) {
+    saveConfig({ apiUrl: base, apiSecret: secret, repoId: p.id });
     onDone();
   }
 
@@ -134,7 +134,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
         </CardHeader>
         <CardContent>
           {step === "Connect" && <StepConnect onDone={handleConnect} />}
-          {step === "Project" && <StepProject base={base} secret={secret} onDone={handleProject} />}
+          {step === "Repo" && <StepRepo base={base} secret={secret} onDone={handleRepo} />}
         </CardContent>
       </Card>
     </div>

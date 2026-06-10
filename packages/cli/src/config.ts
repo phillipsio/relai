@@ -7,7 +7,7 @@ export interface Config {
   apiToken: string;
   agentId: string;
   agentName: string;
-  projectId: string;
+  repoId: string;
   specialization?: string;
 }
 

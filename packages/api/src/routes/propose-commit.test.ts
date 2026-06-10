@@ -16,7 +16,7 @@ const ADMIN = { Authorization: `Bearer ${SECRET}` };
 const json   = (extra: Record<string, string>) => ({ ...extra, "Content-Type": "application/json" });
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let orchId: string;
 let orchAuth: { Authorization: string };
 let workerId: string;
@@ -28,17 +28,17 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: json(ADMIN),
     body: JSON.stringify({ name: "__test__ propose-commit" }),
   });
   expect(project.statusCode).toBe(201);
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const orch = await app.inject({
     method: "POST", url: "/agents",
     headers: json(ADMIN),
-    body: JSON.stringify({ projectId, name: "lead", role: "orchestrator" }),
+    body: JSON.stringify({ repoId, name: "lead", role: "orchestrator" }),
   });
   orchId   = orch.json().data.id;
   orchAuth = { Authorization: `Bearer ${orch.json().token}` };
@@ -46,7 +46,7 @@ beforeAll(async () => {
   const worker = await app.inject({
     method: "POST", url: "/agents",
     headers: json(ADMIN),
-    body: JSON.stringify({ projectId, name: "worker-a", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "worker-a", role: "worker" }),
   });
   workerId   = worker.json().data.id;
   workerAuth = { Authorization: `Bearer ${worker.json().token}` };
@@ -54,13 +54,13 @@ beforeAll(async () => {
   const other = await app.inject({
     method: "POST", url: "/agents",
     headers: json(ADMIN),
-    body: JSON.stringify({ projectId, name: "worker-b", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "worker-b", role: "worker" }),
   });
   otherWorkerId = other.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   await app?.close();
 });
 
@@ -68,7 +68,7 @@ afterAll(async () => {
 async function create(auth: { Authorization: string }, body: Record<string, unknown>) {
   const res = await app.inject({
     method: "POST", url: "/tasks", headers: json(auth),
-    body: JSON.stringify({ projectId, createdBy: workerId, title: "t", description: "d", ...body }),
+    body: JSON.stringify({ repoId, createdBy: workerId, title: "t", description: "d", ...body }),
   });
   return { status: res.statusCode, data: res.json().data, body: res.json() };
 }
@@ -129,7 +129,7 @@ describe("POST /tasks — orchestrator / admin commit directly", () => {
   it("an orchestrator's create is committed (pending when unassigned)", async () => {
     const res = await app.inject({
       method: "POST", url: "/tasks", headers: json(orchAuth),
-      body: JSON.stringify({ projectId, createdBy: orchId, title: "t", description: "d" }),
+      body: JSON.stringify({ repoId, createdBy: orchId, title: "t", description: "d" }),
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().data.status).toBe("pending");
@@ -138,7 +138,7 @@ describe("POST /tasks — orchestrator / admin commit directly", () => {
   it("an orchestrator's create with an assignee is committed (assigned)", async () => {
     const res = await app.inject({
       method: "POST", url: "/tasks", headers: json(orchAuth),
-      body: JSON.stringify({ projectId, createdBy: orchId, title: "t", description: "d", assignedTo: workerId }),
+      body: JSON.stringify({ repoId, createdBy: orchId, title: "t", description: "d", assignedTo: workerId }),
     });
     expect(res.json().data.status).toBe("assigned");
     expect(res.json().data.assignedTo).toBe(workerId);
@@ -238,7 +238,7 @@ describe("POST /tasks/:id/commit", () => {
     // An orchestrator create is already committed (pending), not proposed.
     const created = await app.inject({
       method: "POST", url: "/tasks", headers: json(orchAuth),
-      body: JSON.stringify({ projectId, createdBy: orchId, title: "t", description: "d" }),
+      body: JSON.stringify({ repoId, createdBy: orchId, title: "t", description: "d" }),
     });
     const id = created.json().data.id;
     const res = await app.inject({

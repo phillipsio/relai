@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import { createDb } from "@getrelai/db";
 import authPlugin from "./plugins/auth.js";
-import { projectRoutes } from "./routes/projects.js";
+import { repoRoutes } from "./routes/repos.js";
 import { agentRoutes } from "./routes/agents.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { inviteRoutes } from "./routes/invites.js";
@@ -27,7 +27,7 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(sensible);
   fastify.register(authPlugin, { db });
 
-  fastify.register(projectRoutes, { db });
+  fastify.register(repoRoutes, { db });
   fastify.register(agentRoutes, { db });
   fastify.register(tokenRoutes, { db });
   fastify.register(inviteRoutes, { db });

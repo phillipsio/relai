@@ -11,31 +11,31 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 
 beforeAll(async () => {
   app = buildServer({ logger: false, scheduler: false });
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects", headers: ADMIN,
+    method: "POST", url: "/repos", headers: ADMIN,
     body: JSON.stringify({ name: "__test__ invites" }),
   });
   expect(project.statusCode).toBe(201);
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
 
-describe("POST /projects/:id/invites", () => {
+describe("POST /repos/:id/invites", () => {
   it("returns a one-time invite code", async () => {
     const res = await app.inject({
-      method: "POST", url: `/projects/${projectId}/invites`, headers: ADMIN,
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
       body: JSON.stringify({ suggestedName: "alice-claude", suggestedSpecialization: "writer" }),
     });
     expect(res.statusCode).toBe(201);
@@ -46,7 +46,7 @@ describe("POST /projects/:id/invites", () => {
 
   it("rejects creation for unknown project", async () => {
     const res = await app.inject({
-      method: "POST", url: "/projects/proj_nonexistent/invites", headers: ADMIN,
+      method: "POST", url: "/repos/repo_nonexistent/invites", headers: ADMIN,
       body: JSON.stringify({}),
     });
     expect(res.statusCode).toBe(404);
@@ -59,7 +59,7 @@ describe("POST /auth/accept-invite", () => {
 
   beforeAll(async () => {
     const res = await app.inject({
-      method: "POST", url: `/projects/${projectId}/invites`, headers: ADMIN,
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
       body: JSON.stringify({}),
     });
     inviteCode = res.json().code;
@@ -75,7 +75,7 @@ describe("POST /auth/accept-invite", () => {
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.data.id).toMatch(/^agent_/);
-    expect(body.data.projectId).toBe(projectId);
+    expect(body.data.repoId).toBe(repoId);
     expect(body.data.name).toBe("alice-claude");
     expect(body.token).toMatch(/^aio_/);
   });
@@ -100,7 +100,7 @@ describe("POST /auth/accept-invite", () => {
 
   it("rejects revoked invites", async () => {
     const create = await app.inject({
-      method: "POST", url: `/projects/${projectId}/invites`, headers: ADMIN,
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
       body: JSON.stringify({}),
     });
     const code = create.json().code;
@@ -122,7 +122,7 @@ describe("POST /auth/accept-invite", () => {
 
   it("rejects expired invites", async () => {
     const create = await app.inject({
-      method: "POST", url: `/projects/${projectId}/invites`, headers: ADMIN,
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
       body: JSON.stringify({ ttlSeconds: 1 }),
     });
     const code = create.json().code;
@@ -138,14 +138,14 @@ describe("POST /auth/accept-invite", () => {
   });
 });
 
-describe("GET /projects/:id/invites", () => {
+describe("GET /repos/:id/invites", () => {
   it("lists invites for the project", async () => {
     const res = await app.inject({
-      method: "GET", url: `/projects/${projectId}/invites`, headers: ADMIN,
+      method: "GET", url: `/repos/${repoId}/invites`, headers: ADMIN,
     });
     expect(res.statusCode).toBe(200);
-    const data = res.json().data as Array<{ projectId: string }>;
+    const data = res.json().data as Array<{ repoId: string }>;
     expect(data.length).toBeGreaterThan(0);
-    expect(data.every((i) => i.projectId === projectId)).toBe(true);
+    expect(data.every((i) => i.repoId === repoId)).toBe(true);
   });
 });

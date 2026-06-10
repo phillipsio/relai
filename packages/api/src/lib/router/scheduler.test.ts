@@ -15,7 +15,7 @@ process.env.API_SECRET   = SECRET;
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
 let app: FastifyInstance;
-let projectId: string;
+let repoId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -23,21 +23,21 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects", headers: ADMIN,
+    method: "POST", url: "/repos", headers: ADMIN,
     body: JSON.stringify({ name: "__test__ stalls" }),
   });
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   const a = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
-    body: JSON.stringify({ projectId, name: "stall-agent", role: "worker" }),
+    body: JSON.stringify({ repoId, name: "stall-agent", role: "worker" }),
   });
   agentId = a.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -46,7 +46,7 @@ async function makeInProgressTask(updatedAtMsAgo: number): Promise<string> {
   const create = await app.inject({
     method: "POST", url: "/tasks", headers: ADMIN,
     body: JSON.stringify({
-      projectId, createdBy: agentId, title: "stall-test", description: "x",
+      repoId, createdBy: agentId, title: "stall-test", description: "x",
       assignedTo: agentId, status: "in_progress",
     }),
   });
@@ -67,7 +67,7 @@ describe("detectStalls", () => {
     const taskId = await makeInProgressTask(5_000);
     const db = createDb(DB_URL);
 
-    await detectStalls(db, projectId);
+    await detectStalls(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.stalledAt).not.toBeNull();
@@ -77,7 +77,7 @@ describe("detectStalls", () => {
     const taskId = await makeInProgressTask(0); // just created, updatedAt = now
     const db = createDb(DB_URL);
 
-    await detectStalls(db, projectId);
+    await detectStalls(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.stalledAt).toBeNull();
@@ -87,7 +87,7 @@ describe("detectStalls", () => {
     const taskId = await makeInProgressTask(5_000);
     const db = createDb(DB_URL);
 
-    await detectStalls(db, projectId);
+    await detectStalls(db, repoId);
     const [first] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     const initialStalledAt = first.stalledAt;
     expect(initialStalledAt).not.toBeNull();
@@ -95,7 +95,7 @@ describe("detectStalls", () => {
     // Wait a tick, run again. stalledAt should not change because the WHERE
     // clause filters out rows with stalledAt set.
     await new Promise((r) => setTimeout(r, 20));
-    await detectStalls(db, projectId);
+    await detectStalls(db, repoId);
     const [second] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(second.stalledAt!.getTime()).toBe(initialStalledAt!.getTime());
   });
@@ -107,7 +107,7 @@ describe("detectStalls", () => {
     bus.on("event", handler);
 
     const db = createDb(DB_URL);
-    await detectStalls(db, projectId);
+    await detectStalls(db, repoId);
 
     bus.off("event", handler);
     const stalled = events.find((e) => e.kind === "task.stalled" && e.targetId === taskId);
@@ -118,7 +118,7 @@ describe("detectStalls", () => {
   it("PUT /tasks/:id clears stalledAt when the task moves again", async () => {
     const taskId = await makeInProgressTask(5_000);
     const db = createDb(DB_URL);
-    await detectStalls(db, projectId);
+    await detectStalls(db, repoId);
 
     const [before] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(before.stalledAt).not.toBeNull();
@@ -140,13 +140,13 @@ describe("watchProposedTasks", () => {
   beforeAll(async () => {
     const orch = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ projectId, name: "overdue-orch", role: "orchestrator" }),
+      body: JSON.stringify({ repoId, name: "overdue-orch", role: "orchestrator" }),
     });
     orchId = orch.json().data.id;
 
     const worker = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ projectId, name: "overdue-worker", role: "worker" }),
+      body: JSON.stringify({ repoId, name: "overdue-worker", role: "worker" }),
     });
     workerAuth = { Authorization: `Bearer ${worker.json().token}`, "Content-Type": "application/json" };
   });
@@ -155,7 +155,7 @@ describe("watchProposedTasks", () => {
   async function makeOverdueProposal(createdMsAgo: number): Promise<string> {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: workerAuth,
-      body: JSON.stringify({ projectId, createdBy: orchId, title: "proposal", description: "x" }),
+      body: JSON.stringify({ repoId, createdBy: orchId, title: "proposal", description: "x" }),
     });
     const taskId = create.json().data.id;
     expect(create.json().data.status).toBe("proposed");
@@ -175,7 +175,7 @@ describe("watchProposedTasks", () => {
     bus.on("event", handler);
 
     const db = createDb(DB_URL);
-    await watchProposedTasks(db, projectId);
+    await watchProposedTasks(db, repoId);
 
     bus.off("event", handler);
     const evt = events.find((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId);
@@ -191,12 +191,12 @@ describe("watchProposedTasks", () => {
     const taskId = await makeOverdueProposal(5_000);
     const db = createDb(DB_URL);
 
-    await watchProposedTasks(db, projectId);
+    await watchProposedTasks(db, repoId);
 
     const events: AppEvent[] = [];
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
-    await watchProposedTasks(db, projectId);
+    await watchProposedTasks(db, repoId);
     bus.off("event", handler);
 
     expect(events.some((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId)).toBe(false);
@@ -210,7 +210,7 @@ describe("watchProposedTasks", () => {
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
     const db = createDb(DB_URL);
-    await watchProposedTasks(db, projectId);
+    await watchProposedTasks(db, repoId);
     bus.off("event", handler);
 
     expect(events.some((e) => e.kind === "task.proposed_overdue" && e.targetId === taskId)).toBe(false);
@@ -225,14 +225,14 @@ describe("watchBlockedTasks (operator unblock path)", () => {
   async function makeBlockedTaskOnThread(): Promise<{ taskId: string; threadId: string }> {
     const thread = await app.inject({
       method: "POST", url: "/threads", headers: ADMIN,
-      body: JSON.stringify({ projectId, title: "blocked-on-question" }),
+      body: JSON.stringify({ repoId, title: "blocked-on-question" }),
     });
     const threadId = thread.json().data.id;
 
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "needs-input", description: "x",
+        repoId, createdBy: agentId, title: "needs-input", description: "x",
         assignedTo: agentId, status: "in_progress",
       }),
     });
@@ -258,7 +258,7 @@ describe("watchBlockedTasks (operator unblock path)", () => {
     expect(post.statusCode).toBe(201);
 
     const db = createDb(DB_URL);
-    await watchBlockedTasks(db, projectId);
+    await watchBlockedTasks(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("assigned");
@@ -279,7 +279,7 @@ describe("watchBlockedTasks (operator unblock path)", () => {
     });
 
     const db = createDb(DB_URL);
-    await watchBlockedTasks(db, projectId);
+    await watchBlockedTasks(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("blocked");
@@ -289,7 +289,7 @@ describe("watchBlockedTasks (operator unblock path)", () => {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: ADMIN,
       body: JSON.stringify({
-        projectId, createdBy: agentId, title: "blocked-no-thread", description: "x",
+        repoId, createdBy: agentId, title: "blocked-no-thread", description: "x",
         assignedTo: agentId, status: "in_progress",
       }),
     });
@@ -297,7 +297,7 @@ describe("watchBlockedTasks (operator unblock path)", () => {
     const db = createDb(DB_URL);
     await db.update(tasks).set({ status: "blocked", metadata: {} }).where(eq(tasks.id, taskId));
 
-    await watchBlockedTasks(db, projectId); // must not throw
+    await watchBlockedTasks(db, repoId); // must not throw
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("blocked");

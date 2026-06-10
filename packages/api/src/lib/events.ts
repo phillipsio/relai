@@ -23,7 +23,7 @@ export type EventKind =
 export interface AppEvent {
   id:         string;
   kind:       EventKind;
-  projectId:  string;
+  repoId:  string;
   // The primary subject of the event. Subscriptions match against this.
   targetType: "thread" | "task" | "agent";
   targetId:   string;
@@ -47,7 +47,7 @@ export async function publish(db: Db, event: AppEvent): Promise<void> {
   try {
     await db.insert(events).values({
       id:         event.id,
-      projectId:  event.projectId,
+      repoId:  event.repoId,
       kind:       event.kind,
       targetType: event.targetType,
       targetId:   event.targetId,

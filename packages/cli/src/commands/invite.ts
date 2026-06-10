@@ -21,7 +21,7 @@ const SPECIALIZATION_CHOICES = [
   { value: "custom",       name: "custom        — define your own" },
 ];
 
-export async function projectInviteCommand(opts: { name?: string; specialization?: string; ttl?: string }) {
+export async function repoInviteCommand(opts: { name?: string; specialization?: string; ttl?: string }) {
   const config = requireConfig();
   const client = new CliApiClient(config);
 
@@ -33,7 +33,7 @@ export async function projectInviteCommand(opts: { name?: string; specialization
 
   const s = ora("Creating invite…").start();
   try {
-    const { invite, code } = await client.createInvite(config.projectId, {
+    const { invite, code } = await client.createInvite(config.repoId, {
       suggestedName: opts.name,
       suggestedSpecialization: opts.specialization,
       ttlSeconds,
@@ -69,7 +69,7 @@ export async function loginCommand(opts: {
   }
   if (!opts.invite && !opts.token) {
     console.error(chalk.red("relai login requires --invite <code> or --token <token>"));
-    console.error(chalk.dim("Ask a project member to run `relai project invite` and share the code, or create an agent in the cloud dashboard."));
+    console.error(chalk.dim("Ask a repo member to run `relai repo invite` and share the code, or create an agent in the cloud dashboard."));
     process.exit(1);
   }
 
@@ -84,7 +84,7 @@ export async function loginCommand(opts: {
 
   let agentId: string;
   let agentName: string;
-  let projectId: string;
+  let repoId: string;
   let agentSpecialization: string | undefined;
   let token: string;
 
@@ -95,7 +95,7 @@ export async function loginCommand(opts: {
       const session = await authedClient.getSessionStart();
       agentId = session.agent.id;
       agentName = session.agent.name;
-      projectId = session.project.id;
+      repoId = session.repo.id;
       agentSpecialization = session.agent.specialization ?? undefined;
       token = opts.token;
       s.succeed(chalk.green(`Authenticated as ${agentName}`));
@@ -128,7 +128,7 @@ export async function loginCommand(opts: {
       });
       agentId = result.agent.id;
       agentName = result.agent.name;
-      projectId = result.agent.projectId;
+      repoId = result.agent.repoId;
       agentSpecialization = specialization === "custom" ? undefined : specialization;
       token = result.token;
       s.succeed(chalk.green("Logged in"));
@@ -146,7 +146,7 @@ export async function loginCommand(opts: {
   const authedClient = new CliApiClient({ apiUrl, apiToken: token });
   let repoUrl: string | null = null;
   try {
-    const project = await authedClient.getProject(projectId);
+    const project = await authedClient.getRepo(repoId);
     repoUrl = project.repoUrl ?? null;
   } catch (err) {
     console.error(chalk.red("Could not load project to validate working directory"));
@@ -208,16 +208,16 @@ export async function loginCommand(opts: {
     apiToken: token,
     agentId,
     agentName,
-    projectId,
+    repoId,
     specialization: agentSpecialization,
   });
 
-  const agent = { id: agentId, name: agentName, projectId };
+  const agent = { id: agentId, name: agentName, repoId };
   console.log(`
 ${chalk.bold("Agent")}
   name:           ${agent.name}
   id:             ${chalk.dim(agent.id)}
-  project:        ${chalk.dim(agent.projectId)}
+  repo:           ${chalk.dim(agent.repoId)}
 
 ${chalk.bold("Config saved to")} ${chalk.dim(configPath())}
 
@@ -232,7 +232,7 @@ ${chalk.cyan(JSON.stringify({
         API_URL:    apiUrl,
         API_SECRET: token,
         AGENT_ID:   agent.id,
-        PROJECT_ID: agent.projectId,
+        REPO_ID: agent.repoId,
       },
     },
   },

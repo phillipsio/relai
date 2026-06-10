@@ -1,9 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray } from "drizzle-orm";
-import { routingLog, tasks, projects } from "@getrelai/db";
+import { routingLog, tasks, repos } from "@getrelai/db";
 import { newId } from "../lib/id.js";
-import { assertProjectAccess } from "../lib/ownership.js";
+import { assertRepoAccess } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 const createSchema = z.object({
@@ -19,9 +19,9 @@ export const routingLogRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
     // The task must belong to a project the caller can access.
-    const [task] = await db.select({ projectId: tasks.projectId }).from(tasks).where(eq(tasks.id, body.data.taskId));
+    const [task] = await db.select({ repoId: tasks.repoId }).from(tasks).where(eq(tasks.id, body.data.taskId));
     if (!task) return reply.status(404).send({ error: { code: "not_found", message: "Task not found" } });
-    const access = await assertProjectAccess(request, db, task.projectId);
+    const access = await assertRepoAccess(request, db, task.repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Task not found" } });
 
     const [entry] = await db.insert(routingLog).values({
@@ -45,15 +45,15 @@ export const routingLogRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
       if (assignedTo) conditions.push(eq(routingLog.assignedTo, assignedTo));
 
       // Tenant-scope: limit to routing rows whose task is in the caller's
-      // visible projects. API_SECRET path skips the filter.
+      // visible repos. API_SECRET path skips the filter.
       if (request.agent) {
-        const inScope = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.projectId, request.agent.projectId))).map((t) => t.id);
+        const inScope = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.repoId, request.agent.repoId))).map((t) => t.id);
         if (inScope.length === 0) return { data: [] };
         conditions.push(inArray(routingLog.taskId, inScope));
       } else if (request.ownerId) {
-        const ownedProjectIds = (await db.select({ id: projects.id }).from(projects).where(eq(projects.ownerId, request.ownerId))).map((p) => p.id);
-        if (ownedProjectIds.length === 0) return { data: [] };
-        const inScope = (await db.select({ id: tasks.id }).from(tasks).where(inArray(tasks.projectId, ownedProjectIds))).map((t) => t.id);
+        const ownedRepoIds = (await db.select({ id: repos.id }).from(repos).where(eq(repos.ownerId, request.ownerId))).map((p) => p.id);
+        if (ownedRepoIds.length === 0) return { data: [] };
+        const inScope = (await db.select({ id: tasks.id }).from(tasks).where(inArray(tasks.repoId, ownedRepoIds))).map((t) => t.id);
         if (inScope.length === 0) return { data: [] };
         conditions.push(inArray(routingLog.taskId, inScope));
       }

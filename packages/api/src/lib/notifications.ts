@@ -89,7 +89,7 @@ async function deliverOne(db: Db, channel: Channel, event: AppEvent, opts: Deliv
   const body = JSON.stringify({
     id:         event.id,
     kind:       event.kind,
-    projectId:  event.projectId,
+    repoId:  event.repoId,
     targetType: event.targetType,
     targetId:   event.targetId,
     payload:    event.payload,

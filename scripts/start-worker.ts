@@ -15,7 +15,7 @@
  *   API_SECRET=changeme tsx scripts/start-worker.ts reviewer --model claude-haiku-4-5-20251001
  *   API_SECRET=changeme tsx scripts/start-worker.ts architect --repo /path/to/repo --name jim-architect
  *
- * Requires API to be running and PROJECT_ID set in .env (run seed.ts first).
+ * Requires API to be running and REPO_ID set in .env (run seed.ts first).
  */
 
 import { spawn } from "child_process";
@@ -27,7 +27,7 @@ import { ROLE_PRESETS } from "./presets.js";
 
 const API_URL    = process.env.API_URL ?? process.env.ORCHESTRATOR_API_URL ?? "http://localhost:3010";
 const API_SECRET = process.env.API_SECRET ?? process.env.ORCHESTRATOR_API_SECRET ?? "";
-const PROJECT_ID = process.env.PROJECT_ID ?? "";
+const REPO_ID = process.env.REPO_ID ?? "";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER_ENTRY = path.join(ROOT, "packages", "claude-worker", "src", "index.ts");
@@ -69,7 +69,7 @@ async function post(endpoint: string, body: unknown): Promise<Record<string, unk
 }
 
 async function findExistingAgent(name: string): Promise<Record<string, unknown> | null> {
-  const res = await fetch(`${API_URL}/agents?projectId=${PROJECT_ID}`, {
+  const res = await fetch(`${API_URL}/agents?repoId=${REPO_ID}`, {
     headers: { Authorization: `Bearer ${API_SECRET}` },
   });
   if (!res.ok) return null;
@@ -103,8 +103,8 @@ async function main() {
     process.exit(1);
   }
 
-  if (!PROJECT_ID) {
-    console.error("Error: PROJECT_ID must be set in .env (run seed.ts first).");
+  if (!REPO_ID) {
+    console.error("Error: REPO_ID must be set in .env (run seed.ts first).");
     process.exit(1);
   }
 
@@ -132,7 +132,7 @@ async function main() {
   } else {
     console.log(`Registering agent "${name}" (${specialization})…`);
     agent = await post("/agents", {
-      projectId:      PROJECT_ID,
+      repoId:      REPO_ID,
       name,
       role:           preset.role,
       specialization: preset.specialization,
@@ -151,7 +151,7 @@ async function main() {
   const workerEnv: Record<string, string> = {
     ...process.env as Record<string, string>,
     AGENT_ID:                  agentId,
-    PROJECT_ID,
+    REPO_ID,
     API_URL,
     API_SECRET,
     SPECIALIZATION:             preset.specialization,

@@ -18,7 +18,7 @@ describe("ApiClient auth headers", () => {
     const fetchMock = mockFetchOk();
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient({ baseUrl: "http://api.test", secret: "agent-token" });
-    await client.getTasks({ projectId: "proj_1" });
+    await client.getTasks({ repoId: "proj_1" });
 
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer agent-token");
@@ -35,7 +35,7 @@ describe("ApiClient auth headers", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer svc-admin");
     expect(headers["X-Owner-Id"]).toBe("usr_abc");
-    // Owner-mode list calls omit projectId — the API scopes by owner.
-    expect(String(url)).not.toContain("projectId");
+    // Owner-mode list calls omit repoId — the API scopes by owner.
+    expect(String(url)).not.toContain("repoId");
   });
 });

@@ -1,10 +1,10 @@
 // Cross-tenant isolation under the service-admin auth path. Two users own
-// disjoint projects; each can only see and mutate their own. The legacy
+// disjoint repos; each can only see and mutate their own. The legacy
 // API_SECRET caller can still see everything (self-host parity).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { createDb, users, projects } from "@getrelai/db";
+import { createDb, users, repos } from "@getrelai/db";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 
@@ -55,7 +55,7 @@ beforeAll(async () => {
 
   // Tenant A creates its project via the service-admin path so ownerId is stamped.
   const pA = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: serviceHeaders(userA),
     body: JSON.stringify({ name: "tenant-A-project" }),
   });
@@ -64,7 +64,7 @@ beforeAll(async () => {
   expect(pA.json().data.ownerId).toBe(userA);
 
   const pB = await app.inject({
-    method: "POST", url: "/projects",
+    method: "POST", url: "/repos",
     headers: serviceHeaders(userB),
     body: JSON.stringify({ name: "tenant-B-project" }),
   });
@@ -76,7 +76,7 @@ beforeAll(async () => {
   const aA = await app.inject({
     method: "POST", url: "/agents",
     headers: adminHeaders(),
-    body: JSON.stringify({ projectId: projectAId, name: "agent-A", role: "worker" }),
+    body: JSON.stringify({ repoId: projectAId, name: "agent-A", role: "worker" }),
   });
   expect(aA.statusCode).toBe(201);
   agentAId = aA.json().data.id;
@@ -85,7 +85,7 @@ beforeAll(async () => {
   const aB = await app.inject({
     method: "POST", url: "/agents",
     headers: adminHeaders(),
-    body: JSON.stringify({ projectId: projectBId, name: "agent-B", role: "worker" }),
+    body: JSON.stringify({ repoId: projectBId, name: "agent-B", role: "worker" }),
   });
   expect(aB.statusCode).toBe(201);
   agentBId = aB.json().data.id;
@@ -93,24 +93,24 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (projectAId) await app.inject({ method: "DELETE", url: `/projects/${projectAId}`, headers: ADMIN });
-  if (projectBId) await app.inject({ method: "DELETE", url: `/projects/${projectBId}`, headers: ADMIN });
+  if (projectAId) await app.inject({ method: "DELETE", url: `/repos/${projectAId}`, headers: ADMIN });
+  if (projectBId) await app.inject({ method: "DELETE", url: `/repos/${projectBId}`, headers: ADMIN });
   await db.delete(users).where(eq(users.id, userA));
   await db.delete(users).where(eq(users.id, userB));
   await app?.close();
 });
 
 describe("ownership: project list scoping", () => {
-  it("service-admin sees only its tenant's projects", async () => {
-    const res = await app.inject({ method: "GET", url: "/projects", headers: serviceHeaders(userA) });
+  it("service-admin sees only its tenant's repos", async () => {
+    const res = await app.inject({ method: "GET", url: "/repos", headers: serviceHeaders(userA) });
     expect(res.statusCode).toBe(200);
     const ids = res.json().data.map((p: { id: string }) => p.id);
     expect(ids).toContain(projectAId);
     expect(ids).not.toContain(projectBId);
   });
 
-  it("API_SECRET caller sees both tenants' projects", async () => {
-    const res = await app.inject({ method: "GET", url: "/projects", headers: ADMIN });
+  it("API_SECRET caller sees both tenants' repos", async () => {
+    const res = await app.inject({ method: "GET", url: "/repos", headers: ADMIN });
     expect(res.statusCode).toBe(200);
     const ids = res.json().data.map((p: { id: string }) => p.id);
     expect(ids).toContain(projectAId);
@@ -119,7 +119,7 @@ describe("ownership: project list scoping", () => {
 
   it("per-agent caller sees only its own project", async () => {
     const res = await app.inject({
-      method: "GET", url: "/projects",
+      method: "GET", url: "/repos",
       headers: { Authorization: `Bearer ${agentAToken}` },
     });
     expect(res.statusCode).toBe(200);
@@ -131,7 +131,7 @@ describe("ownership: project list scoping", () => {
 describe("ownership: project detail/update/delete cross-tenant", () => {
   it("service-admin gets 404 for a project owned by another tenant", async () => {
     const res = await app.inject({
-      method: "GET", url: `/projects/${projectBId}`,
+      method: "GET", url: `/repos/${projectBId}`,
       headers: serviceHeaders(userA),
     });
     expect(res.statusCode).toBe(404);
@@ -139,7 +139,7 @@ describe("ownership: project detail/update/delete cross-tenant", () => {
 
   it("service-admin cannot update another tenant's project", async () => {
     const res = await app.inject({
-      method: "PUT", url: `/projects/${projectBId}`,
+      method: "PUT", url: `/repos/${projectBId}`,
       headers: serviceHeaders(userA),
       body: JSON.stringify({ name: "hijacked" }),
     });
@@ -148,7 +148,7 @@ describe("ownership: project detail/update/delete cross-tenant", () => {
 
   it("service-admin cannot delete another tenant's project", async () => {
     const res = await app.inject({
-      method: "DELETE", url: `/projects/${projectBId}`,
+      method: "DELETE", url: `/repos/${projectBId}`,
       headers: serviceHeaders(userA),
     });
     expect(res.statusCode).toBe(404);
@@ -156,7 +156,7 @@ describe("ownership: project detail/update/delete cross-tenant", () => {
 
   it("per-agent caller is forbidden from another project", async () => {
     const res = await app.inject({
-      method: "GET", url: `/projects/${projectBId}`,
+      method: "GET", url: `/repos/${projectBId}`,
       headers: { Authorization: `Bearer ${agentAToken}` },
     });
     expect(res.statusCode).toBe(403);
@@ -176,7 +176,7 @@ describe("ownership: agents and tasks scoping", () => {
     const res = await app.inject({
       method: "POST", url: "/agents",
       headers: serviceHeaders(userA),
-      body: JSON.stringify({ projectId: projectBId, name: "intruder", role: "worker" }),
+      body: JSON.stringify({ repoId: projectBId, name: "intruder", role: "worker" }),
     });
     expect(res.statusCode).toBe(404);
   });
@@ -186,7 +186,7 @@ describe("ownership: agents and tasks scoping", () => {
       method: "POST", url: "/tasks",
       headers: serviceHeaders(userA),
       body: JSON.stringify({
-        projectId:   projectBId,
+        repoId:   projectBId,
         createdBy:   agentAId,
         title:       "tenant-jump",
         description: "should never land",
@@ -200,13 +200,13 @@ describe("ownership: agents and tasks scoping", () => {
     const tA = await app.inject({
       method: "POST", url: "/tasks",
       headers: adminHeaders(),
-      body: JSON.stringify({ projectId: projectAId, createdBy: agentAId, title: "A-task", description: "x" }),
+      body: JSON.stringify({ repoId: projectAId, createdBy: agentAId, title: "A-task", description: "x" }),
     });
     expect(tA.statusCode).toBe(201);
     const tB = await app.inject({
       method: "POST", url: "/tasks",
       headers: adminHeaders(),
-      body: JSON.stringify({ projectId: projectBId, createdBy: agentBId, title: "B-task", description: "x" }),
+      body: JSON.stringify({ repoId: projectBId, createdBy: agentBId, title: "B-task", description: "x" }),
     });
     expect(tB.statusCode).toBe(201);
 
@@ -328,7 +328,7 @@ describe("ownership: routing-log cross-tenant", () => {
     const tB = await app.inject({
       method: "POST", url: "/tasks",
       headers: adminHeaders(),
-      body: JSON.stringify({ projectId: projectBId, createdBy: agentBId, title: "rl-task", description: "x" }),
+      body: JSON.stringify({ repoId: projectBId, createdBy: agentBId, title: "rl-task", description: "x" }),
     });
     expect(tB.statusCode).toBe(201);
     const taskId = tB.json().data.id;
@@ -345,13 +345,13 @@ describe("ownership: routing-log cross-tenant", () => {
     const tA = await app.inject({
       method: "POST", url: "/tasks",
       headers: adminHeaders(),
-      body: JSON.stringify({ projectId: projectAId, createdBy: agentAId, title: "rl-A", description: "x" }),
+      body: JSON.stringify({ repoId: projectAId, createdBy: agentAId, title: "rl-A", description: "x" }),
     });
     expect(tA.statusCode).toBe(201);
     const tB = await app.inject({
       method: "POST", url: "/tasks",
       headers: adminHeaders(),
-      body: JSON.stringify({ projectId: projectBId, createdBy: agentBId, title: "rl-B", description: "x" }),
+      body: JSON.stringify({ repoId: projectBId, createdBy: agentBId, title: "rl-B", description: "x" }),
     });
     expect(tB.statusCode).toBe(201);
 
@@ -380,7 +380,7 @@ describe("ownership: owner posts as human (unblock path)", () => {
     const thread = await app.inject({
       method: "POST", url: "/threads",
       headers: serviceHeaders(userA),
-      body: JSON.stringify({ projectId: projectAId, title: "blocked-question" }),
+      body: JSON.stringify({ repoId: projectAId, title: "blocked-question" }),
     });
     expect(thread.statusCode).toBe(201);
     const threadId = thread.json().data.id;
@@ -402,7 +402,7 @@ describe("ownership: owner posts as human (unblock path)", () => {
     const thread = await app.inject({
       method: "POST", url: "/threads",
       headers: agentHeaders,
-      body: JSON.stringify({ projectId: projectAId, title: "agent-thread" }),
+      body: JSON.stringify({ repoId: projectAId, title: "agent-thread" }),
     });
     expect(thread.statusCode).toBe(201);
     const threadId = thread.json().data.id;
@@ -423,7 +423,7 @@ describe("ownership: owner action attribution", () => {
     const agentHeaders = { Authorization: `Bearer ${agentAToken}`, "Content-Type": "application/json" };
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: agentHeaders,
-      body: JSON.stringify({ projectId: projectAId, createdBy: agentAId, title: "owner-commit", description: "x" }),
+      body: JSON.stringify({ repoId: projectAId, createdBy: agentAId, title: "owner-commit", description: "x" }),
     });
     expect(create.json().data.status).toBe("proposed");
     const id = create.json().data.id;
@@ -442,7 +442,7 @@ describe("ownership: owner action attribution", () => {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: adminHeaders(),
       body: JSON.stringify({
-        projectId: projectAId, createdBy: agentAId, title: "owner-review", description: "x",
+        repoId: projectAId, createdBy: agentAId, title: "owner-review", description: "x",
         assignedTo: agentAId, verifyKind: "reviewer_agent", verifyReviewerId: agentAId,
       }),
     });
@@ -461,10 +461,10 @@ describe("ownership: owner action attribution", () => {
   });
 });
 
-describe("ownership: legacy POST /projects without ownerId", () => {
-  it("API_SECRET-created projects have null ownerId (self-host parity)", async () => {
+describe("ownership: legacy POST /repos without ownerId", () => {
+  it("API_SECRET-created repos have null ownerId (self-host parity)", async () => {
     const res = await app.inject({
-      method: "POST", url: "/projects",
+      method: "POST", url: "/repos",
       headers: adminHeaders(),
       body: JSON.stringify({ name: "self-hosted-project" }),
     });
@@ -472,6 +472,6 @@ describe("ownership: legacy POST /projects without ownerId", () => {
     expect(res.json().data.ownerId).toBeNull();
 
     const id = res.json().data.id;
-    await app.inject({ method: "DELETE", url: `/projects/${id}`, headers: ADMIN });
+    await app.inject({ method: "DELETE", url: `/repos/${id}`, headers: ADMIN });
   });
 });

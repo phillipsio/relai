@@ -21,7 +21,7 @@ const {
   API_URL = "http://localhost:3010",
   API_SECRET,
   AGENT_ID,
-  PROJECT_ID,
+  REPO_ID,
   API_OWNER_TOKEN,
   OWNER_ID,
   TRANSPORT = "stdio",
@@ -55,8 +55,8 @@ if (OWNER_MODE) {
     console.error("[relai-mcp] AGENT_ID is required — register your agent first and pass its ID here");
     process.exit(1);
   }
-  if (!PROJECT_ID) {
-    console.error("[relai-mcp] PROJECT_ID is required");
+  if (!REPO_ID) {
+    console.error("[relai-mcp] REPO_ID is required");
     process.exit(1);
   }
 }
@@ -75,7 +75,7 @@ const server = new McpServer({
 // Register tools for the active mode.
 const tools = OWNER_MODE
   ? buildOperatorTools(apiClient)
-  : buildTools(apiClient, AGENT_ID!, PROJECT_ID!);
+  : buildTools(apiClient, AGENT_ID!, REPO_ID!);
 
 for (const tool of tools) {
   server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);
@@ -100,8 +100,8 @@ const seenMessageIds = new Set<string>();
 async function pollInbox() {
   try {
     const [tasks, messages] = await Promise.all([
-      apiClient.getTasks({ projectId: PROJECT_ID!, assignedTo: AGENT_ID!, status: "assigned" }),
-      apiClient.getUnread(AGENT_ID!, PROJECT_ID!),
+      apiClient.getTasks({ repoId: REPO_ID!, assignedTo: AGENT_ID!, status: "assigned" }),
+      apiClient.getUnread(AGENT_ID!, REPO_ID!),
     ]);
 
     const newTasks = tasks.filter((t: any) => !seenTaskIds.has(t.id));
@@ -128,10 +128,10 @@ async function pollInbox() {
 }
 
 // Seed seen sets on startup so we only notify about truly new items
-apiClient.getTasks({ projectId: PROJECT_ID!, assignedTo: AGENT_ID!, status: "assigned" })
+apiClient.getTasks({ repoId: REPO_ID!, assignedTo: AGENT_ID!, status: "assigned" })
   .then((tasks: any[]) => tasks.forEach((t: any) => seenTaskIds.add(t.id)))
   .catch(() => {});
-apiClient.getUnread(AGENT_ID!, PROJECT_ID!)
+apiClient.getUnread(AGENT_ID!, REPO_ID!)
   .then((msgs: any[]) => msgs.forEach((m: any) => seenMessageIds.add(m.id)))
   .catch(() => {});
 

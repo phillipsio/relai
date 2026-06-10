@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import {
-  projects, tasks, threads, messages, subscriptions, events,
+  repos, tasks, threads, messages, subscriptions, events,
   type Db,
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
@@ -11,7 +11,7 @@ import { humanizeTaskStatus } from "@getrelai/types";
 // Caller is identified from request.agent; the legacy API_SECRET fallback can't
 // resolve an identity and is rejected.
 export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
-  fastify.get<{ Querystring: { projectId?: string } }>("/session/start", async (request, reply) => {
+  fastify.get<{ Querystring: { repoId?: string } }>("/session/start", async (request, reply) => {
     const agent = request.agent;
     if (!agent) {
       return reply.status(403).send({
@@ -19,16 +19,16 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       });
     }
 
-    const projectId = request.query.projectId ?? agent.projectId;
-    if (projectId !== agent.projectId) {
+    const repoId = request.query.repoId ?? agent.repoId;
+    if (repoId !== agent.repoId) {
       return reply.status(403).send({
-        error: { code: "forbidden", message: "Agent is not a member of this project" },
+        error: { code: "forbidden", message: "Agent is not a member of this repo" },
       });
     }
 
-    const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
+    const [project] = await db.select().from(repos).where(eq(repos.id, repoId));
     if (!project) {
-      return reply.status(404).send({ error: { code: "not_found", message: "Project not found" } });
+      return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
     }
 
     // My open tasks — anything not yet completed/cancelled assigned to me.
@@ -36,7 +36,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       .select()
       .from(tasks)
       .where(and(
-        eq(tasks.projectId, projectId),
+        eq(tasks.repoId, repoId),
         eq(tasks.assignedTo, agent.id),
         inArray(tasks.status, ["pending", "assigned", "in_progress", "blocked"]),
       ))
@@ -52,7 +52,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       .select({ messages })
       .from(messages)
       .innerJoin(threads, eq(messages.threadId, threads.id))
-      .where(sql`${threads.projectId} = ${projectId} AND NOT (${messages.readBy} @> ARRAY[${agent.id}]::text[])`);
+      .where(sql`${threads.repoId} = ${repoId} AND NOT (${messages.readBy} @> ARRAY[${agent.id}]::text[])`);
     const unreadMessages = unreadRows.map((r) => r.messages);
 
     // Open threads I'm subscribed to in this project.
@@ -60,7 +60,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       .select({
         id:           threads.id,
         title:        threads.title,
-        projectId:    threads.projectId,
+        repoId:    threads.repoId,
         type:         threads.type,
         status:       threads.status,
         summary:      threads.summary,
@@ -72,7 +72,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         eq(subscriptions.targetId,   threads.id),
         eq(subscriptions.agentId,    agent.id),
       ))
-      .where(and(eq(threads.projectId, projectId), eq(threads.status, "open")));
+      .where(and(eq(threads.repoId, repoId), eq(threads.status, "open")));
 
     // Recent events the agent should care about: anything in this project
     // whose primary target matches one of their subscriptions, or whose
@@ -81,7 +81,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       .select()
       .from(events)
       .where(sql`
-        ${events.projectId} = ${projectId}
+        ${events.repoId} = ${repoId}
         AND (
           EXISTS (
             SELECT 1 FROM ${subscriptions}
@@ -104,7 +104,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
           workerType:     agent.workerType,
           repoPath:       agent.repoPath,
         },
-        project: {
+        repo: {
           id:              project.id,
           name:            project.name,
           context:         project.context,

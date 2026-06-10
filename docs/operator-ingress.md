@@ -1,14 +1,14 @@
 # Operator ingress — command relai from your phone
 
-Every other relai identity is project-scoped: an agent token = one project. The
+Every other relai identity is repo-scoped: an agent token = one repo. The
 **operator ingress** is a single *owner* identity that acts across **all** your
-projects, driven by a remote/mobile Claude session. The motivating use case:
+repos, driven by a remote/mobile Claude session. The motivating use case:
 you're out, an urgent issue lands, you tell Claude on your phone, and it
-dispatches into the right project — most importantly, it can **unblock** a
+dispatches into the right repo — most importantly, it can **unblock** a
 stalled worker.
 
 This is not an autonomous meta-orchestrator. Phone-Claude is the brain; relai
-just lets one identity you command reach across projects.
+just lets one identity you command reach across repos.
 
 ## How it works
 
@@ -16,8 +16,8 @@ The operator surface is built almost entirely from machinery relai already has:
 
 - **Owner identity.** The API authenticates an owner via the service-admin token
   plus an `X-Owner-Id: usr_…` header (`packages/api/src/plugins/auth.ts`). Owner
-  requests are scoped to projects where `projects.ownerId` matches — list reads
-  filter to owned projects, and `assertProjectAccess()` gates every write.
+  requests are scoped to repos where `repos.ownerId` matches — list reads
+  filter to owned repos, and `assertRepoAccess()` gates every write.
 - **Unblock = a human reply.** The blocked-task watcher
   (`packages/api/src/lib/router/scheduler.ts`) resumes any `blocked` task the
   moment a message on its `metadata.blockedThreadId` thread is from `"human"`
@@ -31,13 +31,13 @@ The operator surface is built almost entirely from machinery relai already has:
 ### Operator MCP toolset (owner mode)
 
 Run the MCP server in **owner mode** (set `API_OWNER_TOKEN` + `OWNER_ID` instead
-of `API_SECRET` + `AGENT_ID` + `PROJECT_ID`). It then exposes a small operator
+of `API_SECRET` + `AGENT_ID` + `REPO_ID`). It then exposes a small operator
 toolset instead of the 13 per-agent tools. Each tool addresses a resource by id,
-so no `projectId` argument is needed — the owner token scopes everything.
+so no `repoId` argument is needed — the owner token scopes everything.
 
 | Tool | Purpose | Underlying call |
 |---|---|---|
-| `list_attention` | Everything across your projects that needs you: `blocked`, `pending_verification`, `proposed`. Each task carries its `projectId` and, when blocked, its `blockedThreadId`. | `GET /tasks?status=…` |
+| `list_attention` | Everything across your repos that needs you: `blocked`, `pending_verification`, `proposed`. Each task carries its `repoId` and, when blocked, its `blockedThreadId`. | `GET /tasks?status=…` |
 | `get_task` | Full detail of one task before you act (the worker's question, metadata). | `GET /tasks/:id` |
 | `reply_human` | The unblock primitive — reply on a task's `blockedThreadId`; the watcher resumes the worker with your answer. | `POST /threads/:id/messages` (recorded as `human`) |
 | `review_task` | Approve/reject a reviewer-gated task in `pending_verification`. | `POST /tasks/:id/review` |
@@ -53,7 +53,7 @@ with `TRANSPORT=http` so a remote client can connect. Owner-mode env:
 ```bash
 API_URL=https://<your-relai-api>        # the deployed API
 API_OWNER_TOKEN=<service-admin token>   # = the API's SERVICE_ADMIN_TOKEN
-OWNER_ID=usr_<your-user-id>             # the users.id you own projects under
+OWNER_ID=usr_<your-user-id>             # the users.id you own repos under
 TRANSPORT=http
 MCP_PORT=3001
 ```
@@ -68,11 +68,11 @@ MCP_PORT=3001
 > network) — never bind it to `0.0.0.0` / expose `MCP_PORT` to the public
 > internet directly.
 
-### 2. Make sure your projects have an owner
+### 2. Make sure your repos have an owner
 
-`projects.ownerId` is null for self-hosted projects created via the legacy
+`repos.ownerId` is null for self-hosted repos created via the legacy
 `API_SECRET` path. For the operator ingress to see them, create (or back-fill)
-projects under your `users` row so `ownerId` is set. Projects created through
+repos under your `users` row so `ownerId` is set. Repos created through
 the service-admin path (service-admin token + `X-Owner-Id`) are stamped
 automatically.
 

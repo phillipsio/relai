@@ -25,7 +25,7 @@ const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/
 
 let app: FastifyInstance;
 const db = createDb(DB_URL);
-let projectId: string;
+let repoId: string;
 let orchestratorId: string;
 let threadId: string;
 
@@ -47,7 +47,7 @@ async function newAgent(opts: {
   const res = await app.inject({
     method: "POST", url: "/agents", headers: ADMIN,
     body: JSON.stringify({
-      projectId,
+      repoId,
       name:           opts.name,
       role:           opts.role,
       specialization: opts.specialization,
@@ -102,23 +102,23 @@ beforeAll(async () => {
   await app.ready();
 
   const project = await app.inject({
-    method: "POST", url: "/projects", headers: ADMIN,
+    method: "POST", url: "/repos", headers: ADMIN,
     body: JSON.stringify({ name: "__test__ message-loop" }),
   });
-  projectId = project.json().data.id;
+  repoId = project.json().data.id;
 
   orchestratorId = await newAgent({ name: "orch", role: "orchestrator" });
 
   const thread = await app.inject({
     method: "POST", url: "/threads", headers: ADMIN,
-    body: JSON.stringify({ projectId, title: "message-loop test thread" }),
+    body: JSON.stringify({ repoId, title: "message-loop test thread" }),
   });
   threadId = thread.json().data.id;
 });
 
 afterAll(async () => {
-  if (projectId) {
-    await app.inject({ method: "DELETE", url: `/projects/${projectId}`, headers: ADMIN });
+  if (repoId) {
+    await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
 });
@@ -126,8 +126,8 @@ afterAll(async () => {
 beforeEach(async () => {
   // Wipe per-test state: messages on the thread, worker agents, any tasks.
   await db.delete(messagesTable).where(eq(messagesTable.threadId, threadId));
-  await db.delete(tasksTable).where(eq(tasksTable.projectId, projectId));
-  await db.delete(agentsTable).where(and(eq(agentsTable.projectId, projectId), eq(agentsTable.role, "worker")));
+  await db.delete(tasksTable).where(eq(tasksTable.repoId, repoId));
+  await db.delete(agentsTable).where(and(eq(agentsTable.repoId, repoId), eq(agentsTable.role, "worker")));
 });
 
 async function getOrchestrator() {
@@ -140,14 +140,14 @@ describe("handleMessage — scope filter", () => {
     const otherId = await newAgent({ name: "other", role: "worker" });
     const sender  = await newAgent({ name: "sender", role: "worker" });
     const msg = await newMessage({ type: "status", fromAgent: sender, toAgent: otherId });
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
     const reloaded = await reloadMessage(msg.id);
     expect(reloaded.readBy).not.toContain(orchestratorId);
   });
 
   it("skips messages from the orchestrator itself", async () => {
     const msg = await newMessage({ type: "status", fromAgent: orchestratorId });
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
     const reloaded = await reloadMessage(msg.id);
     expect(reloaded.readBy).not.toContain(orchestratorId);
   });
@@ -155,7 +155,7 @@ describe("handleMessage — scope filter", () => {
   it("processes messages addressed to the orchestrator", async () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg = await newMessage({ type: "status", fromAgent: sender, toAgent: orchestratorId });
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
     const reloaded = await reloadMessage(msg.id);
     expect(reloaded.readBy).toContain(orchestratorId);
   });
@@ -163,7 +163,7 @@ describe("handleMessage — scope filter", () => {
   it("processes broadcast messages (toAgent null)", async () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg = await newMessage({ type: "status", fromAgent: sender });
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
     const reloaded = await reloadMessage(msg.id);
     expect(reloaded.readBy).toContain(orchestratorId);
   });
@@ -175,11 +175,11 @@ describe("handleMessage — status / reply", () => {
     const msg = await newMessage({ type: "status", fromAgent: sender });
 
     const beforeMsgs = await listMessages();
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
     const afterMsgs = await listMessages();
 
     expect(afterMsgs.length).toBe(beforeMsgs.length); // no new messages sent
-    const taskRows = await db.select().from(tasksTable).where(eq(tasksTable.projectId, projectId));
+    const taskRows = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
     expect(taskRows).toHaveLength(0);
     const reloaded = await reloadMessage(msg.id);
     expect(reloaded.readBy).toContain(orchestratorId);
@@ -189,9 +189,9 @@ describe("handleMessage — status / reply", () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg = await newMessage({ type: "reply", fromAgent: sender });
 
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
-    const taskRows = await db.select().from(tasksTable).where(eq(tasksTable.projectId, projectId));
+    const taskRows = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
     expect(taskRows).toHaveLength(0);
     const reloaded = await reloadMessage(msg.id);
     expect(reloaded.readBy).toContain(orchestratorId);
@@ -204,9 +204,9 @@ describe("handleMessage — escalation", () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg    = await newMessage({ type: "escalation", fromAgent: sender, body: "Stuck on auth" });
 
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
-    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.projectId, projectId));
+    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
     expect(newTasks).toHaveLength(1);
     expect(newTasks[0]).toMatchObject({ priority: "high", specialization: "architect", status: "assigned", assignedTo: senior });
 
@@ -223,9 +223,9 @@ describe("handleMessage — escalation", () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg    = await newMessage({ type: "escalation", fromAgent: sender });
 
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
-    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.projectId, projectId));
+    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
     expect(newTasks).toHaveLength(1);
     expect(newTasks[0].assignedTo).toBe(arch);
   });
@@ -235,9 +235,9 @@ describe("handleMessage — escalation", () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg    = await newMessage({ type: "escalation", fromAgent: sender });
 
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
-    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.projectId, projectId));
+    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
     expect(newTasks).toHaveLength(0);
     expect(junior).toBeTruthy(); // referenced so lint doesn't strip
 
@@ -258,7 +258,7 @@ describe("handleMessage — decision", () => {
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg    = await newMessage({ type: "decision", fromAgent: sender, body: "Use JWT" });
 
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const broadcasted = (await listMessages()).filter((m) => m.fromAgent === orchestratorId && m.type === "decision");
     const recipients = new Set(broadcasted.map((m) => m.toAgent));
@@ -276,7 +276,7 @@ describe("handleMessage — decision", () => {
     await setLastSeen(sender, 11 * 60 * 1000);
     const msg = await newMessage({ type: "decision", fromAgent: sender });
 
-    await handleMessage({ db, anthropic: null, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const broadcasts = (await listMessages())
       .filter((m) => m.fromAgent === orchestratorId && m.type === "decision");
@@ -300,10 +300,10 @@ describe("handleMessage — handoff", () => {
       taskSpecialization: "writer",
       taskPriority: "high",
     });
-    await handleMessage({ db, anthropic: ai, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: ai, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const created = await db.select().from(tasksTable)
-      .where(and(eq(tasksTable.projectId, projectId), eq(tasksTable.title, "Implement auth endpoints")));
+      .where(and(eq(tasksTable.repoId, repoId), eq(tasksTable.title, "Implement auth endpoints")));
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ priority: "high", specialization: "writer", domains: ["typescript", "api"], createdBy: orchestratorId });
 
@@ -317,7 +317,7 @@ describe("handleMessage — handoff", () => {
     const msg = await newMessage({ type: "handoff", fromAgent: sender });
 
     const ai = makeAnthropic({ action: "forward", toAgent: target, messageBody: "Please handle this." });
-    await handleMessage({ db, anthropic: ai, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: ai, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const forwards = (await listMessages())
       .filter((m) => m.fromAgent === orchestratorId && m.toAgent === target && m.type === "handoff");
@@ -335,7 +335,7 @@ describe("handleMessage — question", () => {
     const msg = await newMessage({ type: "question", fromAgent: sender, body: "Which JWT lib?" });
 
     const ai = makeAnthropic({ action: "reply", messageBody: "Use jose with 15min expiry." });
-    await handleMessage({ db, anthropic: ai, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: ai, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const reply = (await listMessages())
       .find((m) => m.fromAgent === orchestratorId && m.type === "reply" && m.toAgent === sender);
@@ -352,7 +352,7 @@ describe("handleMessage — question", () => {
     const msg = await newMessage({ type: "question", fromAgent: sender });
 
     const ai = makeAnthropic({ action: "forward", toAgent: specialist, messageBody: "Can you take this?" });
-    await handleMessage({ db, anthropic: ai, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: ai, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const forwards = (await listMessages())
       .filter((m) => m.fromAgent === orchestratorId && m.toAgent === specialist && m.type === "question");
@@ -373,10 +373,10 @@ describe("handleMessage — finding", () => {
       taskDomains: ["api", "security"],
       taskPriority: "urgent",
     });
-    await handleMessage({ db, anthropic: ai, model: "test" }, projectId, await getOrchestrator(), msg);
+    await handleMessage({ db, anthropic: ai, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const created = await db.select().from(tasksTable)
-      .where(and(eq(tasksTable.projectId, projectId), eq(tasksTable.title, "Fix security issue")));
+      .where(and(eq(tasksTable.repoId, repoId), eq(tasksTable.title, "Fix security issue")));
     expect(created).toHaveLength(1);
     expect(created[0].priority).toBe("urgent");
   });
@@ -388,7 +388,7 @@ describe("runMessageLoopCycle", () => {
     await newMessage({ type: "status", fromAgent: sender });
     await newMessage({ type: "status", fromAgent: sender });
 
-    await runMessageLoopCycle({ db, anthropic: null, model: "test" }, projectId);
+    await runMessageLoopCycle({ db, anthropic: null, model: "test" }, repoId);
 
     const allMsgs = await listMessages();
     for (const m of allMsgs.filter((x) => x.fromAgent !== orchestratorId)) {
@@ -399,16 +399,16 @@ describe("runMessageLoopCycle", () => {
   it("is a no-op for projects without an orchestrator agent", async () => {
     // Spin a fresh project that has no orchestrator
     const otherProject = await app.inject({
-      method: "POST", url: "/projects", headers: ADMIN,
+      method: "POST", url: "/repos", headers: ADMIN,
       body: JSON.stringify({ name: "__test__ no-orch" }),
     });
-    const otherProjectId = otherProject.json().data.id;
+    const otherRepoId = otherProject.json().data.id;
     try {
       await expect(
-        runMessageLoopCycle({ db, anthropic: null, model: "test" }, otherProjectId),
+        runMessageLoopCycle({ db, anthropic: null, model: "test" }, otherRepoId),
       ).resolves.not.toThrow();
     } finally {
-      await app.inject({ method: "DELETE", url: `/projects/${otherProjectId}`, headers: ADMIN });
+      await app.inject({ method: "DELETE", url: `/repos/${otherRepoId}`, headers: ADMIN });
     }
   });
 });

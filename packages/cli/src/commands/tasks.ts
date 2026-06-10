@@ -33,7 +33,7 @@ export async function tasksCommand(options: { all?: boolean; status?: string }) 
   try {
     const status = options.status ?? (options.all ? undefined : "assigned,in_progress");
     const tasks = await client.getTasks({
-      projectId: config.projectId,
+      repoId: config.repoId,
       assignedTo: options.all ? undefined : config.agentId,
       status,
     });
@@ -105,7 +105,7 @@ export async function taskCreateCommand(options: {
 
   let assignedTo: string | undefined;
   if (options.to) {
-    assignedTo = await resolveAgentRef(client, config.projectId, options.to);
+    assignedTo = await resolveAgentRef(client, config.repoId, options.to);
   }
 
   const domains = options.domains
@@ -137,7 +137,7 @@ export async function taskCreateCommand(options: {
       console.error(chalk.red("--verify-kind reviewer_agent requires --verify-reviewer <agent> (or use --review-by <agent>)."));
       process.exit(1);
     }
-    verifyReviewerId = await resolveAgentRef(client, config.projectId, reviewerRef);
+    verifyReviewerId = await resolveAgentRef(client, config.repoId, reviewerRef);
   } else if (options.verifyReviewer) {
     console.error(chalk.red("--verify-reviewer is only valid with --verify-kind reviewer_agent."));
     process.exit(1);
@@ -146,7 +146,7 @@ export async function taskCreateCommand(options: {
   const spinner = ora("Creating task...").start();
   try {
     const task = await client.createTask({
-      projectId:   config.projectId,
+      repoId:   config.repoId,
       createdBy:   config.agentId,
       title,
       description,
@@ -224,7 +224,7 @@ export async function taskCommitCommand(
   const decision = options.reject ? "reject" : "commit";
   let assignedTo: string | undefined;
   if (decision === "commit" && options.to) {
-    assignedTo = await resolveAgentRef(client, config.projectId, options.to);
+    assignedTo = await resolveAgentRef(client, config.repoId, options.to);
   }
 
   const spinner = ora(decision === "reject" ? "Rejecting proposal..." : "Committing proposal...").start();

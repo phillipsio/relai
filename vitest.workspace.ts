@@ -5,4 +5,5 @@ export default defineWorkspace([
   "packages/api/vitest.config.ts",
   "packages/claude-worker",
   "packages/cli",
+  "shared/git",
 ]);

@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ApiClient } from "./api-client.js";
 import { buildTools, buildOperatorTools } from "./tools.js";
+import { checkRepoMatch } from "@getrelai/git";
 
 // Report the package version (dist/index.js → ../package.json) so the MCP
 // handshake matches the published package.
@@ -138,8 +139,28 @@ apiClient.getUnread(AGENT_ID!, REPO_ID!)
 setInterval(pollInbox, POLL_INTERVAL_MS);
 }
 
+// Repo guard: in agent mode, refuse to serve if this process isn't running in a
+// clone of the agent's repo (no-ops when the repo has no url or under
+// RELAI_SKIP_REPO_CHECK). Owner mode is exempt — it acts across all repos and
+// has no single working tree. A null url / unreachable API just skips the check.
+async function assertRepoOrExit() {
+  if (OWNER_MODE) return;
+  let repoUrl: string | null = null;
+  try {
+    repoUrl = (await apiClient.getRepo(REPO_ID!))?.repoUrl ?? null;
+  } catch {
+    return; // can't resolve the repo (e.g. API unreachable) — don't hard-block
+  }
+  const check = checkRepoMatch(process.cwd(), repoUrl);
+  if (!check.ok) {
+    console.error(`[relai-mcp] ${check.reason}\n  ${check.fix}`);
+    process.exit(1);
+  }
+}
+
 // Transport
 async function main() {
+  await assertRepoOrExit();
   if (TRANSPORT === "stdio") {
     const transport = new StdioServerTransport();
     await server.connect(transport);

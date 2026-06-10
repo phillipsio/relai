@@ -2,11 +2,26 @@ import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { MCPServerConfig } from "@github/copilot-sdk";
 import { loadConfig } from "./config.js";
 import { buildPrompt } from "./prompt.js";
+import { checkRepoMatch, fetchRepoUrl } from "@getrelai/git";
+
+// Refuse to start if REPO_PATH isn't a clone of this agent's repo. No-ops when
+// the repo has no url or under RELAI_SKIP_REPO_CHECK; an unreachable API just
+// skips the check rather than blocking startup on a network blip.
+async function assertRepoOrExit(config: ReturnType<typeof loadConfig>): Promise<void> {
+  const repoUrl = await fetchRepoUrl(config.apiUrl, config.repoId, config.apiSecret);
+  const check = checkRepoMatch(config.repoPath, repoUrl);
+  if (!check.ok) {
+    console.error(`[copilot-worker] Repo check failed: ${check.reason}\n  ${check.fix}`);
+    process.exit(1);
+  }
+}
 
 async function main() {
   const config = loadConfig();
 
   console.log(`[copilot-worker] Starting — agent ${config.agentId}, poll every ${config.pollIntervalMs}ms`);
+
+  await assertRepoOrExit(config);
 
   const client = new CopilotClient();
   await client.start();

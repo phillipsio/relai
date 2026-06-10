@@ -36,6 +36,11 @@ export class ApiClient {
     return json.data as T;
   }
 
+  // Repos
+  getRepo(id: string) {
+    return this.request<{ id: string; repoUrl?: string | null }>("GET", `/repos/${id}`);
+  }
+
   // Tasks
   getTasks(params: { repoId?: string; status?: string; assignedTo?: string }) {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);

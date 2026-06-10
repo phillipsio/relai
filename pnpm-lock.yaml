@@ -59,6 +59,10 @@ importers:
         version: 2.1.9(@types/node@22.19.17)
 
   packages/claude-worker:
+    dependencies:
+      '@getrelai/git':
+        specifier: workspace:*
+        version: link:../../shared/git
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -75,6 +79,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@getrelai/git':
+        specifier: workspace:*
+        version: link:../../shared/git
       '@inquirer/prompts':
         specifier: ^5.0.0
         version: 5.5.0
@@ -103,6 +110,9 @@ importers:
 
   packages/copilot-worker:
     dependencies:
+      '@getrelai/git':
+        specifier: workspace:*
+        version: link:../../shared/git
       '@github/copilot-sdk':
         specifier: ^0.1.32
         version: 0.1.32
@@ -119,6 +129,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@getrelai/git':
+        specifier: workspace:*
+        version: link:../../shared/git
       '@modelcontextprotocol/sdk':
         specifier: 1.6.0
         version: 1.6.0
@@ -227,6 +240,8 @@ importers:
       drizzle-kit:
         specifier: ^0.27.0
         version: 0.27.2
+
+  shared/git: {}
 
   shared/types: {}
 

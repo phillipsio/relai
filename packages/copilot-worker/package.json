@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@getrelai/git": "workspace:*",
     "@github/copilot-sdk": "^0.1.32"
   },
   "devDependencies": {

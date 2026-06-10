@@ -4,7 +4,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig, writeConfig, readConfig, configPath } from "../config.js";
 import { CliApiClient } from "../api.js";
-import { getGitRoot, getOriginUrl, normalizeRepoUrl, repoNameFromUrl } from "../lib/repo.js";
+import { getGitRoot, getOriginUrl, normalizeRepoUrl, repoNameFromUrl } from "@getrelai/git";
 import {
   claimWorkingDir,
   hashToken,
@@ -149,7 +149,7 @@ export async function loginCommand(opts: {
     const project = await authedClient.getRepo(repoId);
     repoUrl = project.repoUrl ?? null;
   } catch (err) {
-    console.error(chalk.red("Could not load project to validate working directory"));
+    console.error(chalk.red("Could not load repo to validate working directory"));
     console.error(chalk.dim(String(err)));
     process.exit(1);
   }

@@ -249,6 +249,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `API_OWNER_TOKEN` | — | MCP server owner-mode credential (= the API's `SERVICE_ADMIN_TOKEN`). When set, the MCP server runs the operator toolset across all the owner's repos instead of the per-agent tools. See `docs/operator-ingress.md`. |
 | `OWNER_ID` | — | MCP owner-mode user id (`usr_…`); required alongside `API_OWNER_TOKEN`. Sent as `X-Owner-Id`. |
 | `RELAI_CONFIG_DIR` | `~/.config/relai` | Override CLI config location (multi-identity testing) |
+| `RELAI_SKIP_REPO_CHECK` | — | Escape hatch for the repo-access guard. When set, CLI login / MCP agent-mode / the workers skip the "you must be in a clone of this agent's repo" check. |
 
 The `dev` scripts for `api` and `mcp-server` load `.env` automatically via `tsx watch --env-file=../../.env`. The `web` package (Vite) does not use server env vars.
 

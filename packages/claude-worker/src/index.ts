@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import { loadConfig } from "./config.js";
 import { buildPrompt } from "./prompt.js";
 import { isFatalError } from "./errors.js";
+import { checkRepoMatch, fetchRepoUrl } from "@getrelai/git";
 
 const config = loadConfig();
 const mcpServerPath = new URL("../../mcp-server/dist/index.js", import.meta.url).pathname;
@@ -127,7 +128,21 @@ async function runSession(): Promise<void> {
   }
 }
 
+// Refuse to start if REPO_PATH isn't a clone of this agent's repo — a worker in
+// the wrong tree produces garbage commits. No-ops when the repo has no url or
+// under RELAI_SKIP_REPO_CHECK; an unreachable API just skips the check (don't
+// block startup on a transient network blip).
+async function assertRepoOrExit(): Promise<void> {
+  const repoUrl = await fetchRepoUrl(config.apiUrl, config.repoId, config.apiSecret);
+  const check = checkRepoMatch(config.repoPath, repoUrl);
+  if (!check.ok) {
+    console.error(`[claude-worker] Repo check failed: ${check.reason}\n  ${check.fix}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
+  await assertRepoOrExit();
   let consecutiveFatal = 0;
   while (true) {
     await heartbeat();

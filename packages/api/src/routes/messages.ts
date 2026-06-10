@@ -36,10 +36,16 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const scope = await assertThreadAccess(request, db, request.params.id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
 
+    // Owner-authenticated callers (service-admin + X-Owner-Id, no agent identity)
+    // post as "human". This is the sender watchBlockedTasks keys on to resume a
+    // blocked task, and it avoids trusting a client-supplied sender on the owner
+    // path. Agent and legacy callers keep the body's fromAgent unchanged.
+    const fromAgent = request.ownerId && !request.agent ? "human" : body.data.fromAgent;
+
     const [message] = await db.insert(messages).values({
       id:        newId("msg"),
       threadId:  request.params.id,
-      fromAgent: body.data.fromAgent,
+      fromAgent,
       toAgent:   body.data.toAgent,
       type:      body.data.type,
       body:      body.data.body,
@@ -65,18 +71,22 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
           priority:       "urgent",
           domains:        [],
           specialization: "architect",
-          createdBy:      body.data.fromAgent,
+          createdBy:      fromAgent,
           metadata: {
             escalationThreadId:  request.params.id,
             escalationMessageId: message.id,
-            escalatedFrom:       body.data.fromAgent,
+            escalatedFrom:       fromAgent,
           },
         });
       }
     }
 
-    // Auto-subscribe sender + recipient (if any) to the thread.
-    await ensureSubscription(db, body.data.fromAgent, "thread", request.params.id);
+    // Auto-subscribe sender + recipient (if any) to the thread. "human" (the
+    // owner path) has no agent row — subscriptions.agentId is an FK — so skip
+    // it; the owner reads via polling, not SSE.
+    if (fromAgent !== "human") {
+      await ensureSubscription(db, fromAgent, "thread", request.params.id);
+    }
     if (body.data.toAgent) {
       await ensureSubscription(db, body.data.toAgent, "thread", request.params.id);
     }

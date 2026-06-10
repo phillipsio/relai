@@ -364,3 +364,111 @@ export function buildTools(client: ApiClient, agentId: string, projectId: string
     },
   ];
 }
+
+// Operator (owner) toolset — used when the MCP server runs in owner mode (an
+// owner credential instead of a per-agent token). These act across ALL of the
+// owner's projects: the API scopes by the X-Owner-Id the client sends, and each
+// resource is addressed by its own id, so no projectId argument is needed. The
+// human (you, e.g. from a phone) drives these to triage and unblock work
+// remotely. Keep this set small — it's a different surface from the 13 agent
+// tools, not an extension of them.
+export function buildOperatorTools(client: ApiClient) {
+  return [
+    {
+      name: "list_attention",
+      description:
+        "List everything across ALL your projects that needs you right now: tasks that are 'blocked' " +
+        "(a worker is waiting on your input), 'pending_verification' (awaiting a review decision), or " +
+        "'proposed' (a worker's task awaiting your commit). Call this first to see what to act on. Each " +
+        "task carries its projectId and, for blocked tasks, metadata.blockedThreadId — the thread to " +
+        "post a reply on (via reply_human) to resume the worker.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const tasks = await client.getTasks({ status: "blocked,pending_verification,proposed" });
+        return {
+          content: [{
+            type: "text" as const,
+            text: tasks.length === 0
+              ? "Nothing needs your attention across your projects right now."
+              : JSON.stringify({ tasks }, null, 2),
+          }],
+        };
+      },
+    },
+
+    {
+      name: "get_task",
+      description:
+        "Fetch one task's full detail by id — title, description, status, assignee, and metadata " +
+        "(including blockedThreadId and the worker's question/findings). Use this to understand a " +
+        "blocked or proposed task before you reply, review, or commit.",
+      inputSchema: z.object({
+        taskId: z.string().describe("The task id to fetch."),
+      }),
+      handler: async (input: { taskId: string }) => {
+        const task = await client.getTask(input.taskId);
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
+
+    {
+      name: "reply_human",
+      description:
+        "Post a reply to a thread AS THE HUMAN owner. This is how you unblock a stalled task: reply on " +
+        "its blockedThreadId (from list_attention) and the server resumes the worker with your answer. " +
+        "The message is recorded as from 'human' regardless of what you pass. Be specific — the worker " +
+        "acts on exactly what you write.",
+      inputSchema: z.object({
+        threadId: z.string().describe("The thread to reply on. For an unblock, use the task's metadata.blockedThreadId."),
+        body:     z.string().min(1).describe("Your answer/instruction to the worker."),
+        type:     z.enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"]).optional().describe("Defaults to 'reply'."),
+      }),
+      handler: async (input: { threadId: string; body: string; type?: string }) => {
+        const message = await client.sendMessage(input.threadId, {
+          fromAgent: "human",
+          type: input.type ?? "reply",
+          body: input.body,
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }] };
+      },
+    },
+
+    {
+      name: "review_task",
+      description:
+        "Submit a review decision on a task whose completion is gated on a reviewer (verifyKind=" +
+        "'reviewer_agent') and is in 'pending_verification'. 'approve' promotes it to 'completed'; " +
+        "'reject' sends it back to 'assigned' for the worker to iterate. Include a note on reject.",
+      inputSchema: z.object({
+        taskId:   z.string().describe("The task id to review."),
+        decision: z.enum(["approve", "reject"]).describe("Approve or reject."),
+        note:     z.string().max(2_000).optional().describe("Required for reject; useful for approve."),
+      }),
+      handler: async (input: { taskId: string; decision: "approve" | "reject"; note?: string }) => {
+        const task = await client.submitReview(input.taskId, { decision: input.decision, note: input.note });
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
+
+    {
+      name: "commit_proposal",
+      description:
+        "Act on a worker's proposed task (status 'proposed'). 'commit' (default) moves it into the " +
+        "lifecycle — set assignedTo to an agent id, '@auto' for the router, or omit for the project " +
+        "default. 'reject' cancels it and notifies the proposer (include a note).",
+      inputSchema: z.object({
+        taskId:     z.string().describe("The proposed task id."),
+        decision:   z.enum(["commit", "reject"]).optional().describe("Defaults to 'commit'."),
+        assignedTo: z.string().optional().describe("Agent id, '@auto', or omit for the project default (commit only)."),
+        note:       z.string().max(2_000).optional().describe("Explanation, especially for reject."),
+      }),
+      handler: async (input: { taskId: string; decision?: "commit" | "reject"; assignedTo?: string; note?: string }) => {
+        const body: Record<string, unknown> = { decision: input.decision ?? "commit" };
+        if (input.assignedTo !== undefined) body.assignedTo = input.assignedTo;
+        if (input.note !== undefined) body.note = input.note;
+        const task = await client.commitTask(input.taskId, body);
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
+  ];
+}

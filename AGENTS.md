@@ -153,6 +153,8 @@ Thirteen tools with model-agnostic descriptions (work with any MCP-compatible cl
 
 Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
+**Owner mode (operator ingress).** Set `API_OWNER_TOKEN` (= the API's `SERVICE_ADMIN_TOKEN`) + `OWNER_ID=usr_…` instead of `API_SECRET`/`AGENT_ID`/`PROJECT_ID`, and the server exposes a separate **operator toolset** (`buildOperatorTools`) instead of the 13 agent tools: `list_attention`, `get_task`, `reply_human`, `review_task`, `commit_proposal`. These act across **all** the owner's projects (the client sends `X-Owner-Id`; the API scopes by `projects.ownerId`), addressing each resource by id — no `projectId` argument. `reply_human` posts to a thread as `fromAgent="human"`, which is what the blocked-task watcher keys on to resume a stalled task, so it's the remote unblock primitive. Heartbeat/inbox polling are skipped (no single agent identity). See `docs/operator-ingress.md`.
+
 **MCP SDK version**: pinned to `1.6.0`. v1.29+ adds an `execution.taskSupport` field to tool definitions that Claude Code v2.x does not recognize, causing tools to be silently excluded from the deferred tool list even when the server is connected. Do not upgrade past 1.6.0 without testing.
 
 **Tool handler return format**: all handlers must return `{ content: [{ type: "text", text: string }] }`. The SDK does not automatically wrap plain object returns — returning a plain object results in the tool appearing to succeed but delivering no content to the model.
@@ -243,6 +245,9 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
 | `AGENT_ID` | — | Set after registering an agent |
 | `PROJECT_ID` | — | Set after creating a project |
+| `SERVICE_ADMIN_TOKEN` | — | Multi-tenant service-admin credential. With an `X-Owner-Id: usr_…` header it scopes API reads/writes to that owner's projects (`projects.ownerId`). The closed cloud dashboard uses it; also the owner credential for the operator ingress. |
+| `API_OWNER_TOKEN` | — | MCP server owner-mode credential (= the API's `SERVICE_ADMIN_TOKEN`). When set, the MCP server runs the operator toolset across all the owner's projects instead of the per-agent tools. See `docs/operator-ingress.md`. |
+| `OWNER_ID` | — | MCP owner-mode user id (`usr_…`); required alongside `API_OWNER_TOKEN`. Sent as `X-Owner-Id`. |
 | `RELAI_CONFIG_DIR` | `~/.config/relai` | Override CLI config location (multi-identity testing) |
 
 The `dev` scripts for `api` and `mcp-server` load `.env` automatically via `tsx watch --env-file=../../.env`. The `web` package (Vite) does not use server env vars.

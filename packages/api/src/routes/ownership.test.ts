@@ -374,6 +374,49 @@ describe("ownership: routing-log cross-tenant", () => {
   });
 });
 
+describe("ownership: owner posts as human (unblock path)", () => {
+  it("owner-authenticated message is recorded as fromAgent='human'", async () => {
+    // Create a thread in tenant A via the service-admin (owner) path.
+    const thread = await app.inject({
+      method: "POST", url: "/threads",
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ projectId: projectAId, title: "blocked-question" }),
+    });
+    expect(thread.statusCode).toBe(201);
+    const threadId = thread.json().data.id;
+
+    // Owner replies. Even though the body names a different sender, the server
+    // stamps "human" — that's what watchBlockedTasks keys on to resume a task,
+    // and it keeps the owner path from trusting a client-supplied sender.
+    const msg = await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`,
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ fromAgent: "ignored", type: "reply", body: "use the staging DB" }),
+    });
+    expect(msg.statusCode).toBe(201);
+    expect(msg.json().data.fromAgent).toBe("human");
+  });
+
+  it("agent-authenticated message keeps the agent's own fromAgent", async () => {
+    const agentHeaders = { Authorization: `Bearer ${agentAToken}`, "Content-Type": "application/json" };
+    const thread = await app.inject({
+      method: "POST", url: "/threads",
+      headers: agentHeaders,
+      body: JSON.stringify({ projectId: projectAId, title: "agent-thread" }),
+    });
+    expect(thread.statusCode).toBe(201);
+    const threadId = thread.json().data.id;
+
+    const msg = await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`,
+      headers: agentHeaders,
+      body: JSON.stringify({ fromAgent: agentAId, type: "status", body: "working" }),
+    });
+    expect(msg.statusCode).toBe(201);
+    expect(msg.json().data.fromAgent).toBe(agentAId);
+  });
+});
+
 describe("ownership: legacy POST /projects without ownerId", () => {
   it("API_SECRET-created projects have null ownerId (self-host parity)", async () => {
     const res = await app.inject({

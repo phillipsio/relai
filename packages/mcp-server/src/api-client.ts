@@ -4,6 +4,10 @@
 export interface ApiClientConfig {
   baseUrl: string;
   secret: string;
+  // When set, the client authenticates as the cross-project owner: `secret` is
+  // the service-admin token and this id is sent as X-Owner-Id, so API handlers
+  // scope reads/writes to this owner's projects (see api/src/plugins/auth.ts).
+  ownerId?: string;
 }
 
 export class ApiClient {
@@ -15,6 +19,7 @@ export class ApiClient {
     this.headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.secret}`,
+      ...(config.ownerId ? { "X-Owner-Id": config.ownerId } : {}),
     };
   }
 

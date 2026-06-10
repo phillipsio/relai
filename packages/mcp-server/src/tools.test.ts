@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildTools } from "./tools.js";
+import { buildTools, buildOperatorTools } from "./tools.js";
 import type { ApiClient } from "./api-client.js";
 
 const AGENT_ID = "agent_test";
@@ -32,7 +32,7 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   } as unknown as ApiClient;
 }
 
-function getHandler(tools: ReturnType<typeof buildTools>, name: string) {
+function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>, name: string) {
   const tool = tools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool ${name} not found`);
   return tool.handler;
@@ -355,5 +355,64 @@ describe("create_task", () => {
     const result = await (handler as Function)({ title: "t", description: "d" });
     expect(result.content[0].type).toBe("text");
     expect(result.content[0].text).toContain("task_new");
+  });
+});
+
+describe("buildOperatorTools (owner mode)", () => {
+  it("exposes the operator toolset", () => {
+    const names = buildOperatorTools(mockClient()).map((t) => t.name);
+    expect(names).toEqual(
+      expect.arrayContaining(["list_attention", "get_task", "reply_human", "review_task", "commit_proposal"]),
+    );
+  });
+
+  it("list_attention queries blocked/pending_verification/proposed across ALL owned projects (no projectId)", async () => {
+    const getTasks = vi.fn().mockResolvedValue([
+      { id: "task_1", projectId: "proj_a", status: "blocked", metadata: { blockedThreadId: "thread_9" } },
+    ]);
+    const tools = buildOperatorTools(mockClient({ getTasks }));
+    const result = await getHandler(tools, "list_attention")({});
+    expect(getTasks).toHaveBeenCalledWith({ status: "blocked,pending_verification,proposed" });
+    // Wrapped in a record (strict-client safety) and surfaces the unblock thread.
+    const parsed = JSON.parse(result.content[0].text);
+    expect(Array.isArray(parsed)).toBe(false);
+    expect(result.content[0].text).toContain("thread_9");
+  });
+
+  it("list_attention reports an empty-state message when nothing needs attention", async () => {
+    const result = await getHandler(buildOperatorTools(mockClient()), "list_attention")({});
+    expect(result.content[0].text).toBe("Nothing needs your attention across your projects right now.");
+  });
+
+  it("reply_human posts to the thread as 'human' (the unblock trigger), defaulting type to 'reply'", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ id: "msg_1", fromAgent: "human" });
+    const tools = buildOperatorTools(mockClient({ sendMessage }));
+    await getHandler(tools, "reply_human")({ threadId: "thread_9", body: "use the staging DB" });
+    expect(sendMessage).toHaveBeenCalledWith("thread_9", {
+      fromAgent: "human",
+      type: "reply",
+      body: "use the staging DB",
+    });
+  });
+
+  it("review_task forwards approve/reject to submitReview", async () => {
+    const submitReview = vi.fn().mockResolvedValue({ id: "task_1", status: "completed" });
+    const tools = buildOperatorTools(mockClient({ submitReview }));
+    await getHandler(tools, "review_task")({ taskId: "task_1", decision: "approve" });
+    expect(submitReview).toHaveBeenCalledWith("task_1", { decision: "approve", note: undefined });
+  });
+
+  it("commit_proposal commits with an assignee and omits unset fields", async () => {
+    const commitTask = vi.fn().mockResolvedValue({ id: "task_1", status: "assigned" });
+    const tools = buildOperatorTools(mockClient({ commitTask }));
+    await getHandler(tools, "commit_proposal")({ taskId: "task_1", assignedTo: "@auto" });
+    expect(commitTask).toHaveBeenCalledWith("task_1", { decision: "commit", assignedTo: "@auto" });
+  });
+
+  it("commit_proposal forwards a reject decision with a note", async () => {
+    const commitTask = vi.fn().mockResolvedValue({ id: "task_1", status: "cancelled" });
+    const tools = buildOperatorTools(mockClient({ commitTask }));
+    await getHandler(tools, "commit_proposal")({ taskId: "task_1", decision: "reject", note: "duplicate" });
+    expect(commitTask).toHaveBeenCalledWith("task_1", { decision: "reject", note: "duplicate" });
   });
 });

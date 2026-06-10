@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ApiClient } from "./api-client.js";
-import { buildTools } from "./tools.js";
+import { buildTools, buildOperatorTools } from "./tools.js";
 
 // Report the package version (dist/index.js → ../package.json) so the MCP
 // handshake matches the published package.
@@ -22,43 +22,64 @@ const {
   API_SECRET,
   AGENT_ID,
   PROJECT_ID,
+  API_OWNER_TOKEN,
+  OWNER_ID,
   TRANSPORT = "stdio",
 } = process.env;
 
-if (!API_SECRET) {
-  console.error("[relai-mcp] API_SECRET is required");
-  process.exit(1);
-}
-if (!AGENT_ID) {
-  console.error("[relai-mcp] AGENT_ID is required — register your agent first and pass its ID here");
-  process.exit(1);
-}
-if (!PROJECT_ID) {
-  console.error("[relai-mcp] PROJECT_ID is required");
-  process.exit(1);
+// Two modes. Owner mode (API_OWNER_TOKEN + OWNER_ID) exposes the operator
+// toolset that acts across ALL of the owner's projects — for remote/mobile
+// triage and unblocking. Otherwise the default per-agent mode exposes the 13
+// agent tools scoped to one project.
+const OWNER_MODE = Boolean(API_OWNER_TOKEN);
+
+if (OWNER_MODE) {
+  if (!OWNER_ID || !OWNER_ID.startsWith("usr_")) {
+    console.error("[relai-mcp] owner mode requires OWNER_ID (a 'usr_…' id) alongside API_OWNER_TOKEN");
+    process.exit(1);
+  }
+} else {
+  if (!API_SECRET) {
+    console.error("[relai-mcp] API_SECRET is required");
+    process.exit(1);
+  }
+  if (!AGENT_ID) {
+    console.error("[relai-mcp] AGENT_ID is required — register your agent first and pass its ID here");
+    process.exit(1);
+  }
+  if (!PROJECT_ID) {
+    console.error("[relai-mcp] PROJECT_ID is required");
+    process.exit(1);
+  }
 }
 
 const apiClient = new ApiClient({
   baseUrl: API_URL,
-  secret: API_SECRET,
+  secret: OWNER_MODE ? API_OWNER_TOKEN! : API_SECRET!,
+  ownerId: OWNER_MODE ? OWNER_ID : undefined,
 });
 
 const server = new McpServer({
-  name: "relai",
+  name: OWNER_MODE ? "relai-operator" : "relai",
   version: pkg.version,
 });
 
-// Register all tools
-const tools = buildTools(apiClient, AGENT_ID, PROJECT_ID);
+// Register tools for the active mode.
+const tools = OWNER_MODE
+  ? buildOperatorTools(apiClient)
+  : buildTools(apiClient, AGENT_ID!, PROJECT_ID!);
 
 for (const tool of tools) {
   server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);
 }
 
+// Heartbeat + inbox polling are per-agent concerns — skipped in owner mode,
+// which has no single agent identity or project to poll.
+if (!OWNER_MODE) {
 // Start heartbeat — keeps agent "online" in the project without Claude calls
 const HEARTBEAT_INTERVAL_MS = 60_000;
 setInterval(() => {
-  apiClient.heartbeat(AGENT_ID).catch(() => {
+  apiClient.heartbeat(AGENT_ID!).catch(() => {
     // Heartbeat failures are non-fatal — API may be temporarily unreachable
   });
 }, HEARTBEAT_INTERVAL_MS);
@@ -107,6 +128,7 @@ apiClient.getUnread(AGENT_ID!, PROJECT_ID!)
   .catch(() => {});
 
 setInterval(pollInbox, POLL_INTERVAL_MS);
+}
 
 // Transport
 async function main() {

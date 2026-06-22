@@ -132,7 +132,10 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         "'question' when you are blocked and need input before proceeding; " +
         "'escalation' when a decision needs human judgment; " +
         "'status' for routine progress updates. " +
-        "Be specific in the body — the receiver has no other context.",
+        "Be specific in the body — the receiver has no other context. " +
+        "IMPORTANT: if you were asked something via a relai message or task (toAgent=you, or a task " +
+        "assigned to you), your answer belongs here, posted on that same threadId — not just written " +
+        "in your own session output. The requester only sees what you post through send_message.",
       inputSchema: z.object({
         threadId: z.string().describe("The thread to post to. Use list_threads to find or create one."),
         type: z
@@ -171,7 +174,10 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
       description:
         "Retrieve messages sent to this agent that have not been read yet. Call this at session " +
         "start and after completing a task to check for new handoffs, findings, or decisions from " +
-        "other agents. Always read messages before starting work on a related task.",
+        "other agents. Always read messages before starting work on a related task. " +
+        "Any message that expects a reply (a question, a request, an instruction from a human " +
+        "operator) must be answered with send_message on its threadId — answering in your own " +
+        "session output is invisible to the sender.",
       inputSchema: z.object({}),
       handler: async () => {
         const messages = await client.getUnread(agentId, repoId);
@@ -180,7 +186,11 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
             type: "text" as const,
             text: messages.length === 0
               ? "No unread messages."
-              : JSON.stringify({ messages }, null, 2),
+              : JSON.stringify({
+                  messages,
+                  reminder: "If any of the above needs a reply, call send_message with the same " +
+                    "threadId — your sender will not see anything you only write in your own session.",
+                }, null, 2),
           }],
         };
       },
@@ -269,11 +279,21 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
         "start of every session — it replaces the get_my_tasks + get_unread_messages + list_threads " +
         "calls you would otherwise need to orient yourself, and includes context those tools don't " +
-        "expose. Read the project context carefully before doing any work.",
+        "expose. Read the project context carefully before doing any work. Any unreadMessages that " +
+        "expect a reply must be answered via send_message on the same threadId, not just in your " +
+        "own session output.",
       inputSchema: z.object({}),
       handler: async () => {
         const session = await client.getSessionStart(repoId);
-        return { content: [{ type: "text" as const, text: JSON.stringify(session, null, 2) }] };
+        const unread = (session as { unreadMessages?: unknown[] }).unreadMessages ?? [];
+        const payload = unread.length > 0
+          ? {
+              ...session,
+              reminder: "unreadMessages above may need a reply — call send_message with the same " +
+                "threadId. The sender will not see anything you only write in your own session.",
+            }
+          : session;
+        return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
       },
     },
 

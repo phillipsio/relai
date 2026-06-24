@@ -11,6 +11,7 @@ class ApiClient {
         this.headers = {
             "Content-Type": "application/json",
             Authorization: `Bearer ${config.secret}`,
+            ...(config.ownerId ? { "X-Owner-Id": config.ownerId } : {}),
         };
     }
     async request(method, path, body) {
@@ -24,6 +25,10 @@ class ApiClient {
             throw new Error(json.error?.message ?? `API error ${res.status}`);
         }
         return json.data;
+    }
+    // Repos
+    getRepo(id) {
+        return this.request("GET", `/repos/${id}`);
     }
     // Tasks
     getTasks(params) {
@@ -53,8 +58,8 @@ class ApiClient {
     getMessages(threadId) {
         return this.request("GET", `/threads/${threadId}/messages`);
     }
-    getUnread(agentId, projectId) {
-        return this.request("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}&projectId=${encodeURIComponent(projectId)}`);
+    getUnread(agentId, repoId) {
+        return this.request("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}&repoId=${encodeURIComponent(repoId)}`);
     }
     markRead(threadId, agentId) {
         return this.request("PUT", `/threads/${threadId}/messages/read`, { agentId });
@@ -66,15 +71,15 @@ class ApiClient {
     heartbeat(agentId) {
         return this.request("PUT", `/agents/${agentId}/heartbeat`, {});
     }
-    listAgents(projectId) {
-        return this.request("GET", `/agents?projectId=${encodeURIComponent(projectId)}`);
+    listAgents(repoId) {
+        return this.request("GET", `/agents?repoId=${encodeURIComponent(repoId)}`);
     }
     // Threads
     createThread(body) {
         return this.request("POST", "/threads", body);
     }
-    listThreads(projectId, type) {
-        const qs = new URLSearchParams({ projectId });
+    listThreads(repoId, type) {
+        const qs = new URLSearchParams({ repoId });
         if (type)
             qs.set("type", type);
         return this.request("GET", `/threads?${qs}`);
@@ -83,8 +88,8 @@ class ApiClient {
         return this.request("PUT", `/threads/${threadId}/conclude`, { summary });
     }
     // Session
-    getSessionStart(projectId) {
-        const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    getSessionStart(repoId) {
+        const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
         return this.request("GET", `/session/start${qs}`);
     }
 }

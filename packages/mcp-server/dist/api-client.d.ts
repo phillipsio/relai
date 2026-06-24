@@ -1,20 +1,25 @@
 export interface ApiClientConfig {
     baseUrl: string;
     secret: string;
+    ownerId?: string;
 }
 export declare class ApiClient {
     private baseUrl;
     private headers;
     constructor(config: ApiClientConfig);
     private request;
+    getRepo(id: string): Promise<{
+        id: string;
+        repoUrl?: string | null;
+    }>;
     getTasks(params: {
-        projectId?: string;
+        repoId?: string;
         status?: string;
         assignedTo?: string;
     }): Promise<unknown[]>;
     getTask(id: string): Promise<unknown>;
     createTask(body: {
-        projectId: string;
+        repoId: string;
         createdBy: string;
         title: string;
         description: string;
@@ -66,23 +71,23 @@ export declare class ApiClient {
         metadata?: Record<string, unknown>;
     }): Promise<unknown>;
     getMessages(threadId: string): Promise<unknown[]>;
-    getUnread(agentId: string, projectId: string): Promise<unknown[]>;
+    getUnread(agentId: string, repoId: string): Promise<unknown[]>;
     markRead(threadId: string, agentId: string): Promise<unknown>;
     registerAgent(body: {
-        projectId: string;
+        repoId: string;
         name: string;
         role: string;
         domains?: string[];
     }): Promise<unknown>;
     heartbeat(agentId: string): Promise<unknown>;
-    listAgents(projectId: string): Promise<unknown[]>;
+    listAgents(repoId: string): Promise<unknown[]>;
     createThread(body: {
-        projectId: string;
+        repoId: string;
         title: string;
         type?: string;
     }): Promise<unknown>;
-    listThreads(projectId: string, type?: string): Promise<unknown[]>;
+    listThreads(repoId: string, type?: string): Promise<unknown[]>;
     concludePlan(threadId: string, summary?: string): Promise<unknown>;
-    getSessionStart(projectId?: string): Promise<unknown>;
+    getSessionStart(repoId?: string): Promise<Record<string, unknown>>;
 }
 //# sourceMappingURL=api-client.d.ts.map

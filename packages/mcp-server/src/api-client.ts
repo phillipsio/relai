@@ -161,6 +161,6 @@ export class ApiClient {
   // Session
   getSessionStart(repoId?: string) {
     const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
-    return this.request<unknown>("GET", `/session/start${qs}`);
+    return this.request<Record<string, unknown>>("GET", `/session/start${qs}`);
   }
 }

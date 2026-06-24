@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildTools = buildTools;
+exports.buildOperatorTools = buildOperatorTools;
 const zod_1 = require("zod");
 // Each tool: name, description (written for any AI model), input schema, handler.
 // Descriptions are deliberately specific — vague descriptions produce wrong tool choices.
-function buildTools(client, agentId, projectId) {
+function buildTools(client, agentId, repoId) {
     return [
         {
             name: "create_task",
@@ -35,10 +36,10 @@ function buildTools(client, agentId, projectId) {
                 verifyTimeoutMs: zod_1.z.number().int().optional().describe("Timeout for shell predicate (1000–600000 ms)."),
             }),
             handler: async (input) => {
-                // createdBy + projectId are injected from this agent's identity. Status is
+                // createdBy + repoId are injected from this agent's identity. Status is
                 // intentionally NOT set — the API derives it from the effective assignee.
                 const task = await client.createTask({
-                    projectId,
+                    repoId,
                     createdBy: agentId,
                     title: input.title,
                     description: input.description,
@@ -71,7 +72,7 @@ function buildTools(client, agentId, projectId) {
             handler: async (input) => {
                 const status = input.status ?? "assigned";
                 const statusFilter = status === "all" ? undefined : status;
-                const tasks = await client.getTasks({ projectId, assignedTo: agentId, status: statusFilter });
+                const tasks = await client.getTasks({ repoId, assignedTo: agentId, status: statusFilter });
                 return {
                     content: [{
                             type: "text",
@@ -120,7 +121,10 @@ function buildTools(client, agentId, projectId) {
                 "'question' when you are blocked and need input before proceeding; " +
                 "'escalation' when a decision needs human judgment; " +
                 "'status' for routine progress updates. " +
-                "Be specific in the body — the receiver has no other context.",
+                "Be specific in the body — the receiver has no other context. " +
+                "IMPORTANT: if you were asked something via a relai message or task (toAgent=you, or a task " +
+                "assigned to you), your answer belongs here, posted on that same threadId — not just written " +
+                "in your own session output. The requester only sees what you post through send_message.",
             inputSchema: zod_1.z.object({
                 threadId: zod_1.z.string().describe("The thread to post to. Use list_threads to find or create one."),
                 type: zod_1.z
@@ -151,16 +155,23 @@ function buildTools(client, agentId, projectId) {
             name: "get_unread_messages",
             description: "Retrieve messages sent to this agent that have not been read yet. Call this at session " +
                 "start and after completing a task to check for new handoffs, findings, or decisions from " +
-                "other agents. Always read messages before starting work on a related task.",
+                "other agents. Always read messages before starting work on a related task. " +
+                "Any message that expects a reply (a question, a request, an instruction from a human " +
+                "operator) must be answered with send_message on its threadId — answering in your own " +
+                "session output is invisible to the sender.",
             inputSchema: zod_1.z.object({}),
             handler: async () => {
-                const messages = await client.getUnread(agentId, projectId);
+                const messages = await client.getUnread(agentId, repoId);
                 return {
                     content: [{
                             type: "text",
                             text: messages.length === 0
                                 ? "No unread messages."
-                                : JSON.stringify({ messages }, null, 2),
+                                : JSON.stringify({
+                                    messages,
+                                    reminder: "If any of the above needs a reply, call send_message with the same " +
+                                        "threadId — your sender will not see anything you only write in your own session.",
+                                }, null, 2),
                         }],
                 };
             },
@@ -189,7 +200,7 @@ function buildTools(client, agentId, projectId) {
                     .describe("Filter to a specific thread type. Use 'plan' to find collaborative planning discussions."),
             }),
             handler: async (input) => {
-                const threads = await client.listThreads(projectId, input.type);
+                const threads = await client.listThreads(repoId, input.type);
                 return {
                     content: [{
                             type: "text",
@@ -213,7 +224,7 @@ function buildTools(client, agentId, projectId) {
                     .describe("Set to 'plan' to create a collaborative planning discussion."),
             }),
             handler: async (input) => {
-                const thread = await client.createThread({ projectId, title: input.title, type: input.type });
+                const thread = await client.createThread({ repoId, title: input.title, type: input.type });
                 return { content: [{ type: "text", text: JSON.stringify(thread, null, 2) }] };
             },
         },
@@ -233,17 +244,27 @@ function buildTools(client, agentId, projectId) {
         },
         {
             name: "session_start",
-            description: "Get a single bundled snapshot of your current state in this project: your identity, the " +
+            description: "Get a single bundled snapshot of your current state in this repo: your identity, the " +
                 "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +
                 "human-readable label like 'Running' / 'Stalled' / 'Input required'), unread messages " +
                 "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
                 "start of every session — it replaces the get_my_tasks + get_unread_messages + list_threads " +
                 "calls you would otherwise need to orient yourself, and includes context those tools don't " +
-                "expose. Read the project context carefully before doing any work.",
+                "expose. Read the project context carefully before doing any work. Any unreadMessages that " +
+                "expect a reply must be answered via send_message on the same threadId, not just in your " +
+                "own session output.",
             inputSchema: zod_1.z.object({}),
             handler: async () => {
-                const session = await client.getSessionStart(projectId);
-                return { content: [{ type: "text", text: JSON.stringify(session, null, 2) }] };
+                const session = await client.getSessionStart(repoId);
+                const unread = session.unreadMessages ?? [];
+                const payload = unread.length > 0
+                    ? {
+                        ...session,
+                        reminder: "unreadMessages above may need a reply — call send_message with the same " +
+                            "threadId. The sender will not see anything you only write in your own session.",
+                    }
+                    : session;
+                return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
             },
         },
         {
@@ -258,7 +279,7 @@ function buildTools(client, agentId, projectId) {
                     .describe("Comma-separated statuses to filter by, e.g. 'pending,assigned'. Omit for all."),
             }),
             handler: async (input) => {
-                const tasks = await client.getTasks({ projectId, status: input.status });
+                const tasks = await client.getTasks({ repoId, status: input.status });
                 return {
                     content: [{
                             type: "text",
@@ -320,6 +341,106 @@ function buildTools(client, agentId, projectId) {
                     if (v !== undefined)
                         body[k] = v;
                 const task = await client.commitTask(taskId, body);
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+    ];
+}
+// Operator (owner) toolset — used when the MCP server runs in owner mode (an
+// owner credential instead of a per-agent token). These act across ALL of the
+// owner's projects: the API scopes by the X-Owner-Id the client sends, and each
+// resource is addressed by its own id, so no repoId argument is needed. The
+// human (you, e.g. from a phone) drives these to triage and unblock work
+// remotely. Keep this set small — it's a different surface from the 13 agent
+// tools, not an extension of them.
+function buildOperatorTools(client) {
+    return [
+        {
+            name: "list_attention",
+            description: "List everything across ALL your projects that needs you right now: tasks that are 'blocked' " +
+                "(a worker is waiting on your input), 'pending_verification' (awaiting a review decision), or " +
+                "'proposed' (a worker's task awaiting your commit). Call this first to see what to act on. Each " +
+                "task carries its repoId and, for blocked tasks, metadata.blockedThreadId — the thread to " +
+                "post a reply on (via reply_human) to resume the worker.",
+            inputSchema: zod_1.z.object({}),
+            handler: async () => {
+                const tasks = await client.getTasks({ status: "blocked,pending_verification,proposed" });
+                return {
+                    content: [{
+                            type: "text",
+                            text: tasks.length === 0
+                                ? "Nothing needs your attention across your projects right now."
+                                : JSON.stringify({ tasks }, null, 2),
+                        }],
+                };
+            },
+        },
+        {
+            name: "get_task",
+            description: "Fetch one task's full detail by id — title, description, status, assignee, and metadata " +
+                "(including blockedThreadId and the worker's question/findings). Use this to understand a " +
+                "blocked or proposed task before you reply, review, or commit.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The task id to fetch."),
+            }),
+            handler: async (input) => {
+                const task = await client.getTask(input.taskId);
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "reply_human",
+            description: "Post a reply to a thread AS THE HUMAN owner. This is how you unblock a stalled task: reply on " +
+                "its blockedThreadId (from list_attention) and the server resumes the worker with your answer. " +
+                "The message is recorded as from 'human' regardless of what you pass. Be specific — the worker " +
+                "acts on exactly what you write.",
+            inputSchema: zod_1.z.object({
+                threadId: zod_1.z.string().describe("The thread to reply on. For an unblock, use the task's metadata.blockedThreadId."),
+                body: zod_1.z.string().min(1).describe("Your answer/instruction to the worker."),
+                type: zod_1.z.enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"]).optional().describe("Defaults to 'reply'."),
+            }),
+            handler: async (input) => {
+                const message = await client.sendMessage(input.threadId, {
+                    fromAgent: "human",
+                    type: input.type ?? "reply",
+                    body: input.body,
+                });
+                return { content: [{ type: "text", text: JSON.stringify(message, null, 2) }] };
+            },
+        },
+        {
+            name: "review_task",
+            description: "Submit a review decision on a task whose completion is gated on a reviewer (verifyKind=" +
+                "'reviewer_agent') and is in 'pending_verification'. 'approve' promotes it to 'completed'; " +
+                "'reject' sends it back to 'assigned' for the worker to iterate. Include a note on reject.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The task id to review."),
+                decision: zod_1.z.enum(["approve", "reject"]).describe("Approve or reject."),
+                note: zod_1.z.string().max(2_000).optional().describe("Required for reject; useful for approve."),
+            }),
+            handler: async (input) => {
+                const task = await client.submitReview(input.taskId, { decision: input.decision, note: input.note });
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "commit_proposal",
+            description: "Act on a worker's proposed task (status 'proposed'). 'commit' (default) moves it into the " +
+                "lifecycle — set assignedTo to an agent id, '@auto' for the router, or omit for the project " +
+                "default. 'reject' cancels it and notifies the proposer (include a note).",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The proposed task id."),
+                decision: zod_1.z.enum(["commit", "reject"]).optional().describe("Defaults to 'commit'."),
+                assignedTo: zod_1.z.string().optional().describe("Agent id, '@auto', or omit for the project default (commit only)."),
+                note: zod_1.z.string().max(2_000).optional().describe("Explanation, especially for reject."),
+            }),
+            handler: async (input) => {
+                const body = { decision: input.decision ?? "commit" };
+                if (input.assignedTo !== undefined)
+                    body.assignedTo = input.assignedTo;
+                if (input.note !== undefined)
+                    body.note = input.note;
+                const task = await client.commitTask(input.taskId, body);
                 return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
             },
         },

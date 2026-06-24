@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ApiClient } from "./api-client.js";
-export declare function buildTools(client: ApiClient, agentId: string, projectId: string): ({
+export declare function buildTools(client: ApiClient, agentId: string, repoId: string): ({
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
@@ -350,6 +350,117 @@ export declare function buildTools(client: ApiClient, agentId: string, projectId
         verifyCommand?: string;
         verifyCwd?: string;
         verifyTimeoutMs?: number;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+})[];
+export declare function buildOperatorTools(client: ApiClient): ({
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
+    handler: () => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+    }, {
+        taskId: string;
+    }>;
+    handler: (input: {
+        taskId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        threadId: z.ZodString;
+        body: z.ZodString;
+        type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;
+    }, "strip", z.ZodTypeAny, {
+        threadId: string;
+        body: string;
+        type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
+    }, {
+        threadId: string;
+        body: string;
+        type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
+    }>;
+    handler: (input: {
+        threadId: string;
+        body: string;
+        type?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        decision: z.ZodEnum<["approve", "reject"]>;
+        note: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+        decision: "approve" | "reject";
+        note?: string | undefined;
+    }, {
+        taskId: string;
+        decision: "approve" | "reject";
+        note?: string | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        decision: "approve" | "reject";
+        note?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        decision: z.ZodOptional<z.ZodEnum<["commit", "reject"]>>;
+        assignedTo: z.ZodOptional<z.ZodString>;
+        note: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+        assignedTo?: string | undefined;
+        decision?: "reject" | "commit" | undefined;
+        note?: string | undefined;
+    }, {
+        taskId: string;
+        assignedTo?: string | undefined;
+        decision?: "reject" | "commit" | undefined;
+        note?: string | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        decision?: "commit" | "reject";
+        assignedTo?: string;
+        note?: string;
     }) => Promise<{
         content: {
             type: "text";

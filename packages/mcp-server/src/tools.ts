@@ -285,7 +285,7 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
       inputSchema: z.object({}),
       handler: async () => {
         const session = await client.getSessionStart(repoId);
-        const unread = (session as { unreadMessages?: unknown[] }).unreadMessages ?? [];
+        const unread = (session.unreadMessages as unknown[] | undefined) ?? [];
         const payload = unread.length > 0
           ? {
               ...session,

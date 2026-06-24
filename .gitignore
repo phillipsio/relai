@@ -8,3 +8,4 @@ dist/
 .idea/
 .vscode/mcp.json
 .ai/
+.claude/settings.local.json

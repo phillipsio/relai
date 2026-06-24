@@ -1,10 +1,8 @@
 {
-  "name": "@getrelai/claude-worker",
+  "name": "@getrelai/event-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./src/lib.ts",
-  "types": "./src/lib.ts",
   "scripts": {
     "dev": "tsx --env-file=../../.env src/index.ts",
     "start": "tsx src/index.ts",
@@ -13,7 +11,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@getrelai/git": "workspace:*"
+    "@getrelai/claude-worker": "workspace:*",
+    "@getrelai/git": "workspace:*",
+    "eventsource": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

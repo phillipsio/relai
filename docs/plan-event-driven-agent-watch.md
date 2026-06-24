@@ -111,7 +111,11 @@ Notes:
 - `curl -sN` (no buffering) + `grep --line-buffered` ensure the match flushes
   immediately rather than sitting in a pipe buffer.
 
-### 2. (consumer repo) Auto-start hook + wake-loop instructions
+### 2. Auto-start hook + wake-loop instructions — SCAFFOLDED
+
+Built as reusable scripts in relai (`scripts/relai-watch.sh`, `scripts/relai-watch-hook.sh`);
+the consumer repo only adds a one-line SessionStart entry to its `.claude/settings.json`.
+Full setup in `docs/event-watch-setup.md`.
 
 These live in the consuming repo (e.g. `functionize-mcp-go`), not relai, but are
 documented here for cohesion.
@@ -205,7 +209,10 @@ hardcode. Document in the consumer repo.
   whole repo" stream (to see tasks created but not yet assigned to me) is not needed for
   this use case — the orchestrator already gets `task.proposed`/`task.created` via its own
   subscriptions, and a worker only acts on what's assigned to it.
-- **Q3 — token sourcing.** Where does the watcher read the agent bearer token from?
+- **Q3 — token sourcing. RESOLVED (2026-06-23).** `relai-watch.sh` reads `API_URL` /
+  `API_SECRET` / `AGENT_ID` from the environment, falling back to the `mcpServers.relai.env`
+  block of the repo's `.mcp.json` (the per-agent token the MCP server already uses). No
+  secret is placed in the launch command or the agent's context.
 
 ## File reference (for whoever implements)
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { bus, resolveSubscribers, type AppEvent } from "../lib/events.js";
+import { bus, resolveSubscribers, deliverableTo, type AppEvent } from "../lib/events.js";
 import { createDb, subscriptions } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -180,5 +180,66 @@ describe("GET /events stream", () => {
     const res = await app.inject({ method: "GET", url: "/events", headers: ADMIN });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe("forbidden");
+  });
+});
+
+describe("actor self-echo suppression", () => {
+  const ev = (actorId?: string): AppEvent => ({
+    id: "evt_x", kind: "task.updated", repoId, targetType: "task", targetId: "task_x",
+    actorId, payload: {}, createdAt: new Date().toISOString(),
+  });
+
+  it("deliverableTo excludes the actor but delivers to other subscribers", () => {
+    const e = ev(agentAId);
+    expect(deliverableTo(e, agentAId, [agentAId, agentBId])).toBe(false); // the actor
+    expect(deliverableTo(e, agentBId, [agentAId, agentBId])).toBe(true);  // someone else
+  });
+
+  it("deliverableTo delivers to everyone when there is no actor (system events)", () => {
+    const e = ev(undefined);
+    expect(deliverableTo(e, agentAId, [agentAId, agentBId])).toBe(true);
+    expect(deliverableTo(e, agentBId, [agentAId, agentBId])).toBe(true);
+  });
+
+  it("deliverableTo still requires a subscription (actor exclusion isn't a grant)", () => {
+    expect(deliverableTo(ev(agentBId), agentAId, [])).toBe(false);
+  });
+
+  it("an agent's own update carries its actorId, so it would be filtered from its own stream", async () => {
+    // Register an agent with its own token and a task assigned to it.
+    const reg = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "self-echo-agent", role: "worker" }),
+    });
+    const selfId = reg.json().data.id as string;
+    const selfToken = reg.json().token as string;
+    const selfHdr = { Authorization: `Bearer ${selfToken}`, "Content-Type": "application/json" };
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({ repoId, createdBy: selfId, assignedTo: selfId, title: "mine", description: "d" }),
+    });
+    const taskId = create.json().data.id;
+
+    const events: AppEvent[] = [];
+    const handler = (e: AppEvent) => events.push(e);
+    bus.on("event", handler);
+
+    // The agent updates its OWN task using its OWN token.
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: selfHdr,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+    bus.off("event", handler);
+
+    const updated = events.find((e) => e.kind === "task.updated" && e.targetId === taskId);
+    expect(updated).toBeDefined();
+    expect(updated!.actorId).toBe(selfId);
+
+    // Subscribed, but the actor — so its own stream would skip it.
+    const db = createDb(DB_URL);
+    const subscribers = await resolveSubscribers(db, updated!);
+    expect(subscribers).toContain(selfId);
+    expect(deliverableTo(updated!, selfId, subscribers)).toBe(false);
   });
 });

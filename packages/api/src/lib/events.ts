@@ -30,6 +30,12 @@ export interface AppEvent {
   // Secondary subject used by the fan-out — e.g. message events also notify
   // subscribers of the message's `toAgent`. Optional and additive.
   alsoNotify?: Array<{ targetType: "agent" | "task" | "thread"; targetId: string }>;
+  // The agent that caused this event. Set on agent-originated route actions;
+  // unset for system-originated events (scheduler verification/routing). Used to
+  // suppress echoing an event back to its own author over SSE — without it, an
+  // agent that updates a task receives its own update and (for the event watcher)
+  // wakes itself for a change it just made. Delivery-only; not persisted.
+  actorId?:   string;
   payload:    Record<string, unknown>;
   createdAt:  string;
 }
@@ -81,6 +87,13 @@ export async function resolveSubscribers(db: Db, event: AppEvent): Promise<strin
     .where(conditions.length === 1 ? conditions[0] : or(...conditions));
 
   return [...new Set(rows.map((r) => r.agentId))];
+}
+
+// Whether an event should be delivered to a given agent's SSE stream: the agent
+// must be a subscriber AND must not be the actor that caused it (no self-echo).
+export function deliverableTo(event: AppEvent, agentId: string, subscribers: string[]): boolean {
+  if (event.actorId && event.actorId === agentId) return false;
+  return subscribers.includes(agentId);
 }
 
 // Idempotent subscription. Used by routes to auto-subscribe creators/recipients

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { bus, resolveSubscribers, type AppEvent } from "../lib/events.js";
+import { bus, resolveSubscribers, deliverableTo, type AppEvent } from "../lib/events.js";
 import type { Db } from "@getrelai/db";
 
 const HEARTBEAT_MS = 25_000;
@@ -28,7 +28,7 @@ export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     const onEvent = async (event: AppEvent) => {
       try {
         const subscribers = await resolveSubscribers(db, event);
-        if (!subscribers.includes(agent.id)) return;
+        if (!deliverableTo(event, agent.id, subscribers)) return;
         reply.raw.write(`event: ${event.kind}\n`);
         reply.raw.write(`id: ${event.id}\n`);
         reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);

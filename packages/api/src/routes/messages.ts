@@ -101,6 +101,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       alsoNotify: body.data.toAgent
         ? [{ targetType: "agent", targetId: body.data.toAgent }]
         : [],
+      actorId:    request.agent?.id,
       payload:    { message },
       createdAt:  message.createdAt.toISOString(),
     });

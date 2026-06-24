@@ -46,6 +46,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       repoId:  thread.repoId,
       targetType: "thread",
       targetId:   thread.id,
+      actorId:    request.agent?.id,
       payload:    { thread },
       createdAt:  thread.createdAt.toISOString(),
     });
@@ -126,6 +127,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       repoId:  thread.repoId,
       targetType: "thread",
       targetId:   thread.id,
+      actorId:    request.agent?.id,
       payload:    { thread },
       createdAt:  new Date().toISOString(),
     });

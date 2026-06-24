@@ -229,6 +229,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         targetType: "task",
         targetId:   task.id,
         alsoNotify: orchestrators.map((o) => ({ targetType: "agent", targetId: o.id })),
+        actorId:    request.agent?.id,
         payload:    { task, proposedBy: task.createdBy },
         createdAt:  task.createdAt.toISOString(),
       });
@@ -240,6 +241,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         targetType: "task",
         targetId:   task.id,
         alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+        actorId:    request.agent?.id,
         payload:    { task },
         createdAt:  task.createdAt.toISOString(),
       });
@@ -382,6 +384,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       targetType: "task",
       targetId:   task.id,
       alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+      actorId:    request.agent?.id,
       payload:    { task, changes: updates },
       createdAt:  task.updatedAt.toISOString(),
     });
@@ -397,6 +400,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         targetType: "task",
         targetId:   task.id,
         alsoNotify: [{ targetType: "agent", targetId: reviewerToNotify }],
+        actorId:    request.agent?.id,
         payload:    { task, reviewerId: reviewerToNotify },
         createdAt:  task.updatedAt.toISOString(),
       });
@@ -478,6 +482,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       targetType: "task",
       targetId:   task.id,
       alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+      actorId:    request.agent?.id,
       payload:    { task: updated, review },
       createdAt:  updated.updatedAt.toISOString(),
     });
@@ -557,6 +562,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         targetType: "task",
         targetId:   task.id,
         alsoNotify: [{ targetType: "agent", targetId: task.createdBy }],
+        actorId:    request.agent?.id,
         payload:    { task: rejected, rejectedBy: committedBy, note: body.data.note },
         createdAt:  rejected.updatedAt.toISOString(),
       });
@@ -628,6 +634,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       targetType: "task",
       targetId:   committed.id,
       alsoNotify: committed.assignedTo ? [{ targetType: "agent", targetId: committed.assignedTo }] : [],
+      actorId:    request.agent?.id,
       payload:    { task: committed, committedBy },
       createdAt:  committed.updatedAt.toISOString(),
     });
@@ -680,6 +687,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       targetType: "thread",
       targetId:   thread.id,
       alsoNotify: scope.task.assignedTo ? [{ targetType: "agent", targetId: scope.task.assignedTo }] : [],
+      actorId:    request.agent?.id,
       payload:    { message },
       createdAt:  message.createdAt.toISOString(),
     });

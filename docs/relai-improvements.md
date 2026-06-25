@@ -96,3 +96,44 @@ What carried the workflow (keep): the `reviewer_agent` gate + architect-as-revie
 - 🟡 **A/D — structured status / loud `create_task` / dedupe** → **advances** (Phase 1: structured `outputSchema` / `report_verdict` contracts).
 
 Net over Phases 1–6: closes 4 tracked items, advances 3. See the design doc for integration points and the dependency-ordered PR sequence.
+
+## H. External issue-tracker integration — parked architecture note (2026-06-24)
+🟢 Parked, not scheduled. Origin: thinking-out-loud on mapping GitHub tickets (and later, possibly Jira) to relai Epics/Issues.
+
+**Decision: link, don't mirror.** The thing that feels wrong about "map tickets to relai items" is dual source of truth — two systems both owning the same work item, which buys reconciliation, conflict resolution, echo loops, and a "which board is real?" tax. So:
+- **Reference** (one system points at the other, one direction, no upkeep) — fine, this is the model.
+- **Sync** (two systems maintaining the same state in lockstep) — rejected. This is the "tracking both feels off" instinct, and it's correct.
+
+GitHub Projects stays the human's source of truth; relai holds a reference + execution state, not a duplicate of the ticket.
+
+**Core vs cloud split (the seam to preserve):**
+- **OSS core:** a single generic primitive only — a structured external-reference field on tasks/threads (e.g. `task.metadata.externalRef = { system, id, url }`). Costs ~nothing, useful even self-hosted as click-through context, and serves as the dedup key + writeback anchor if automation ever lands. Do NOT put tracker-specific glue in the core. (The `actorId` self-echo guard shipped 2026-06-24 is the same "don't react to your own writes" primitive any sync would need.)
+- **relai-cloud (multi-tenant):** the connectors themselves — webhooks, OAuth/app installs, per-tenant credential storage, the github-login↔agent identity map, and any writeback (PR link / status back to the ticket). This belongs in cloud because: (1) webhooks need a stable public endpoint a localhost API can't offer; (2) OAuth + per-tenant credentials map onto the existing `ownerId`/service-admin model; (3) it's the monetizable, differentiated surface for the proprietary cloud play, keeping the core a lean orchestration engine.
+
+**State of relai-cloud (checked 2026-06-24):** greenfield for this — no integration code, docs, schema, or roadmap notes. Cloud is currently a narrow login + project/agent dashboard over the OSS API (`cloud_*` tables only). Adding this would be ground-up in both repos.
+
+## I. External corroboration — `session_start` payload bloat (2026-06-25)
+🔴 Independent report from an unrelated relai-connected agent (`mcp-go-orchestrator`, working in the `functionize-mcp-go` repo), corroborating the existing item in section A ("`/session/start` payload doesn't scale").
+
+- **Friction**: `session_start` returns a ~95KB / 1,500+ line snapshot dominated by an append-only `recentEvents` history. It overflows the main context window and the tool result itself, so the only safe way to consume it is to offload the read to a subagent every time. No relai tool prunes/archives that history or closes stale operational threads (`conclude_plan` only works on `plan`-type threads), so the payload only grows. Reconciling stale tasks trims a tiny fraction; the bulk is event history the client can't touch.
+- **Fix**: a relai-maintainer change (not local tooling). Options: cap `recentEvents` to the N most-recent, omit it by default with an opt-in/paged events fetch, or add a summary mode returning only identity + open tasks + unread messages + open threads. Secondary ask: a way to close/archive stale operational threads so they drop out of the snapshot.
+- **New angle vs. the existing item**: the stale-operational-thread-archival ask is novel — `conclude_plan` only concludes `plan`-type threads, so operational threads accumulate in the snapshot with no close mechanism at all.
+- **Status**: proposed (second independent report — raises priority on the existing 🔴 item in section A)
+
+**Jira aside:** not the original ask (that was GitHub), but if it enters scope, Jira has a *native* Epic primitive, so the relai-Epic↔Jira-Epic mapping is cleaner than GitHub's milestone/tracking-issue fudge.
+
+### ✅ DONE (2026-06-25) — archive mechanism for completed tasks / concluded threads
+🟡 Concrete fix for the "no archive/close mechanism" half of the gap above. Goal: remove old-but-done items from the *default* live view (especially `session_start`) without deleting history.
+
+**Shipped:** `archivedAt` on `tasks` + `threads`; `archived=true` to opt archived rows back into `GET /tasks`/`GET /threads`; `PUT /tasks/:id/archive` (terminal-only, 409 otherwise) + `PUT /threads/:id/archive` (concluded-only, works on operational threads — closes the `conclude_plan`-only gap); `archive_task`/`archive_thread` MCP tools + `relai task archive` / `relai thread archive` CLI; `session_start` filters archived rows defensively. Auto-archive sweep deferred (manual archive only for now). **Caveat that remains:** `session_start` already excluded terminal tasks (status-filtered) and concluded threads (`status="open"`-filtered), so the archive itself barely shrinks the `session_start` payload — the real bloat is the 50-row `recentEvents` history (section A item, still open). Archive's value here is the `GET /tasks`/`GET /threads` default views + the operational-thread close mechanism; capping `recentEvents` is the remaining startup-payload win.
+
+- **Schema**: add `archivedAt: timestamp | null` to `tasks` and `threads` (parallel to the existing `status`/`completed`/`concluded` fields, not a replacement — archiving is orthogonal to lifecycle state: a task is `completed` *and later* `archived`).
+- **Default filtering**: `session_start`, `GET /tasks`, `GET /threads` exclude archived rows unless an explicit `includeArchived=true` (or `archived=true`) query param is passed. History stays queryable on demand, same pattern the `events` table already uses for SSE-vs-history.
+- **Archive actions**:
+  - `PUT /tasks/:id/archive` / `PUT /threads/:id/archive` — manual archive; only valid from a terminal state (`completed`/`cancelled` for tasks, `concluded` for threads — including non-`plan` operational threads, closing the `conclude_plan`-only gap).
+  - Optional auto-archive sweep (scheduler, opt-in via env var like `AUTO_ARCHIVE_AFTER_MS`) — archives terminal-state rows past an age threshold, same shape as the existing stalled-claim reaper.
+- **MCP/CLI surface**: `archive_task`/`archive_thread` MCP tools + `relai task archive <id>` / `relai thread archive <id>` CLI commands, gated the same way `conclude_plan` is today.
+- **Non-goals**: no deletion, no change to the `events` persisted-history table — archiving only affects what shows up in default live-snapshot views.
+- **Status**: proposed
+
+**If/when picked up, the open fork:** is the reference purely human click-through (free text is enough), or is there writeback (agent drops PR link / closes ticket)? Only the latter justifies the structured `externalRef` field + the cloud connector. Decide that before building anything.

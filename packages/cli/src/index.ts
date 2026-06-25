@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
-import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand, taskCommitCommand } from "./commands/tasks.js";
+import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand, taskCommitCommand, taskArchiveCommand } from "./commands/tasks.js";
 import { reposListCommand, repoShowCommand, repoContextShowCommand, repoContextEditCommand } from "./commands/repos.js";
 import { agentsListCommand } from "./commands/agents.js";
-import { threadsCommand, threadNewCommand } from "./commands/threads.js";
+import { threadsCommand, threadNewCommand, threadArchiveCommand } from "./commands/threads.js";
 import { sendCommand } from "./commands/send.js";
 import { inboxCommand } from "./commands/inbox.js";
 import { statusCommand } from "./commands/status.js";
@@ -133,6 +133,11 @@ task
   .option("-n, --note <note>", "Rationale, especially on reject")
   .action(taskCommitCommand);
 
+task
+  .command("archive <id>")
+  .description("Archive a completed/cancelled task so it drops out of default lists (history kept)")
+  .action(taskArchiveCommand);
+
 // ── threads ───────────────────────────────────────────────────────────────────
 
 program
@@ -146,6 +151,11 @@ thread
   .command("new <title>")
   .description("Create a new thread")
   .action(threadNewCommand);
+
+thread
+  .command("archive <id>")
+  .description("Archive a concluded thread (plan or operational) so it drops out of default lists")
+  .action(threadArchiveCommand);
 
 // ── messages ──────────────────────────────────────────────────────────────────
 

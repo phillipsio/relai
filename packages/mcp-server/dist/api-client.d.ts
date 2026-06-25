@@ -88,6 +88,8 @@ export declare class ApiClient {
     }): Promise<unknown>;
     listThreads(repoId: string, type?: string): Promise<unknown[]>;
     concludePlan(threadId: string, summary?: string): Promise<unknown>;
+    archiveTask(taskId: string): Promise<unknown>;
+    archiveThread(threadId: string): Promise<unknown>;
     getSessionStart(repoId?: string): Promise<Record<string, unknown>>;
 }
 //# sourceMappingURL=api-client.d.ts.map

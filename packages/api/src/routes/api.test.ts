@@ -1178,3 +1178,78 @@ describe("PUT /threads/:id/messages/read", () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+describe("archive (tasks + threads)", () => {
+  const JSON_AUTH = { ...AUTH, "Content-Type": "application/json" };
+  let archAgentId: string;
+
+  beforeAll(async () => {
+    const a = await app.inject({
+      method: "POST", url: "/agents", headers: JSON_AUTH,
+      body: JSON.stringify({ repoId, name: "archive-agent", role: "worker" }),
+    });
+    archAgentId = a.json().data.id;
+  });
+
+  async function makeCompletedTask(): Promise<string> {
+    const c = await app.inject({
+      method: "POST", url: "/tasks", headers: JSON_AUTH,
+      body: JSON.stringify({ repoId, createdBy: archAgentId, assignedTo: archAgentId, title: "arch", description: "d" }),
+    });
+    const id = c.json().data.id as string;
+    await app.inject({ method: "PUT", url: `/tasks/${id}`, headers: JSON_AUTH, body: JSON.stringify({ status: "in_progress" }) });
+    await app.inject({ method: "PUT", url: `/tasks/${id}`, headers: JSON_AUTH, body: JSON.stringify({ status: "completed" }) });
+    return id;
+  }
+
+  it("rejects archiving a non-terminal task (409)", async () => {
+    const c = await app.inject({
+      method: "POST", url: "/tasks", headers: JSON_AUTH,
+      body: JSON.stringify({ repoId, createdBy: archAgentId, assignedTo: archAgentId, title: "live", description: "d" }),
+    });
+    const id = c.json().data.id;
+    const res = await app.inject({ method: "PUT", url: `/tasks/${id}/archive`, headers: JSON_AUTH, body: "{}" });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("archives a completed task; it leaves the default list but stays under archived=true", async () => {
+    const id = await makeCompletedTask();
+    const arch = await app.inject({ method: "PUT", url: `/tasks/${id}/archive`, headers: JSON_AUTH, body: "{}" });
+    expect(arch.statusCode).toBe(200);
+    expect(arch.json().data.archivedAt).toBeTruthy();
+
+    const def = await app.inject({ method: "GET", url: `/tasks?repoId=${repoId}`, headers: AUTH });
+    expect((def.json().data as Array<{ id: string }>).some((t) => t.id === id)).toBe(false);
+
+    const withArch = await app.inject({ method: "GET", url: `/tasks?repoId=${repoId}&archived=true`, headers: AUTH });
+    expect((withArch.json().data as Array<{ id: string }>).some((t) => t.id === id)).toBe(true);
+  });
+
+  it("task archive is idempotent (timestamp preserved)", async () => {
+    const id = await makeCompletedTask();
+    const a = await app.inject({ method: "PUT", url: `/tasks/${id}/archive`, headers: JSON_AUTH, body: "{}" });
+    const first = a.json().data.archivedAt;
+    const b = await app.inject({ method: "PUT", url: `/tasks/${id}/archive`, headers: JSON_AUTH, body: "{}" });
+    expect(b.statusCode).toBe(200);
+    expect(b.json().data.archivedAt).toBe(first);
+  });
+
+  it("rejects archiving an open thread, archives a concluded operational thread, and hides it by default", async () => {
+    const t = await app.inject({ method: "POST", url: "/threads", headers: JSON_AUTH, body: JSON.stringify({ repoId, title: "ops" }) });
+    const tid = t.json().data.id;
+
+    const open = await app.inject({ method: "PUT", url: `/threads/${tid}/archive`, headers: JSON_AUTH, body: "{}" });
+    expect(open.statusCode).toBe(409);
+
+    await app.inject({ method: "PUT", url: `/threads/${tid}/conclude`, headers: JSON_AUTH, body: JSON.stringify({ summary: "done" }) });
+    const arch = await app.inject({ method: "PUT", url: `/threads/${tid}/archive`, headers: JSON_AUTH, body: "{}" });
+    expect(arch.statusCode).toBe(200);
+    expect(arch.json().data.archivedAt).toBeTruthy();
+
+    const def = await app.inject({ method: "GET", url: `/threads?repoId=${repoId}`, headers: AUTH });
+    expect((def.json().data as Array<{ id: string }>).some((x) => x.id === tid)).toBe(false);
+
+    const withArch = await app.inject({ method: "GET", url: `/threads?repoId=${repoId}&archived=true`, headers: AUTH });
+    expect((withArch.json().data as Array<{ id: string }>).some((x) => x.id === tid)).toBe(true);
+  });
+});

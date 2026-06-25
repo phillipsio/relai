@@ -87,6 +87,14 @@ class ApiClient {
     concludePlan(threadId, summary) {
         return this.request("PUT", `/threads/${threadId}/conclude`, { summary });
     }
+    // Pass an empty body so the always-present Content-Type: application/json
+    // header has valid JSON to parse (Fastify 400s on an empty json body).
+    archiveTask(taskId) {
+        return this.request("PUT", `/tasks/${taskId}/archive`, {});
+    }
+    archiveThread(threadId) {
+        return this.request("PUT", `/threads/${threadId}/archive`, {});
+    }
     // Session
     getSessionStart(repoId) {
         const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";

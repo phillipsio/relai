@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, sql, and, inArray } from "drizzle-orm";
+import { eq, sql, and, inArray, isNull } from "drizzle-orm";
 import { threads, messages, tasks, repos } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish } from "../lib/events.js";
@@ -54,12 +54,14 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     return reply.status(201).send({ data: thread });
   });
 
-  fastify.get<{ Querystring: { repoId?: string; type?: string } }>("/threads", async (request, reply) => {
-    const { repoId, type } = request.query;
+  fastify.get<{ Querystring: { repoId?: string; type?: string; archived?: string } }>("/threads", async (request, reply) => {
+    const { repoId, type, archived } = request.query;
 
-    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof inArray>> = [];
+    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof inArray> | ReturnType<typeof isNull>> = [];
     if (repoId) conditions.push(eq(threads.repoId, repoId));
     if (type)      conditions.push(eq(threads.type, type));
+    // Archived threads are hidden from the default live view; archived=true to include.
+    if (archived !== "true") conditions.push(isNull(threads.archivedAt));
 
     if (request.agent) {
       conditions.push(eq(threads.repoId, request.agent.repoId));
@@ -133,5 +135,28 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     });
 
     return { data: thread };
+  });
+
+  // Archive a concluded thread out of the default live views. Works on any
+  // thread type — including operational (non-"plan") threads, which previously
+  // had no close-and-hide path (conclude_plan is plan-only). The thread must be
+  // concluded first; the row + messages stay queryable via archived=true. Idempotent.
+  fastify.put<{ Params: { id: string } }>("/threads/:id/archive", async (request, reply) => {
+    const scope = await loadThreadScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
+
+    if (scope.thread.status !== "concluded") {
+      return reply.status(409).send({
+        error: { code: "conflict", message: `Only a concluded thread can be archived (status: ${scope.thread.status})` },
+      });
+    }
+
+    const [updated] = await db
+      .update(threads)
+      .set({ archivedAt: scope.thread.archivedAt ?? new Date() })
+      .where(eq(threads.id, scope.thread.id))
+      .returning();
+
+    return { data: updated };
   });
 };

@@ -23,6 +23,8 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     submitReview: vi.fn().mockResolvedValue({ id: "task_1", status: "pending_verification" }),
     commitTask: vi.fn().mockResolvedValue({ id: "task_1", status: "assigned" }),
     concludePlan: vi.fn().mockResolvedValue({}),
+    archiveTask: vi.fn().mockResolvedValue({ id: "task_1", archivedAt: "2026-06-25T00:00:00.000Z" }),
+    archiveThread: vi.fn().mockResolvedValue({ id: "thread_1", archivedAt: "2026-06-25T00:00:00.000Z" }),
     getSessionStart: vi.fn().mockResolvedValue({
       agent: { id: AGENT_ID, name: "test", specialization: null, workerType: null, repoPath: null },
       project: { id: REPO_ID, name: "test", context: null, defaultAssignee: null },
@@ -39,9 +41,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 13 tools", () => {
+  it("returns all 15 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(15);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -56,6 +58,28 @@ describe("buildTools", () => {
     expect(names).toContain("list_all_tasks");
     expect(names).toContain("session_start");
     expect(names).toContain("submit_review");
+    expect(names).toContain("archive_task");
+    expect(names).toContain("archive_thread");
+  });
+});
+
+describe("archive tools", () => {
+  it("archive_task forwards the id and returns MCP content", async () => {
+    const archiveTask = vi.fn().mockResolvedValue({ id: "task_9", archivedAt: "2026-06-25T00:00:00.000Z" });
+    const tools = buildTools(mockClient({ archiveTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "archive_task")({ taskId: "task_9" });
+    expect(archiveTask).toHaveBeenCalledWith("task_9");
+    expect(result.content[0].type).toBe("text");
+    expect(result.content[0].text).toContain("task_9");
+  });
+
+  it("archive_thread forwards the id and returns MCP content", async () => {
+    const archiveThread = vi.fn().mockResolvedValue({ id: "thread_9", archivedAt: "2026-06-25T00:00:00.000Z" });
+    const tools = buildTools(mockClient({ archiveThread }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "archive_thread")({ threadId: "thread_9" });
+    expect(archiveThread).toHaveBeenCalledWith("thread_9");
+    expect(result.content[0].type).toBe("text");
+    expect(result.content[0].text).toContain("thread_9");
   });
 });
 

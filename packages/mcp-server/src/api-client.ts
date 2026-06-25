@@ -158,6 +158,16 @@ export class ApiClient {
     return this.request<unknown>("PUT", `/threads/${threadId}/conclude`, { summary });
   }
 
+  // Pass an empty body so the always-present Content-Type: application/json
+  // header has valid JSON to parse (Fastify 400s on an empty json body).
+  archiveTask(taskId: string) {
+    return this.request<unknown>("PUT", `/tasks/${taskId}/archive`, {});
+  }
+
+  archiveThread(threadId: string) {
+    return this.request<unknown>("PUT", `/threads/${threadId}/archive`, {});
+  }
+
   // Session
   getSessionStart(repoId?: string) {
     const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";

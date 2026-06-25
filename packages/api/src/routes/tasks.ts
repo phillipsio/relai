@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray, asc } from "drizzle-orm";
+import { eq, and, inArray, asc, isNull } from "drizzle-orm";
 import { tasks, repos, agents, threads, messages } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
@@ -250,15 +250,18 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     return reply.status(201).send({ data: task });
   });
 
-  fastify.get<{ Querystring: { repoId?: string; status?: string; assignedTo?: string; epicId?: string } }>(
+  fastify.get<{ Querystring: { repoId?: string; status?: string; assignedTo?: string; epicId?: string; archived?: string } }>(
     "/tasks",
     async (request, reply) => {
-      const { repoId, status, assignedTo, epicId } = request.query;
+      const { repoId, status, assignedTo, epicId, archived } = request.query;
 
       const conditions = [];
       if (repoId)  conditions.push(eq(tasks.repoId, repoId));
       if (assignedTo) conditions.push(eq(tasks.assignedTo, assignedTo));
       if (epicId)     conditions.push(eq(tasks.epicId, epicId));
+      // Archived tasks are hidden from the default live view to keep payloads
+      // small; pass archived=true to include them (history stays queryable).
+      if (archived !== "true") conditions.push(isNull(tasks.archivedAt));
       if (status) {
         const statuses = status.split(",") as Array<typeof tasks.status._.data>;
         conditions.push(inArray(tasks.status, statuses));
@@ -289,6 +292,28 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const result = await loadTaskScoped(request, db, request.params.id);
     if (!result.ok) return reply.status(result.status).send({ error: { code: "not_found", message: "Task not found" } });
     return { data: result.task };
+  });
+
+  // Archive a terminal task out of the default live views. Orthogonal to status:
+  // only a completed/cancelled task may be archived; the row and its history stay
+  // queryable via includeArchived (archived=true). Idempotent.
+  fastify.put<{ Params: { id: string } }>("/tasks/:id/archive", async (request, reply) => {
+    const scope = await loadTaskScoped(request, db, request.params.id);
+    if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+
+    if (scope.task.status !== "completed" && scope.task.status !== "cancelled") {
+      return reply.status(409).send({
+        error: { code: "conflict", message: `Only a completed or cancelled task can be archived (status: ${scope.task.status})` },
+      });
+    }
+
+    const [updated] = await db
+      .update(tasks)
+      .set({ archivedAt: scope.task.archivedAt ?? new Date() })
+      .where(eq(tasks.id, scope.task.id))
+      .returning();
+
+    return { data: updated };
   });
 
   fastify.put<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {

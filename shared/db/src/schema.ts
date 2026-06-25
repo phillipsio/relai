@@ -126,6 +126,10 @@ export const threads = pgTable("threads", {
   // and standalone threads). No hard FK — circular with tasks.threadId, same as
   // verifyThreadId. The Issue↔Comments link for the unified UI.
   taskId:    text("task_id"),
+  // Set when a concluded thread is archived out of the default live views
+  // (session_start, GET /threads). Orthogonal to `status` — a thread is
+  // `concluded` and *later* archived. History stays queryable via includeArchived=true.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -193,6 +197,11 @@ export const tasks = pgTable("tasks", {
   // Set by the scheduler when a task has been `in_progress` longer than the
   // stall threshold without any update. Cleared on any subsequent PUT /tasks/:id.
   stalledAt:   timestamp("stalled_at", { withTimezone: true }),
+  // Set when a terminal-state task is archived out of the default live views
+  // (session_start, GET /tasks) to keep startup payloads small. Orthogonal to
+  // `status` — a task is `completed`/`cancelled` and *later* archived. History
+  // stays queryable via includeArchived=true.
+  archivedAt:  timestamp("archived_at", { withTimezone: true }),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

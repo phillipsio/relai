@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq, and, sql, inArray, desc } from "drizzle-orm";
+import { eq, and, sql, inArray, desc, isNull } from "drizzle-orm";
 import {
   repos, tasks, threads, messages, subscriptions, events,
   type Db,
@@ -39,6 +39,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         eq(tasks.repoId, repoId),
         eq(tasks.assignedTo, agent.id),
         inArray(tasks.status, ["pending", "assigned", "in_progress", "blocked"]),
+        isNull(tasks.archivedAt),
       ))
       .orderBy(desc(tasks.updatedAt));
 
@@ -72,7 +73,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         eq(subscriptions.targetId,   threads.id),
         eq(subscriptions.agentId,    agent.id),
       ))
-      .where(and(eq(threads.repoId, repoId), eq(threads.status, "open")));
+      .where(and(eq(threads.repoId, repoId), eq(threads.status, "open"), isNull(threads.archivedAt)));
 
     // Recent events the agent should care about: anything in this project
     // whose primary target matches one of their subscriptions, or whose

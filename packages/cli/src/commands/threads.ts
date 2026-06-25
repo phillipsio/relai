@@ -47,3 +47,20 @@ export async function threadNewCommand(title: string) {
     process.exit(1);
   }
 }
+
+export async function threadArchiveCommand(id: string) {
+  const config = requireConfig();
+  const client = new CliApiClient(config);
+
+  const spinner = ora(`Archiving thread ${id}...`).start();
+
+  try {
+    const thread = await client.archiveThread(id);
+    spinner.succeed(`${chalk.bold(id)} archived`);
+    console.log(chalk.dim(`  "${thread.title}"`));
+  } catch (err) {
+    spinner.fail(chalk.red("Archive failed"));
+    console.error(chalk.dim(String(err)));
+    process.exit(1);
+  }
+}

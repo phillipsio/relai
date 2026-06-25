@@ -238,6 +238,24 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+    }, {
+        taskId: string;
+    }>;
+    handler: (input: {
+        taskId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
         status: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         status?: string | undefined;

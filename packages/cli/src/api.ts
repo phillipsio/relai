@@ -130,12 +130,20 @@ export class CliApiClient {
     return this.request<TaskRow>("POST", `/tasks/${id}/commit`, body);
   }
 
+  archiveTask(id: string) {
+    return this.request<TaskRow>("PUT", `/tasks/${id}/archive`, {});
+  }
+
   listThreads(repoId: string) {
     return this.request<ThreadRow[]>("GET", `/threads?repoId=${encodeURIComponent(repoId)}`);
   }
 
   createThread(body: { repoId: string; title: string }) {
     return this.request<ThreadRow>("POST", "/threads", body);
+  }
+
+  archiveThread(id: string) {
+    return this.request<ThreadRow>("PUT", `/threads/${id}/archive`, {});
   }
 
   sendMessage(threadId: string, body: {

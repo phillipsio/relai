@@ -243,6 +243,33 @@ function buildTools(client, agentId, repoId) {
             },
         },
         {
+            name: "archive_task",
+            description: "Archive a finished task so it drops out of the default task lists and your session_start " +
+                "snapshot, keeping your live view small. The task must already be completed or cancelled. " +
+                "Archiving does not delete anything — the task stays queryable and is purely hidden from " +
+                "the default views.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The completed or cancelled task ID to archive."),
+            }),
+            handler: async (input) => {
+                const task = await client.archiveTask(input.taskId);
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "archive_thread",
+            description: "Archive a concluded thread (planning OR operational) so it drops out of the default thread " +
+                "lists and your session_start snapshot. The thread must already be concluded. Archiving does " +
+                "not delete anything — messages stay queryable and the thread is purely hidden from default views.",
+            inputSchema: zod_1.z.object({
+                threadId: zod_1.z.string().describe("The concluded thread ID to archive."),
+            }),
+            handler: async (input) => {
+                const thread = await client.archiveThread(input.threadId);
+                return { content: [{ type: "text", text: JSON.stringify(thread, null, 2) }] };
+            },
+        },
+        {
             name: "session_start",
             description: "Get a single bundled snapshot of your current state in this repo: your identity, the " +
                 "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +

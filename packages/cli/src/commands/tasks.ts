@@ -278,3 +278,19 @@ export async function taskUpdateCommand(
     process.exit(1);
   }
 }
+
+export async function taskArchiveCommand(id: string) {
+  const config = requireConfig();
+  const client = new CliApiClient(config);
+
+  const spinner = ora(`Archiving task ${id}...`).start();
+  try {
+    const task = await client.archiveTask(id);
+    spinner.succeed(`${chalk.bold(id)} archived`);
+    console.log(chalk.dim(`  ${task.title}`));
+  } catch (err) {
+    spinner.fail(chalk.red("Archive failed"));
+    console.error(chalk.dim(String(err)));
+    process.exit(1);
+  }
+}

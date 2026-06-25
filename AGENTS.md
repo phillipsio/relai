@@ -244,6 +244,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `REVIEW_OVERDUE_MS` | `600000` | How long a `reviewer_agent` task may sit in `pending_verification` awaiting a decision before the verify scheduler emits a one-time `task.review_overdue` event (notifies the reviewer + task subscribers). |
 | `PROPOSED_OVERDUE_MS` | `600000` | How long a worker's `proposed` task may sit awaiting an orchestrator's commit before the scheduler emits a one-time `task.proposed_overdue` event (notifies the repo's orchestrators). |
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
+| `SESSION_RECENT_EVENTS_LIMIT` | `20` | How many recent events `/session/start` returns. Each is trimmed to a one-line `summary` (full event payloads are not included) to keep the startup snapshot small; agents fetch detail by id when needed. |
 | `AGENT_ID` | — | Set after registering an agent |
 | `REPO_ID` | — | Set after creating a repo |
 | `SERVICE_ADMIN_TOKEN` | — | Multi-tenant service-admin credential. With an `X-Owner-Id: usr_…` header it scopes API reads/writes to that owner's repos (`repos.ownerId`). The closed cloud dashboard uses it; also the owner credential for the operator ingress. |

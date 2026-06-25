@@ -133,11 +133,14 @@ describe("GET /session/start", () => {
     expect(data.unreadMessages[0].body).toBe("hello");
 
     // Persisted events: at minimum, the message.posted I'm subscribed to.
-    // Newest first; capped at 50.
+    // Newest first; capped, and each compacted to a one-line summary (no full payload).
     expect(Array.isArray(data.recentEvents)).toBe(true);
     expect(data.recentEvents.length).toBeGreaterThanOrEqual(1);
     expect(data.recentEvents[0].kind).toBe("message.posted");
     expect(data.recentEvents[0].targetId).toBe(threadId);
+    // Compact shape: a summary string replaces the heavy payload.
+    expect(typeof data.recentEvents[0].summary).toBe("string");
+    expect(data.recentEvents[0].payload).toBeUndefined();
   });
 
   it("defaults repoId to the agent's own project", async () => {

@@ -6,6 +6,31 @@ import {
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
 
+// How many recent events the snapshot carries. Kept small (and each event
+// trimmed to a one-line summary, below) because this is the dominant
+// contributor to session_start payload size in an active repo.
+const RECENT_EVENTS_LIMIT = Number(process.env.SESSION_RECENT_EVENTS_LIMIT ?? 20);
+
+// Collapse an event's full payload (task bodies, multi-paragraph review notes,
+// message bodies) into a one-line summary so recentEvents stays a cheap "what
+// happened" feed. Agents fetch full detail by id when they need it.
+function summarizeEvent(kind: string, payload: Record<string, unknown>): string {
+  if (kind === "message.posted") {
+    const m = payload.message as { type?: string; fromAgent?: string; body?: string } | undefined;
+    const body = (m?.body ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
+    return `${m?.type ?? "message"} from ${m?.fromAgent ?? "?"}: ${body}`;
+  }
+  if (kind.startsWith("task.")) {
+    const t = payload.task as { title?: string; status?: string } | undefined;
+    if (t) return `${t.title ?? "task"} (${t.status ?? "?"})`;
+  }
+  if (kind.startsWith("thread.")) {
+    const th = payload.thread as { title?: string } | undefined;
+    if (th) return th.title ?? "thread";
+  }
+  return kind;
+}
+
 // One bundled snapshot for "where am I" — replaces the 4-5 calls a fresh agent
 // otherwise makes (my tasks, unread messages, open threads, project context).
 // Caller is identified from request.agent; the legacy API_SECRET fallback can't
@@ -77,9 +102,17 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
 
     // Recent events the agent should care about: anything in this project
     // whose primary target matches one of their subscriptions, or whose
-    // alsoNotify list names them directly. Caps at 50 newest first.
-    const recentEvents = await db
-      .select()
+    // alsoNotify list names them directly. Newest first, capped, and each
+    // collapsed to a one-line summary (full payloads are fetched by id).
+    const recentEventRows = await db
+      .select({
+        id:         events.id,
+        kind:       events.kind,
+        targetType: events.targetType,
+        targetId:   events.targetId,
+        payload:    events.payload,
+        createdAt:  events.createdAt,
+      })
       .from(events)
       .where(sql`
         ${events.repoId} = ${repoId}
@@ -94,7 +127,12 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         )
       `)
       .orderBy(desc(events.createdAt))
-      .limit(50);
+      .limit(RECENT_EVENTS_LIMIT);
+
+    const recentEvents = recentEventRows.map(({ payload, ...e }) => ({
+      ...e,
+      summary: summarizeEvent(e.kind, (payload ?? {}) as Record<string, unknown>),
+    }));
 
     return {
       data: {

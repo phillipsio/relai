@@ -139,6 +139,30 @@ describe("notification-channels CRUD", () => {
     });
     expect(res.statusCode).toBe(204);
   });
+
+  it("POST creates a slack channel with webhookUrl config", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({
+        agentId: agentAId,
+        kind: "slack",
+        config: { webhookUrl: "https://hooks.slack.test/services/T/B/X" },
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const data = res.json().data;
+    expect(data.kind).toBe("slack");
+    expect(data.config.webhookUrl).toBe("https://hooks.slack.test/services/T/B/X");
+    await app.inject({ method: "DELETE", url: `/notification-channels/${data.id}`, headers: ADMIN });
+  });
+
+  it("rejects a slack channel with a webhook-shaped config (url instead of webhookUrl)", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentAId, kind: "slack", config: { url: "https://example.test/hook" } }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 describe("webhook delivery", () => {
@@ -338,5 +362,116 @@ describe("webhook delivery", () => {
     const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
     expect(row.failureCount).toBe(0);
     expect(row.lastError).toBeNull();
+  });
+});
+
+describe("slack delivery", () => {
+  const fetchMock = vi.fn();
+  let originalFetch: typeof fetch;
+  let channelId: string;
+  let threadId: string;
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    fetchMock.mockReset();
+
+    const ch = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({
+        agentId: agentBId,
+        kind: "slack",
+        config: { webhookUrl: "https://hooks.slack.test/services/T/B/X" },
+      }),
+    });
+    channelId = ch.json().data.id;
+
+    const t = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ repoId, title: "slack delivery thread" }),
+    });
+    threadId = t.json().data.id;
+
+    await app.inject({
+      method: "POST", url: "/subscriptions", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentBId, targetType: "thread", targetId: threadId }),
+    });
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    const db = createDb(DB_URL);
+    await db.delete(notificationChannels).where(eq(notificationChannels.id, channelId));
+  });
+
+  it("posts a formatted { text } summary to the Slack webhook URL, no HMAC headers", async () => {
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+    const db = createDb(DB_URL);
+
+    const escalationEvent: AppEvent = {
+      id: "evt_test_slack_1",
+      kind: "message.posted",
+      repoId,
+      targetType: "thread",
+      targetId: threadId,
+      payload: { message: { type: "escalation", body: "need a decision", fromAgent: "agent_orch" } },
+      createdAt: new Date().toISOString(),
+    };
+
+    await deliver(db, escalationEvent, { retries: 0 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://hooks.slack.test/services/T/B/X");
+
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers["X-Relai-Signature"]).toBeUndefined();
+    expect(headers["X-Relai-Timestamp"]).toBeUndefined();
+
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.text).toContain("🚨 Escalation");
+    expect(body.text).toContain("need a decision");
+    expect(body.text).toContain("agent_orch");
+  });
+
+  it("formats a task event with title/priority/status", async () => {
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+    const db = createDb(DB_URL);
+
+    // targetType/targetId match the thread subscription set up in beforeEach
+    // (resolveSubscribers needs a hit) — only the kind/payload shape matters
+    // for what's under test here, which is the Slack text formatting.
+    const taskEvent: AppEvent = {
+      id: "evt_test_slack_2",
+      kind: "task.updated",
+      repoId,
+      targetType: "thread",
+      targetId: threadId,
+      payload: { task: { title: "Fix the thing", priority: "urgent", status: "blocked" } },
+      createdAt: new Date().toISOString(),
+    };
+
+    await deliver(db, taskEvent, { retries: 0 });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.text).toContain("Fix the thing");
+    expect(body.text).toContain("urgent");
+    expect(body.text).toContain("blocked");
+  });
+
+  it("reuses the same retry/circuit-breaker logic as webhook channels", async () => {
+    fetchMock.mockResolvedValue(new Response("nope", { status: 500 }));
+    const db = createDb(DB_URL);
+    const event: AppEvent = {
+      id: "evt_test_slack_3", kind: "message.posted", repoId, targetType: "thread", targetId: threadId,
+      payload: { message: { type: "status", body: "x", fromAgent: "a" } }, createdAt: new Date().toISOString(),
+    };
+
+    for (let i = 0; i < 5; i++) await deliver(db, event, { retries: 0 });
+
+    const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
+    expect(row.failureCount).toBe(5);
+    expect(row.disabledAt).not.toBeNull();
   });
 });

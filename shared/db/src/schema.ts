@@ -211,13 +211,15 @@ export const subscriptions = pgTable("subscriptions", {
 
 // ── Notification channels ─────────────────────────────────────────────────────
 
-export const notificationChannelKindEnum = pgEnum("notification_channel_kind", ["webhook"]);
+export const notificationChannelKindEnum = pgEnum("notification_channel_kind", ["webhook", "slack"]);
 
 export const notificationChannels = pgTable("notification_channels", {
   id:              text("id").primaryKey(),
   agentId:         text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
   kind:            notificationChannelKindEnum("kind").notNull(),
-  // Shape depends on kind. For "webhook": { url: string, headers?: Record<string, string> }
+  // Shape depends on kind. For "webhook": { url: string, headers?: Record<string, string> }.
+  // For "slack": { webhookUrl: string } — a Slack Incoming Webhook URL; delivery
+  // posts a human-readable { text } summary instead of the raw signed event JSON.
   config:          jsonb("config").notNull(),
   // Per-channel HMAC secret. Used to sign outgoing webhook deliveries so the
   // receiver can verify the request originated from this Relai instance.

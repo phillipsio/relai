@@ -15,14 +15,19 @@ const webhookConfigSchema = z.object({
   headers: z.record(z.string()).optional(),
 });
 
-const createSchema = z.object({
-  agentId: z.string().optional(),  // defaults to caller
-  kind:    z.literal("webhook"),
-  config:  webhookConfigSchema,
+// Slack Incoming Webhook URL. Delivery posts a human-readable { text }
+// summary (see lib/notifications.ts) rather than the raw signed event JSON.
+const slackConfigSchema = z.object({
+  webhookUrl: z.string().url(),
 });
 
+const createSchema = z.discriminatedUnion("kind", [
+  z.object({ agentId: z.string().optional(), kind: z.literal("webhook"), config: webhookConfigSchema }),
+  z.object({ agentId: z.string().optional(), kind: z.literal("slack"),   config: slackConfigSchema }),
+]);
+
 const updateSchema = z.object({
-  config:           webhookConfigSchema.optional(),
+  config:           z.union([webhookConfigSchema, slackConfigSchema]).optional(),
   // Setting `disabled: false` clears `disabledAt` and resets failureCount —
   // the operator's "I fixed the URL, try again" lever after a circuit trip.
   disabled:         z.boolean().optional(),

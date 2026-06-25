@@ -80,33 +80,67 @@ async function attemptOnce(url: string, headers: Record<string, string>, body: s
   }
 }
 
+// Human-readable one-liner for Slack, since the raw event JSON (payload.task /
+// payload.message) isn't meant for display. Escalation messages get a 🚨
+// prefix so they stand out in a channel full of routine status pings.
+function summarizeForSlack(event: AppEvent): string {
+  const payload = event.payload as Record<string, unknown>;
+
+  if (event.kind === "message.posted") {
+    const message = payload.message as { type?: string; body?: string; fromAgent?: string } | undefined;
+    const prefix = message?.type === "escalation" ? "🚨 Escalation" : `Message (${message?.type ?? "status"})`;
+    return `*${prefix}* from \`${message?.fromAgent ?? "unknown"}\`:\n${message?.body ?? ""}`;
+  }
+
+  if (event.kind.startsWith("task.")) {
+    const task = payload.task as { title?: string; status?: string; priority?: string } | undefined;
+    if (task) {
+      return `*Task ${event.kind.slice("task.".length)}* (${task.priority ?? "normal"}, ${task.status ?? "?"}): ${task.title ?? event.targetId}`;
+    }
+  }
+
+  return `relai event: \`${event.kind}\` on ${event.targetType} \`${event.targetId}\``;
+}
+
 async function deliverOne(db: Db, channel: Channel, event: AppEvent, opts: DeliverOptions): Promise<void> {
-  const config = channel.config as { url: string; headers?: Record<string, string> };
   const retries     = opts.retries     ?? DEFAULT_RETRIES;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
 
-  const secret = await ensureSecret(db, channel);
-  const body = JSON.stringify({
-    id:         event.id,
-    kind:       event.kind,
-    repoId:  event.repoId,
-    targetType: event.targetType,
-    targetId:   event.targetId,
-    payload:    event.payload,
-    createdAt:  event.createdAt,
-  });
-  const timestamp = new Date().toISOString();
-  const signature = sign(secret, timestamp, body);
-  const headers: Record<string, string> = {
-    "Content-Type":      "application/json",
-    "X-Relai-Timestamp": timestamp,
-    "X-Relai-Signature": `sha256=${signature}`,
-    ...(config.headers ?? {}),
-  };
+  let url: string;
+  let headers: Record<string, string>;
+  let body: string;
+
+  if (channel.kind === "slack") {
+    const config = channel.config as { webhookUrl: string };
+    url = config.webhookUrl;
+    headers = { "Content-Type": "application/json" };
+    body = JSON.stringify({ text: summarizeForSlack(event) });
+  } else {
+    const config = channel.config as { url: string; headers?: Record<string, string> };
+    const secret = await ensureSecret(db, channel);
+    body = JSON.stringify({
+      id:         event.id,
+      kind:       event.kind,
+      repoId:  event.repoId,
+      targetType: event.targetType,
+      targetId:   event.targetId,
+      payload:    event.payload,
+      createdAt:  event.createdAt,
+    });
+    const timestamp = new Date().toISOString();
+    const signature = sign(secret, timestamp, body);
+    url = config.url;
+    headers = {
+      "Content-Type":      "application/json",
+      "X-Relai-Timestamp": timestamp,
+      "X-Relai-Signature": `sha256=${signature}`,
+      ...(config.headers ?? {}),
+    };
+  }
 
   let lastError = "unknown error";
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const result = await attemptOnce(config.url, headers, body);
+    const result = await attemptOnce(url, headers, body);
     if (result.ok) {
       await db.update(notificationChannels).set({
         lastDeliveredAt: new Date(),

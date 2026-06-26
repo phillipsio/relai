@@ -78,6 +78,73 @@ describe("POST /repos", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("validation_error");
   });
+
+  it("rejects a repoUrl that isn't https:// or ssh:// (SSRF guard)", async () => {
+    // repoUrl feeds `git ls-remote <repoUrl>` (git_pushed verifyKind) — only
+    // https/ssh are real remotes; file://, http://, git:// could point the
+    // API host's outbound git at an internal/metadata endpoint. git+ssh:// is
+    // a lookalike scheme that startsWith("ssh://") would have missed.
+    for (const bad of ["file:///etc/passwd", "http://169.254.169.254/", "git://example.com/x.git", "git+ssh://example.com/x.git"]) {
+      const res = await app.inject({
+        method: "POST", url: "/repos",
+        headers: { ...AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "bad-url-repo", repoUrl: bad }),
+      });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it("rejects an ssh:// repoUrl with a leading-dash hostname or username (argument-injection guard)", async () => {
+    for (const bad of ["ssh://-oProxyCommand=x/repo.git", "ssh://-user@example.com/repo.git"]) {
+      const res = await app.inject({
+        method: "POST", url: "/repos",
+        headers: { ...AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "bad-dash-repo", repoUrl: bad }),
+      });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it("accepts https:// and ssh:// repoUrl", async () => {
+    for (const good of ["https://github.com/example/repo.git", "ssh://git@github.com/example/repo.git"]) {
+      const res = await app.inject({
+        method: "POST", url: "/repos",
+        headers: { ...AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "good-url-repo", repoUrl: good }),
+      });
+      expect(res.statusCode).toBe(201);
+    }
+  });
+
+  it("a worker agent cannot set repoUrl on create (403); an orchestrator can", async () => {
+    const orchRes = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, name: "repo-url-orch", role: "orchestrator" }),
+    });
+    const orchToken = orchRes.json().token as string;
+
+    const workerRes = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, name: "repo-url-worker", role: "worker" }),
+    });
+    const workerToken = workerRes.json().token as string;
+
+    const denied = await app.inject({
+      method: "POST", url: "/repos",
+      headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "worker-cannot", repoUrl: "https://example.com/x.git" }),
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const allowed = await app.inject({
+      method: "POST", url: "/repos",
+      headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "orch-can", repoUrl: "https://example.com/x.git" }),
+    });
+    expect(allowed.statusCode).toBe(201);
+  });
 });
 
 describe("GET /repos", () => {
@@ -111,6 +178,45 @@ describe("GET /repos/:id", () => {
 });
 
 describe("PUT /repos/:id", () => {
+  it("a worker agent cannot set repoUrl on update (403); an orchestrator can", async () => {
+    const orchRes = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, name: "repo-url-put-orch", role: "orchestrator" }),
+    });
+    const orchToken = orchRes.json().token as string;
+
+    const workerRes = await app.inject({
+      method: "POST", url: "/agents",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, name: "repo-url-put-worker", role: "worker" }),
+    });
+    const workerToken = workerRes.json().token as string;
+
+    const denied = await app.inject({
+      method: "PUT", url: `/repos/${repoId}`,
+      headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl: "https://example.com/x.git" }),
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const allowed = await app.inject({
+      method: "PUT", url: `/repos/${repoId}`,
+      headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl: "https://example.com/x.git" }),
+    });
+    expect(allowed.statusCode).toBe(200);
+  });
+
+  it("rejects a non-https/ssh repoUrl on update", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/repos/${repoId}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl: "file:///etc/passwd" }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it("updates the pinned context blob", async () => {
     const res = await app.inject({
       method: "PUT", url: `/repos/${repoId}`,
@@ -500,6 +606,46 @@ describe("PUT /tasks/:id", () => {
     expect(upd.json().data.verifyReviewerId).toBe(revB);
   });
 
+  it("a worker cannot re-point a git_pushed task's verifyPath via PUT (403); an orchestrator can", async () => {
+    const orchRes = await app.inject({
+      method: "POST", url: "/agents", headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, name: "gp-put-orch", role: "orchestrator" }),
+    });
+    const orchToken = orchRes.json().token as string;
+    const orchId    = orchRes.json().data.id as string;
+
+    const workerRes = await app.inject({
+      method: "POST", url: "/agents", headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, name: "gp-put-worker", role: "worker" }),
+    });
+    const workerToken = workerRes.json().token as string;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: orchId, title: "gp-put", description: "x",
+        verifyKind: "git_pushed", verifyPath: "feature/a",
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const id = create.json().data.id;
+
+    const denied = await app.inject({
+      method: "PUT", url: `/tasks/${id}`,
+      headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ verifyPath: "feature/b" }),
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const allowed = await app.inject({
+      method: "PUT", url: `/tasks/${id}`,
+      headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ verifyPath: "feature/b" }),
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json().data.verifyPath).toBe("feature/b");
+  });
+
   it("rejects a cross-kind verify edit (verifyReviewerId on a file_exists task)", async () => {
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: { ...AUTH, "Content-Type": "application/json" },
@@ -526,6 +672,60 @@ describe("PUT /tasks/:id", () => {
       }),
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("accepts kind=git_pushed with verifyPath", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId,
+        title: "land the branch", description: "must be pushed to origin",
+        verifyKind: "git_pushed",
+        verifyPath: "feature/x",
+        verifyCwd:  "/tmp",
+      }),
+    });
+    expect(create.statusCode).toBe(201);
+    const data = create.json().data;
+    expect(data.verifyKind).toBe("git_pushed");
+    expect(data.verifyPath).toBe("feature/x");
+
+    // Completion gate fires for git_pushed too.
+    const done = await app.inject({
+      method: "PUT", url: `/tasks/${data.id}`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(done.json().data.status).toBe("pending_verification");
+  });
+
+  it("rejects kind=git_pushed without verifyPath", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId, title: "x", description: "x",
+        verifyKind: "git_pushed",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects a cross-kind verify edit (verifyReviewerId on a git_pushed task)", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId, title: "gp task", description: "x",
+        verifyKind: "git_pushed", verifyPath: "feature/y",
+      }),
+    });
+    const id = create.json().data.id;
+    const upd = await app.inject({
+      method: "PUT", url: `/tasks/${id}`, headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ verifyReviewerId: "agent_whatever" }),
+    });
+    expect(upd.statusCode).toBe(400);
   });
 
   it("rejects kind=shell without verifyCommand", async () => {
@@ -634,6 +834,28 @@ describe("PUT /tasks/:id", () => {
       }),
     });
     expect(okShell.statusCode).toBe(201);
+
+    // git_pushed runs `git` against an operator-supplied cwd, same
+    // restriction as shell. Worker denied, orchestrator allowed.
+    const deniedGp = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: workerId, title: "gp", description: "x",
+        verifyKind: "git_pushed", verifyPath: "feature/x",
+      }),
+    });
+    expect(deniedGp.statusCode).toBe(403);
+
+    const okGp = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: orchId, title: "gp-ok", description: "x",
+        verifyKind: "git_pushed", verifyPath: "feature/x",
+      }),
+    });
+    expect(okGp.statusCode).toBe(201);
   });
 
   it("rejects kind=file_exists mixed with verifyCommand", async () => {
@@ -644,6 +866,20 @@ describe("PUT /tasks/:id", () => {
         repoId, createdBy: agentId, title: "x", description: "x",
         verifyKind:    "file_exists",
         verifyPath:    "/tmp/x",
+        verifyCommand: "echo no",
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects kind=git_pushed mixed with verifyCommand", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId, title: "x", description: "x",
+        verifyKind:    "git_pushed",
+        verifyPath:    "feature/x",
         verifyCommand: "echo no",
       }),
     });

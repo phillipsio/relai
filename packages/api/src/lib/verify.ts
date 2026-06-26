@@ -6,6 +6,11 @@ export interface VerificationResult {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  // True when a non-pass result is inconclusive (e.g. a network/infra error)
+  // rather than a definitive fail. The scheduler releases the claim and
+  // retries next tick instead of bouncing the task to `assigned` and
+  // notifying the assignee. Unset/false everywhere except git_pushed today.
+  retryable?: boolean;
 }
 
 const STREAM_CAP = 8 * 1024;

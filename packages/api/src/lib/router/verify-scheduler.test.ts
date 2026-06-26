@@ -2,10 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { buildServer } from "../../server.js";
 import { verifyPending } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
-import { createDb, tasks, verificationLog } from "@getrelai/db";
+import { createDb, tasks, verificationLog, repos } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
@@ -211,6 +213,258 @@ describe("verifyPending", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("kind=git_pushed passes when the branch exists on origin", async () => {
+    const git = promisify(execFile);
+    const bareDir = await mkdtemp(join(tmpdir(), "relai-gpv-sched-bare-"));
+    const workDir = await mkdtemp(join(tmpdir(), "relai-gpv-sched-work-"));
+    try {
+      await git("git", ["init", "--bare", "-q", bareDir]);
+      await git("git", ["init", "-q", workDir]);
+      await git("git", ["config", "user.email", "test@example.com"], { cwd: workDir });
+      await git("git", ["config", "user.name", "Test"], { cwd: workDir });
+      await git("git", ["remote", "add", "origin", bareDir], { cwd: workDir });
+      await writeFile(join(workDir, "f.txt"), "x");
+      await git("git", ["add", "."], { cwd: workDir });
+      await git("git", ["commit", "-q", "-m", "init"], { cwd: workDir });
+      await git("git", ["checkout", "-q", "-b", "landed"], { cwd: workDir });
+      await git("git", ["push", "-q", "origin", "landed"], { cwd: workDir });
+
+      const create = await app.inject({
+        method: "POST", url: "/tasks", headers: ADMIN,
+        body: JSON.stringify({
+          repoId, createdBy: agentId, title: "gp", description: "x",
+          assignedTo: agentId,
+          verifyKind: "git_pushed",
+          verifyPath: "landed",
+          verifyCwd:  workDir,
+        }),
+      });
+      const taskId = create.json().data.id;
+      await app.inject({
+        method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+        body: JSON.stringify({ status: "completed" }),
+      });
+
+      const db = createDb(DB_URL);
+      let shellExecCalled = false;
+      await verifyPending(db, repoId, async () => {
+        shellExecCalled = true;
+        return { exitCode: 0, stdout: "", stderr: "", durationMs: 0, timedOut: false };
+      });
+
+      expect(shellExecCalled).toBe(false);
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("completed");
+      const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+      expect(logs[0].command).toBe(`git_pushed:landed`);
+      expect(logs[0].exitCode).toBe(0);
+    } finally {
+      await rm(bareDir, { recursive: true, force: true });
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("kind=git_pushed fails verification when the branch was never pushed", async () => {
+    const git = promisify(execFile);
+    const bareDir = await mkdtemp(join(tmpdir(), "relai-gpv-sched-bare2-"));
+    const workDir = await mkdtemp(join(tmpdir(), "relai-gpv-sched-work2-"));
+    try {
+      await git("git", ["init", "--bare", "-q", bareDir]);
+      await git("git", ["init", "-q", workDir]);
+      await git("git", ["config", "user.email", "test@example.com"], { cwd: workDir });
+      await git("git", ["config", "user.name", "Test"], { cwd: workDir });
+      await git("git", ["remote", "add", "origin", bareDir], { cwd: workDir });
+      await writeFile(join(workDir, "f.txt"), "x");
+      await git("git", ["add", "."], { cwd: workDir });
+      await git("git", ["commit", "-q", "-m", "init"], { cwd: workDir });
+      await git("git", ["checkout", "-q", "-b", "never-pushed"], { cwd: workDir });
+
+      const create = await app.inject({
+        method: "POST", url: "/tasks", headers: ADMIN,
+        body: JSON.stringify({
+          repoId, createdBy: agentId, title: "gp-miss", description: "x",
+          assignedTo: agentId,
+          verifyKind: "git_pushed",
+          verifyPath: "never-pushed",
+          verifyCwd:  workDir,
+        }),
+      });
+      const taskId = create.json().data.id;
+      await app.inject({
+        method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+        body: JSON.stringify({ status: "completed" }),
+      });
+
+      const db = createDb(DB_URL);
+      await verifyPending(db, repoId);
+
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("assigned");
+      const meta = row.metadata as Record<string, unknown>;
+      const last = meta.lastVerification as { exitCode: number };
+      expect(last.exitCode).not.toBe(0);
+    } finally {
+      await rm(bareDir, { recursive: true, force: true });
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("kind=git_pushed resolves the remote via the repo's repoUrl, independent of verifyCwd", async () => {
+    // No real https/ssh endpoint is available in CI, so this doesn't assert
+    // a successful match — it asserts that repoUrl wiring was actually used
+    // (hits the protocol-blocked, *retryable* path) rather than the
+    // "neither repoUrl nor verifyCwd" *hard-fail* path, which is what would
+    // happen if the scheduler's repoUrl DB-lookup silently failed.
+    const repoWithUrl = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ repourl" }),
+    });
+    const repoId2 = repoWithUrl.json().data.id;
+    // Write a local path directly via the DB (bypassing the route's
+    // https/ssh schema restriction, which is covered separately in
+    // repos.test.ts) — only the scheduler's lookup wiring is under test here.
+    await createDb(DB_URL).update(repos).set({ repoUrl: "/no/such/remote-xyz" }).where(eq(repos.id, repoId2));
+
+    const a2 = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: repoId2, name: "repourl-agent", role: "worker" }),
+    });
+    const agentId2 = a2.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId: repoId2, createdBy: agentId2, title: "gp-repourl", description: "x",
+        assignedTo: agentId2,
+        verifyKind: "git_pushed",
+        verifyPath: "whatever",
+        // No verifyCwd at all — only resolvable via repoUrl.
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+    await verifyPending(db, repoId2);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    // Still pending_verification (released, retryable) — proves it took the
+    // protocol-blocked-remote path, not the immediate "neither" hard-fail.
+    expect(row.status).toBe("pending_verification");
+    const meta = row.metadata as Record<string, unknown>;
+    expect(meta.verifyRetryCount).toBe(1);
+
+    await app.inject({ method: "DELETE", url: `/repos/${repoId2}`, headers: ADMIN });
+  });
+
+  it("kind=git_pushed treats no-repoUrl-and-no-verifyCwd as a hard failure, not a process.cwd() guess", async () => {
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId, createdBy: agentId, title: "gp-unresolvable", description: "x",
+        assignedTo: agentId,
+        verifyKind: "git_pushed",
+        verifyPath: "whatever",
+        // No verifyCwd, and this suite's `repoId` repo has no repoUrl set.
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+    await verifyPending(db, repoId);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("assigned");
+    const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+    expect(logs[0].stderr).toContain("neither");
+  });
+
+  it("kind=git_pushed releases the claim and retries (no log row) on a single transient failure", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "relai-gpv-sched-norepo2-"));
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId, createdBy: agentId, title: "gp-retry", description: "x",
+        assignedTo: agentId,
+        verifyKind: "git_pushed",
+        verifyPath: "whatever",
+        verifyCwd: cwd,
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+    const events: AppEvent[] = [];
+    const handler = (e: AppEvent) => events.push(e);
+    bus.on("event", handler);
+    await verifyPending(db, repoId);
+    bus.off("event", handler);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    // Still pending_verification — released, not bounced to assigned, and no
+    // verification_log row for an inconclusive (not-a-repo) tick.
+    expect(row.status).toBe("pending_verification");
+    expect(row.verifyingAt).toBeNull();
+    const meta = row.metadata as Record<string, unknown>;
+    expect(meta.verifyRetryCount).toBe(1);
+    const logs = await db.select().from(verificationLog).where(eq(verificationLog.taskId, taskId));
+    expect(logs.length).toBe(0);
+    // A retryable tick is invisible by design — no notification either.
+    expect(events.find((e) => e.kind === "task.verification_failed" && e.targetId === taskId)).toBeUndefined();
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  it("kind=git_pushed stops retrying after the cap and surfaces a hard failure", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "relai-gpv-sched-norepo-"));
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId, createdBy: agentId, title: "gp-retry-cap", description: "x",
+        assignedTo: agentId,
+        verifyKind: "git_pushed",
+        verifyPath: "whatever",
+        verifyCwd: cwd,
+      }),
+    });
+    const taskId = create.json().data.id;
+    await app.inject({
+      method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+      body: JSON.stringify({ status: "completed" }),
+    });
+
+    const db = createDb(DB_URL);
+    const events: AppEvent[] = [];
+    const handler = (e: AppEvent) => events.push(e);
+    bus.on("event", handler);
+    for (let i = 0; i < 5; i++) {
+      await verifyPending(db, repoId);
+    }
+    bus.off("event", handler);
+
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+    expect(row.status).toBe("assigned");
+    const meta = row.metadata as Record<string, unknown>;
+    expect(meta.verifyRetryCount).toBe(0);
+    const last = meta.lastVerification as { retriesExhausted: boolean };
+    expect(last.retriesExhausted).toBe(true);
+    // The exhausted-cap tick is a real failure — it must notify, unlike the
+    // retryable ticks leading up to it.
+    const failed = events.find((e) => e.kind === "task.verification_failed" && e.targetId === taskId);
+    expect(failed).toBeDefined();
+    await rm(cwd, { recursive: true, force: true });
   });
 
   it("kind=thread_concluded passes when the referenced thread is concluded", async () => {

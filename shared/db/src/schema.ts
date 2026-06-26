@@ -19,7 +19,7 @@ export const messageTypeEnum = pgEnum("message_type", [
 
 export const routingMethodEnum = pgEnum("routing_method", ["rules", "claude"]);
 
-export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded", "reviewer_agent"]);
+export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded", "reviewer_agent", "git_pushed"]);
 
 // ── Users ────────────────────────────────────────────────────────────────────
 //
@@ -174,6 +174,8 @@ export const tasks = pgTable("tasks", {
   verifyCommand:   text("verify_command"),
   verifyCwd:       text("verify_cwd"),
   // kind="file_exists" — path is resolved against verifyCwd (or process cwd).
+  // kind="git_pushed" — reuses this pair: verifyPath is the branch name to
+  // check, verifyCwd is the local repo to run `git` in.
   verifyPath:      text("verify_path"),
   // kind="thread_concluded" — passes once the referenced thread reaches
   // status="concluded". No FK constraint here (declared after threads).

@@ -33,13 +33,14 @@ function verifyConfigConsistent(v: {
   if (v.verifyKind === "file_exists"      && !v.verifyPath)       return false;
   if (v.verifyKind === "thread_concluded" && !v.verifyThreadId)   return false;
   if (v.verifyKind === "reviewer_agent"   && !v.verifyReviewerId) return false;
+  if (v.verifyKind === "git_pushed"       && !v.verifyPath)       return false;
   if (
-    (v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded" || v.verifyKind === "reviewer_agent") &&
+    (v.verifyKind === "file_exists" || v.verifyKind === "thread_concluded" || v.verifyKind === "reviewer_agent" || v.verifyKind === "git_pushed") &&
     v.verifyCommand
   ) return false;
   if (v.verifyKind !== "reviewer_agent"   && v.verifyReviewerId) return false;
   if (v.verifyKind !== "thread_concluded" && v.verifyThreadId)   return false;
-  if (v.verifyKind !== "file_exists"      && v.verifyPath)       return false;
+  if (v.verifyKind !== "file_exists" && v.verifyKind !== "git_pushed" && v.verifyPath) return false;
   return true;
 }
 
@@ -64,7 +65,7 @@ async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
 }
 
 const VERIFY_MISMATCH_MSG =
-  "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId) and fields cannot cross kinds";
+  "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId, git_pushed=verifyPath) and fields cannot cross kinds";
 
 const createSchema = z.object({
   repoId:      z.string(),
@@ -86,7 +87,7 @@ const createSchema = z.object({
   // else returns to `assigned`. The predicate can be edited after creation via
   // PUT /tasks/:id (e.g. re-point verifyReviewerId); the merged config is
   // re-validated and the shell-author gate re-applied.
-  // Three kinds:
+  // Five kinds:
   //   - "shell"            — runs `verifyCommand` (legacy default; kept for
   //                          back-compat when only `verifyCommand` is sent).
   //   - "file_exists"      — checks `verifyPath`; no shell exec.
@@ -94,7 +95,11 @@ const createSchema = z.object({
   //                          "concluded"; useful for plan-driven flows.
   //   - "reviewer_agent"   — passes when `verifyReviewerId` posts an "approve"
   //                          decision via POST /tasks/:id/review.
-  verifyKind:      z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
+  //   - "git_pushed"       — checks that the branch named in `verifyPath`
+  //                          exists on the repo's remote (orchestrator-gated,
+  //                          like shell — it runs `git` against an
+  //                          operator-supplied cwd).
+  verifyKind:      z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent", "git_pushed"]).optional(),
   verifyCommand:   z.string().min(1).optional(),
   verifyCwd:       z.string().optional(),
   verifyPath:      z.string().min(1).optional(),
@@ -119,7 +124,7 @@ const updateSchema = z.object({
   // Verification predicate can be edited after creation (e.g. re-point a
   // reviewer). The PUT handler validates the merged config + re-applies the
   // shell-author gate and reviewer-existence check. Fields cannot cross kinds.
-  verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
+  verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent", "git_pushed"]).optional(),
   verifyCommand:    z.string().min(1).optional(),
   verifyCwd:        z.string().optional(),
   verifyPath:       z.string().min(1).optional(),
@@ -137,16 +142,20 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
     // Authoring a shell predicate runs arbitrary commands inside the API
-    // process. Restrict to orchestrators and the deprecated admin-secret
-    // path. Structured kinds (file_exists, thread_concluded) are unrestricted.
-    const authorsShell =
+    // process; git_pushed also runs a host command (git) against an
+    // operator-supplied cwd, so it gets the same restriction. Restrict both
+    // to orchestrators and the deprecated admin-secret path. The remaining
+    // structured kinds (file_exists, thread_concluded, reviewer_agent) are
+    // unrestricted.
+    const authorsRestrictedKind =
       body.data.verifyKind === "shell" ||
+      body.data.verifyKind === "git_pushed" ||
       (body.data.verifyKind === undefined && !!body.data.verifyCommand);
-    if (authorsShell && request.agent && request.agent.role !== "orchestrator") {
+    if (authorsRestrictedKind && request.agent && request.agent.role !== "orchestrator") {
       return reply.status(403).send({
         error: {
           code: "forbidden",
-          message: "Only orchestrator agents may author shell verifyCommand. Use verifyKind=file_exists or verifyKind=thread_concluded for structured predicates.",
+          message: "Only orchestrator agents may author shell or git_pushed verify predicates. Use verifyKind=file_exists, thread_concluded, or reviewer_agent for unrestricted structured predicates.",
         },
       });
     }
@@ -343,9 +352,11 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       if (!verifyConfigConsistent(merged)) {
         return reply.status(400).send({ error: { code: "validation_error", message: VERIFY_MISMATCH_MSG } });
       }
-      const authorsShell = merged.verifyKind === "shell" || (merged.verifyKind == null && !!merged.verifyCommand);
-      if (authorsShell && request.agent && request.agent.role !== "orchestrator") {
-        return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may author shell verifyCommand." } });
+      const authorsRestrictedKind =
+        merged.verifyKind === "shell" || merged.verifyKind === "git_pushed" ||
+        (merged.verifyKind == null && !!merged.verifyCommand);
+      if (authorsRestrictedKind && request.agent && request.agent.role !== "orchestrator") {
+        return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may author shell or git_pushed verify predicates." } });
       }
       if (merged.verifyKind === "reviewer_agent") {
         const [reviewer] = await db
@@ -378,6 +389,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         .where(eq(tasks.id, request.params.id));
       const hasVerify =
         existing?.verifyKind === "file_exists"      ? !!existing.verifyPath       :
+        existing?.verifyKind === "git_pushed"       ? !!existing.verifyPath       :
         existing?.verifyKind === "thread_concluded" ? !!existing.verifyThreadId   :
         existing?.verifyKind === "reviewer_agent"   ? !!existing.verifyReviewerId :
         !!existing?.verifyCommand;  // shell (or legacy null+command)
@@ -537,7 +549,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     priority:       z.enum(["low", "normal", "high", "urgent"]).optional(),
     domains:        z.array(z.string()).optional(),
     specialization: z.string().optional(),
-    verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent"]).optional(),
+    verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent", "git_pushed"]).optional(),
     verifyCommand:    z.string().min(1).optional(),
     verifyCwd:        z.string().optional(),
     verifyPath:       z.string().min(1).optional(),

@@ -5,9 +5,8 @@
       "args": ["@getrelai/mcp-server"],
       "env": {
         "API_URL": "http://localhost:3010",
-        "API_SECRET": "your-secret",
-        "AGENT_ID": "agent_yourAgentId",
-        "PROJECT_ID": "proj_yourProjectId"
+        "API_OWNER_TOKEN": "your-owner-token",
+        "OWNER_ID": "usr_yourOwnerId"
       }
     }
   }

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { eq, and, inArray, isNull, lt, or } from "drizzle-orm";
-import { agents, tasks, routingLog, messages, verificationLog } from "@getrelai/db";
+import { agents, tasks, repos, routingLog, messages, verificationLog } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
 import { publish, ensureSubscription } from "../events.js";
@@ -9,11 +9,18 @@ import type { VerificationResult } from "../verify.js";
 import { runFileExistsVerification } from "../verify-file-exists.js";
 import { runThreadConcludedVerification } from "../verify-thread-concluded.js";
 import { runReviewerAgentVerification, type ReviewDecision } from "../verify-reviewer-agent.js";
+import { runGitPushedVerification } from "../verify-git-pushed.js";
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
 import { runMessageLoopCycle } from "./message-loop.js";
 
 const VERIFY_STUCK_MS = 5 * 60 * 1000;
+
+// A `retryable` result is meant for a transient blip (one bad network tick),
+// not a permanent misconfiguration (bad repoUrl, unreachable host, missing
+// auth) — those must not retry forever invisibly. After this many consecutive
+// retryable ticks, treat it as a hard failure: log it, bounce the task, notify.
+const RETRYABLE_VERIFY_CAP = 5;
 
 const TASK_POLL_MS         = Number(process.env.TASK_POLL_MS         ?? 15_000);
 const BLOCKED_POLL_MS      = Number(process.env.BLOCKED_POLL_MS      ?? 15_000);
@@ -259,6 +266,27 @@ const VERIFIERS: Record<VerifyKind, VerifierEntry> = {
     logLabel: (t) => `file_exists:${t.verifyPath}`,
     run: ({ task }) => runFileExistsVerification(task.verifyPath!, task.verifyCwd),
   },
+  git_pushed: {
+    isMisconfigured: (t) => !t.verifyPath,
+    logLabel: (t) => `git_pushed:${t.verifyPath}`,
+    run: async ({ task, db }) => {
+      // Resolve the remote independently of any local checkout (the
+      // distributed-host case this kind targets — the API host doesn't
+      // necessarily have a clone at verifyCwd). Falls back to a cwd-relative
+      // `origin` lookup only when the repo has no repoUrl on file.
+      const [repo] = await db.select({ repoUrl: repos.repoUrl }).from(repos).where(eq(repos.id, task.repoId));
+      if (!repo?.repoUrl && !task.verifyCwd) {
+        // Neither a remote URL nor a local checkout — running `git` against
+        // process.cwd() would check whatever directory the API happened to
+        // start in, a silently wrong-repo verdict. Fail closed instead.
+        return {
+          exitCode: null, stdout: "", retryable: false, timedOut: false, durationMs: 0,
+          stderr: "git_pushed: neither the repo's repoUrl nor the task's verifyCwd is set — nothing to check against",
+        };
+      }
+      return runGitPushedVerification(task.verifyPath!, repo?.repoUrl, task.verifyCwd);
+    },
+  },
   thread_concluded: {
     isMisconfigured: (t) => !t.verifyThreadId,
     logLabel: (t) => `thread_concluded:${t.verifyThreadId}`,
@@ -418,6 +446,26 @@ async function verifyOne(
       }
     }
 
+    // Inconclusive result (e.g. a network blip for git_pushed) — release the
+    // claim and retry next tick. No log row, no status change, so a transient
+    // infra failure doesn't bounce the task to `assigned` or notify the
+    // assignee for something they may have already done correctly. Capped:
+    // past RETRYABLE_VERIFY_CAP consecutive retries this is no longer a blip,
+    // it's a wedged task, so fall through to the normal fail path instead of
+    // retrying invisibly forever.
+    let verifyRetryCount = 0;
+    if (result.retryable && !wasStuck) {
+      const meta = (task.metadata as Record<string, unknown> | null) ?? {};
+      verifyRetryCount = (Number(meta.verifyRetryCount) || 0) + 1;
+      if (verifyRetryCount < RETRYABLE_VERIFY_CAP) {
+        await db.update(tasks)
+          .set({ verifyingAt: null, metadata: { ...meta, verifyRetryCount } })
+          .where(eq(tasks.id, task.id));
+        return;
+      }
+      result = { ...result, retryable: false };
+    }
+
     const logCommand = verifier.logLabel(task);
 
     const [logRow] = await db.insert(verificationLog).values({
@@ -433,8 +481,12 @@ async function verifyOne(
 
     const passed = result.exitCode === 0 && !result.timedOut;
     if (passed) {
+      const passMeta = (task.metadata as Record<string, unknown> | null) ?? {};
       const [updated] = await db.update(tasks)
-        .set({ status: "completed", verifyingAt: null, updatedAt: new Date() })
+        .set({
+          status: "completed", verifyingAt: null, updatedAt: new Date(),
+          metadata: "verifyRetryCount" in passMeta ? { ...passMeta, verifyRetryCount: 0 } : passMeta,
+        })
         .where(eq(tasks.id, task.id))
         .returning();
 
@@ -457,11 +509,13 @@ async function verifyOne(
           verifyingAt: null,
           metadata:   {
             ...meta,
+            verifyRetryCount: 0,
             lastVerification: {
               exitCode:   result.exitCode,
               timedOut:   result.timedOut,
               durationMs: result.durationMs,
               logId:      logRow.id,
+              retriesExhausted: verifyRetryCount >= RETRYABLE_VERIFY_CAP,
             },
           },
           updatedAt:  new Date(),

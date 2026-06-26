@@ -1,5 +1,10 @@
 export type Specialization = "reviewer" | "architect" | "writer" | "tester" | "devops";
 
+// Single source of truth for the valid specialization values — consumed by
+// this file's own validation below and by @getrelai/agent's CLI validator
+// (validate.ts), so the two don't carry independently-drifting copies.
+export const VALID_SPECIALIZATIONS: Specialization[] = ["reviewer", "architect", "writer", "tester", "devops"];
+
 export interface ClaudeWorkerConfig {
   agentId: string;
   repoId: string;
@@ -20,9 +25,8 @@ export function loadConfig(): ClaudeWorkerConfig {
   if (missing.length) throw new Error(`Missing required env vars: ${missing.join(", ")}`);
 
   const specialization = (process.env.SPECIALIZATION ?? "writer") as Specialization;
-  const valid: Specialization[] = ["reviewer", "architect", "writer", "tester", "devops"];
-  if (!valid.includes(specialization)) {
-    throw new Error(`Invalid SPECIALIZATION "${specialization}". Valid values: ${valid.join(", ")}`);
+  if (!VALID_SPECIALIZATIONS.includes(specialization)) {
+    throw new Error(`Invalid SPECIALIZATION "${specialization}". Valid values: ${VALID_SPECIALIZATIONS.join(", ")}`);
   }
 
   return {

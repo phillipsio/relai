@@ -1,13 +1,21 @@
 import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { getGitRoot } from "@getrelai/git";
 
 export interface RelaiServerEnv {
   API_URL?: string;
   API_SECRET?: string;
   AGENT_ID?: string;
   REPO_ID?: string;
+  // Set at `init` time when --specialization was given, so `run`/`install`
+  // can default to the role the agent was actually registered under instead
+  // of silently falling back to "writer" (the bug this field fixes).
+  SPECIALIZATION?: string;
 }
+
+type RequiredCoreEnv = Required<Pick<RelaiServerEnv, "API_URL" | "API_SECRET" | "AGENT_ID" | "REPO_ID">> &
+  Pick<RelaiServerEnv, "SPECIALIZATION">;
 
 interface McpServerBlock {
   command?: string;
@@ -37,8 +45,15 @@ function readMcpJson(path: string): McpJson {
   }
 }
 
+// `init` writes .mcp.json at the git root (matching where `relai login` puts
+// it), so reads must resolve the same root — otherwise `install`/`run` from a
+// subdirectory fail to find a block that `init` successfully wrote.
+function resolveRoot(repoPath: string): string {
+  return getGitRoot(repoPath) ?? repoPath;
+}
+
 export function readRelaiEnv(repoPath: string): RelaiServerEnv | null {
-  const path = mcpJsonPath(repoPath);
+  const path = mcpJsonPath(resolveRoot(repoPath));
   if (!existsSync(path)) return null;
   return readMcpJson(path).mcpServers?.relai?.env ?? null;
 }
@@ -59,11 +74,13 @@ function isGitTracked(path: string): boolean {
 // carries a live agent token) and warns loudly — but does not refuse — if the
 // file is tracked by git, since this is designed to run unattended and a hard
 // failure here would defeat that purpose.
-export function writeRelaiEnv(repoPath: string, env: Required<RelaiServerEnv>, command: string, args: string[]): void {
+export function writeRelaiEnv(repoPath: string, env: RequiredCoreEnv, command: string, args: string[]): void {
   const path = mcpJsonPath(repoPath);
   const json: McpJson = existsSync(path) ? readMcpJson(path) : { mcpServers: {} };
   json.mcpServers = json.mcpServers ?? {};
-  json.mcpServers.relai = { command, args, env };
+  const envOut: Record<string, string> = { API_URL: env.API_URL, API_SECRET: env.API_SECRET, AGENT_ID: env.AGENT_ID, REPO_ID: env.REPO_ID };
+  if (env.SPECIALIZATION) envOut.SPECIALIZATION = env.SPECIALIZATION;
+  json.mcpServers.relai = { command, args, env: envOut };
   writeFileSync(path, JSON.stringify(json, null, 2) + "\n", { mode: 0o600 });
   chmodSync(path, 0o600); // belt-and-suspenders: mode on writeFileSync doesn't change an existing file's perms
 
@@ -76,7 +93,7 @@ export function writeRelaiEnv(repoPath: string, env: Required<RelaiServerEnv>, c
   }
 }
 
-export function requireRelaiEnv(repoPath: string): Required<RelaiServerEnv> {
+export function requireRelaiEnv(repoPath: string): RequiredCoreEnv {
   const env = readRelaiEnv(repoPath);
   if (!env || !env.API_SECRET || !env.AGENT_ID || !env.REPO_ID) {
     throw new Error(
@@ -89,5 +106,6 @@ export function requireRelaiEnv(repoPath: string): Required<RelaiServerEnv> {
     API_SECRET: env.API_SECRET,
     AGENT_ID: env.AGENT_ID,
     REPO_ID: env.REPO_ID,
+    SPECIALIZATION: env.SPECIALIZATION,
   };
 }

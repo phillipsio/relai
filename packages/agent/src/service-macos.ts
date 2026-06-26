@@ -55,7 +55,7 @@ ${envEntries}
 `;
 
   const path = plistPath(spec.label);
-  writeFileSync(path, plist, { mode: 0o600 }); // plist carries a live agent token (EnvironmentVariables.API_SECRET)
+  writeFileSync(path, plist, { mode: 0o600 }); // plist's ProgramArguments carries the relai-agent CLI invocation; not the secret itself (that's read from .mcp.json at runtime)
 
   const uid = currentUid();
   try {

@@ -16,7 +16,20 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+// systemd unit files are line-oriented: a value containing a newline that's
+// interpolated raw (not shell-quoted) could inject an extra directive — e.g.
+// a crafted agentId of "x\nExecStartPost=..." from a compromised relai server
+// landing in Description=. shellQuote'd values (Environment=/ExecStart=) are
+// already safe; this guards the two that aren't.
+function assertNoNewline(value: string, fieldName: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`relai-agent: refusing to write a systemd unit — ${fieldName} contains a newline`);
+  }
+}
+
 export function installLinux(spec: ServiceSpec): void {
+  assertNoNewline(spec.agentId, "agentId");
+  assertNoNewline(spec.workingDirectory, "workingDirectory");
   mkdirSync(unitDir(), { recursive: true });
 
   const envLines = Object.entries(spec.env)
@@ -42,7 +55,7 @@ WantedBy=default.target
 `;
 
   const path = unitPath(spec.label);
-  writeFileSync(path, unit, { mode: 0o600 }); // unit carries a live agent token (Environment=API_SECRET=...)
+  writeFileSync(path, unit, { mode: 0o600 }); // unit's ExecStart carries the relai-agent CLI invocation; not the secret itself (that's read from .mcp.json at runtime)
 
   execFileSync("systemctl", ["--user", "daemon-reload"]);
   execFileSync("systemctl", ["--user", "enable", "--now", spec.label]);

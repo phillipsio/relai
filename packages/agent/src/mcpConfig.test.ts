@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readRelaiEnv, writeRelaiEnv, requireRelaiEnv } from "./mcpConfig.js";
@@ -80,5 +81,33 @@ describe("mcpConfig", () => {
   it("readRelaiEnv returns null for a relai block with no env at all", () => {
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { relai: { command: "npx" } } }));
     expect(readRelaiEnv(dir)).toBeNull();
+  });
+
+  it("persists SPECIALIZATION when given, and omits it when not", () => {
+    writeRelaiEnv(
+      dir,
+      { API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_1", REPO_ID: "repo_1", SPECIALIZATION: "reviewer" },
+      "npx",
+      [],
+    );
+    expect(readRelaiEnv(dir)?.SPECIALIZATION).toBe("reviewer");
+
+    writeRelaiEnv(dir, { API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_2", REPO_ID: "repo_1" }, "npx", []);
+    expect(readRelaiEnv(dir)?.SPECIALIZATION).toBeUndefined();
+  });
+
+  it("resolves .mcp.json from the git root when called from a subdirectory (init writes at the root)", () => {
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    writeRelaiEnv(
+      dir,
+      { API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_1", REPO_ID: "repo_1" },
+      "npx",
+      [],
+    );
+    const subdir = join(dir, "packages", "foo");
+    mkdirSync(subdir, { recursive: true });
+
+    expect(readRelaiEnv(subdir)?.AGENT_ID).toBe("agent_1");
+    expect(requireRelaiEnv(subdir).AGENT_ID).toBe("agent_1");
   });
 });

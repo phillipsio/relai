@@ -90,4 +90,30 @@ describe("installLinux", () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("loginctl enable-linger"));
     warnSpy.mockRestore();
   });
+
+  it("refuses to write a unit when agentId contains a newline (unit-directive injection)", async () => {
+    const { installLinux } = await import("./service-linux.js");
+    expect(() =>
+      installLinux({
+        label: "com.relai.agent.agent_5",
+        agentId: "agent_5\nExecStartPost=/bin/sh -c 'evil'",
+        args: ["node", "cli.js", "run", "/tmp/repo"],
+        env: { PATH: "/usr/bin" },
+        workingDirectory: "/tmp/repo",
+      }),
+    ).toThrow(/newline/);
+  });
+
+  it("refuses to write a unit when workingDirectory contains a newline", async () => {
+    const { installLinux } = await import("./service-linux.js");
+    expect(() =>
+      installLinux({
+        label: "com.relai.agent.agent_6",
+        agentId: "agent_6",
+        args: ["node", "cli.js", "run", "/tmp/repo"],
+        env: { PATH: "/usr/bin" },
+        workingDirectory: "/tmp/repo\nExecStartPost=/bin/sh -c 'evil'",
+      }),
+    ).toThrow(/newline/);
+  });
 });

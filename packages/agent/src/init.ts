@@ -60,7 +60,7 @@ export async function initCommand(opts: InitOptions): Promise<void> {
 
   writeRelaiEnv(
     gitRoot,
-    { API_URL: opts.apiUrl, API_SECRET: token, AGENT_ID: agent.id, REPO_ID: agent.repoId },
+    { API_URL: opts.apiUrl, API_SECRET: token, AGENT_ID: agent.id, REPO_ID: agent.repoId, SPECIALIZATION: opts.specialization },
     "npx",
     ["@getrelai/mcp-server"],
   );

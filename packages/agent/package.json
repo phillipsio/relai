@@ -1,0 +1,30 @@
+{
+  "name": "@getrelai/agent",
+  "version": "0.1.0",
+  "description": "Self-registering, always-on relai agent. Installs itself as a persistent background service (launchd/systemd) for a repo, so the agent stays subscribed and working without an interactive session open.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "relai-agent": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "start": "tsx src/cli.ts",
+    "build": "tsc && chmod +x dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@getrelai/claude-worker": "workspace:*",
+    "@getrelai/event-worker": "workspace:*",
+    "@getrelai/git": "workspace:*",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}

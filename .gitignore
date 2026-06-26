@@ -9,3 +9,6 @@ dist/
 .vscode/mcp.json
 .ai/
 .claude/settings.local.json
+# Contains real agent/owner tokens once configured — copy .mcp.json.example
+# to .mcp.json and fill in real values; never commit the result.
+.mcp.json

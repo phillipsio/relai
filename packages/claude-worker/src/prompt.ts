@@ -163,6 +163,12 @@ Handle CI/CD, infrastructure, build/deploy configuration.
 - Inspect CI config, Dockerfiles, scripts. Make changes on the branch.
 - If fix applied: create_task back to originator with findings summarising the fix.
 - Escalate if root cause requires changes outside CI/infra scope.`;
+    default:
+      // An unrecognized specialization must fail loudly here, not degrade into
+      // a roleless prompt — `join()` would otherwise stringify `undefined` into
+      // the literal text "undefined" and the spawned session would burn a
+      // billed run with no role rules at all.
+      throw new Error(`Unknown specialization "${spec}" — valid values: reviewer, architect, writer, tester, devops`);
   }
 }
 

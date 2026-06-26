@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./src/lib.ts",
+  "types": "./src/lib.ts",
   "scripts": {
     "dev": "tsx --env-file=../../.env src/index.ts",
     "start": "tsx src/index.ts",
@@ -17,7 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "tsx": "^4.7.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"
   }

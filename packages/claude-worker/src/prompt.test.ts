@@ -170,4 +170,8 @@ describe("buildPrompt", () => {
       expect(prompt).toContain("ci_failure");
     });
   });
+
+  it("throws on an unrecognized specialization instead of degrading into a roleless prompt", () => {
+    expect(() => buildPrompt(config({ specialization: "bogus" as never }))).toThrow(/Unknown specialization/);
+  });
 });

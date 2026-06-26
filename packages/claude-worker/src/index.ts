@@ -1,68 +1,9 @@
 import { loadConfig } from "./config.js";
-import { isFatalError } from "./errors.js";
-import { runClaudeSession } from "./session.js";
-import { checkRepoMatch, fetchRepoUrl } from "@getrelai/git";
+import { runWorker } from "./worker.js";
 
 const config = loadConfig();
 
-console.log(`[claude-worker] Starting — agent ${config.agentId} (${config.specialization}), poll every ${config.pollIntervalMs}ms`);
-console.log(`[claude-worker] Repo: ${config.repoPath} | Model: ${config.model}`);
-
-async function heartbeat() {
-  await fetch(`${config.apiUrl}/agents/${config.agentId}/heartbeat`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiSecret}` },
-    body: "{}",
-  }).catch((err) => console.warn("[claude-worker] Heartbeat failed:", err.message));
-}
-
-// Refuse to start if REPO_PATH isn't a clone of this agent's repo — a worker in
-// the wrong tree produces garbage commits. No-ops when the repo has no url or
-// under RELAI_SKIP_REPO_CHECK; an unreachable API just skips the check (don't
-// block startup on a transient network blip).
-async function assertRepoOrExit(): Promise<void> {
-  const repoUrl = await fetchRepoUrl(config.apiUrl, config.repoId, config.apiSecret);
-  const check = checkRepoMatch(config.repoPath, repoUrl);
-  if (!check.ok) {
-    console.error(`[claude-worker] Repo check failed: ${check.reason}\n  ${check.fix}`);
-    process.exit(1);
-  }
-}
-
-async function main() {
-  await assertRepoOrExit();
-  let consecutiveFatal = 0;
-  while (true) {
-    await heartbeat();
-    let delay = config.pollIntervalMs;
-    try {
-      console.log("[claude-worker] Running session...");
-      await runClaudeSession(config);
-      consecutiveFatal = 0;
-    } catch (err) {
-      const text = err instanceof Error ? err.message : String(err);
-      if (isFatalError(text)) {
-        // A credential/credit failure won't clear by re-spawning in 15s — that
-        // just burns a tight loop (this bit us when a worker ran out of credits
-        // and respawned every poll). Back off exponentially, capped, and warn
-        // loudly so a human can fix it; resume automatically once it clears.
-        consecutiveFatal++;
-        delay = Math.min(config.maxBackoffMs, config.pollIntervalMs * 2 ** consecutiveFatal);
-        console.error(
-          `[claude-worker] FATAL error (likely exhausted credits or bad credentials) — ` +
-          `backing off ${Math.round(delay / 1000)}s before retry #${consecutiveFatal}. ` +
-          `Fix the credit/credential issue; the worker will resume automatically.\n  ${text}`,
-        );
-      } else {
-        consecutiveFatal = 0;
-        console.error("[claude-worker] Session error:", text);
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-}
-
-main().catch((err) => {
+runWorker(config).catch((err) => {
   console.error("[claude-worker] Fatal:", err);
   process.exit(1);
 });

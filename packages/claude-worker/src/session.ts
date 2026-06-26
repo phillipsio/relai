@@ -51,9 +51,14 @@ export async function runClaudeSession(config: ClaudeWorkerConfig): Promise<void
       console.log(`[claude-worker] Spawning: ${config.claudeBin} ${args.slice(0, 4).join(" ")} ...`);
       console.log(`[claude-worker] cwd: ${config.repoPath}`);
 
+      // Strip API-key auth so the CLI always falls back to its subscription/OAuth
+      // login, even if the parent shell has ANTHROPIC_API_KEY set for unrelated
+      // work — the worker should never silently bill API credits.
+      const { ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ...workerEnv } = process.env;
+
       const proc = spawn(config.claudeBin, args, {
         cwd: config.repoPath,
-        env: { ...process.env, PATH: process.env.PATH },
+        env: { ...workerEnv, PATH: process.env.PATH },
         stdio: ["pipe", "pipe", "pipe"],
       });
 

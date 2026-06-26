@@ -13,7 +13,7 @@ REPO_PATH=/absolute/path/to/the/working/repo \
 pnpm --filter @getrelai/claude-worker dev
 ```
 
-The worker shells out to the `claude` CLI (override path with `CLAUDE_BIN`); model defaults to `sonnet` (override via `CLAUDE_MODEL`). Authentication is whatever your `claude` CLI is logged in as — no `ANTHROPIC_API_KEY` is read by the worker itself.
+The worker shells out to the `claude` CLI (override path with `CLAUDE_BIN`); model defaults to `sonnet` (override via `CLAUDE_MODEL`). Authentication is whatever your `claude` CLI is logged in as — the worker strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from the spawned process's environment, so it always falls back to subscription/OAuth login even if those vars are set in the parent shell for unrelated work. This is intentional: a subscription-based operator should never have a background worker silently bill API credits instead.
 
 `REPO_PATH` is the directory the worker treats as its working tree. The agent's `repoPath` field on the relai record is informational only — the worker uses this env var.
 

@@ -41,6 +41,10 @@ export class ApiClient {
     return this.request<{ id: string; repoUrl?: string | null }>("GET", `/repos/${id}`);
   }
 
+  listRepos() {
+    return this.request<unknown[]>("GET", "/repos");
+  }
+
   // Tasks
   getTasks(params: { repoId?: string; status?: string; assignedTo?: string }) {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);
@@ -139,8 +143,17 @@ export class ApiClient {
     return this.request<unknown>("PUT", `/agents/${agentId}/heartbeat`, {});
   }
 
-  listAgents(repoId: string) {
-    return this.request<unknown[]>("GET", `/agents?repoId=${encodeURIComponent(repoId)}`);
+  listAgents(repoId?: string) {
+    const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
+    return this.request<unknown[]>("GET", `/agents${qs}`);
+  }
+
+  getTaskComments(taskId: string) {
+    return this.request<unknown>("GET", `/tasks/${taskId}/comments`);
+  }
+
+  addTaskComment(taskId: string, body: { body: string; type?: string }) {
+    return this.request<unknown>("POST", `/tasks/${taskId}/comments`, body);
   }
 
   // Threads

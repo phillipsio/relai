@@ -18,6 +18,7 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     registerAgent: vi.fn().mockResolvedValue({}),
     heartbeat: vi.fn().mockResolvedValue({}),
     listAgents: vi.fn().mockResolvedValue([]),
+    listRepos: vi.fn().mockResolvedValue([]),
     createThread: vi.fn().mockResolvedValue({ id: "thread_1", title: "test" }),
     listThreads: vi.fn().mockResolvedValue([]),
     submitReview: vi.fn().mockResolvedValue({ id: "task_1", status: "pending_verification" }),
@@ -30,6 +31,8 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
       project: { id: REPO_ID, name: "test", context: null, defaultAssignee: null },
       tasks: [], unreadMessages: [], openThreads: [],
     }),
+    getTaskComments: vi.fn().mockResolvedValue({ threadId: "thread_1", comments: [] }),
+    addTaskComment: vi.fn().mockResolvedValue({ id: "msg_1", type: "status" }),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -41,9 +44,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 15 tools", () => {
+  it("returns all 17 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(17);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -60,6 +63,8 @@ describe("buildTools", () => {
     expect(names).toContain("submit_review");
     expect(names).toContain("archive_task");
     expect(names).toContain("archive_thread");
+    expect(names).toContain("get_task_comments");
+    expect(names).toContain("add_task_comment");
   });
 });
 
@@ -382,11 +387,42 @@ describe("create_task", () => {
   });
 });
 
+describe("get_task_comments", () => {
+  it("fetches comments for a task and returns MCP content", async () => {
+    const getTaskComments = vi.fn().mockResolvedValue({ threadId: "thread_9", comments: [{ id: "msg_1", body: "hi" }] });
+    const tools = buildTools(mockClient({ getTaskComments }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "get_task_comments")({ taskId: "task_9" });
+    expect(getTaskComments).toHaveBeenCalledWith("task_9");
+    expect(result.content[0].type).toBe("text");
+    expect(result.content[0].text).toContain("thread_9");
+  });
+});
+
+describe("add_task_comment", () => {
+  it("posts a comment and returns MCP content", async () => {
+    const addTaskComment = vi.fn().mockResolvedValue({ id: "msg_2", body: "done" });
+    const tools = buildTools(mockClient({ addTaskComment }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "add_task_comment")({ taskId: "task_9", body: "done", type: "status" });
+    expect(addTaskComment).toHaveBeenCalledWith("task_9", { body: "done", type: "status" });
+    expect(result.content[0].text).toContain("msg_2");
+  });
+
+  it("passes through without type", async () => {
+    const addTaskComment = vi.fn().mockResolvedValue({ id: "msg_3" });
+    const tools = buildTools(mockClient({ addTaskComment }), AGENT_ID, REPO_ID);
+    await getHandler(tools, "add_task_comment")({ taskId: "task_9", body: "note" });
+    expect(addTaskComment).toHaveBeenCalledWith("task_9", { body: "note", type: undefined });
+  });
+});
+
 describe("buildOperatorTools (owner mode)", () => {
   it("exposes the operator toolset", () => {
     const names = buildOperatorTools(mockClient()).map((t) => t.name);
     expect(names).toEqual(
-      expect.arrayContaining(["list_attention", "get_task", "reply_human", "review_task", "commit_proposal"]),
+      expect.arrayContaining([
+        "list_repos", "list_agents", "create_task", "add_task_comment",
+        "list_attention", "get_task", "reply_human", "review_task", "commit_proposal",
+      ]),
     );
   });
 
@@ -438,5 +474,99 @@ describe("buildOperatorTools (owner mode)", () => {
     const tools = buildOperatorTools(mockClient({ commitTask }));
     await getHandler(tools, "commit_proposal")({ taskId: "task_1", decision: "reject", note: "duplicate" });
     expect(commitTask).toHaveBeenCalledWith("task_1", { decision: "reject", note: "duplicate" });
+  });
+
+  it("list_repos calls listRepos and wraps in a record", async () => {
+    const listRepos = vi.fn().mockResolvedValue([{ id: "repo_1", name: "my-repo" }]);
+    const tools = buildOperatorTools(mockClient({ listRepos }));
+    const result = await getHandler(tools, "list_repos")({});
+    expect(listRepos).toHaveBeenCalled();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(Array.isArray(parsed)).toBe(false);
+    expect(parsed.repos[0].id).toBe("repo_1");
+  });
+
+  it("list_repos returns an empty-state message when no repos found", async () => {
+    const result = await getHandler(buildOperatorTools(mockClient()), "list_repos")({});
+    expect(result.content[0].text).toBe("No repos found.");
+  });
+
+  it("list_agents calls listAgents with repoId and computes online", async () => {
+    const recentSeen = new Date(Date.now() - 2 * 60 * 1000).toISOString(); // 2 min ago — online
+    const staleSeen  = new Date(Date.now() - 15 * 60 * 1000).toISOString(); // 15 min ago — offline
+    const listAgents = vi.fn().mockResolvedValue([
+      { id: "agent_1", name: "alice", role: "worker", specialization: null, workerType: "claude", repoId: "repo_1", lastSeenAt: recentSeen },
+      { id: "agent_2", name: "bob",   role: "worker", specialization: null, workerType: "claude", repoId: "repo_1", lastSeenAt: staleSeen },
+    ]);
+    const tools = buildOperatorTools(mockClient({ listAgents }));
+    const result = await getHandler(tools, "list_agents")({ repoId: "repo_1" });
+    expect(listAgents).toHaveBeenCalledWith("repo_1");
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.agents[0].online).toBe(true);
+    expect(parsed.agents[1].online).toBe(false);
+  });
+
+  it("list_agents omits repoId for cross-repo listing", async () => {
+    const listAgents = vi.fn().mockResolvedValue([]);
+    const tools = buildOperatorTools(mockClient({ listAgents }));
+    await getHandler(tools, "list_agents")({});
+    expect(listAgents).toHaveBeenCalledWith(undefined);
+  });
+
+  it("list_agents returns an empty-state message when no agents found", async () => {
+    const result = await getHandler(buildOperatorTools(mockClient()), "list_agents")({});
+    expect(result.content[0].text).toBe("No agents found.");
+  });
+
+  it("create_task resolves agent name to id before creating", async () => {
+    const listAgents = vi.fn().mockResolvedValue([{ id: "agent_abc", name: "Alice" }]);
+    const createTask = vi.fn().mockResolvedValue({ id: "task_new", title: "Do it" });
+    const tools = buildOperatorTools(mockClient({ listAgents, createTask }), "usr_owner");
+    await getHandler(tools, "create_task")({
+      repoId: "repo_1", title: "Do it", description: "details", assignedTo: "alice",
+    });
+    expect(listAgents).toHaveBeenCalledWith("repo_1");
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
+      repoId: "repo_1", assignedTo: "agent_abc", createdBy: "usr_owner",
+    }));
+  });
+
+  it("create_task passes agent_* id directly without resolution", async () => {
+    const listAgents = vi.fn();
+    const createTask = vi.fn().mockResolvedValue({ id: "task_new" });
+    const tools = buildOperatorTools(mockClient({ listAgents, createTask }), "usr_owner");
+    await getHandler(tools, "create_task")({
+      repoId: "repo_1", title: "t", description: "d", assignedTo: "agent_abc",
+    });
+    expect(listAgents).not.toHaveBeenCalled();
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ assignedTo: "agent_abc" }));
+  });
+
+  it("create_task returns an error message for an unresolvable agent name", async () => {
+    const listAgents = vi.fn().mockResolvedValue([{ id: "agent_abc", name: "Alice" }]);
+    const tools = buildOperatorTools(mockClient({ listAgents }), "usr_owner");
+    const result = await getHandler(tools, "create_task")({
+      repoId: "repo_1", title: "t", description: "d", assignedTo: "nobody",
+    });
+    expect(result.content[0].text).toContain("No agent named");
+  });
+
+  it("create_task passes @auto directly without resolution", async () => {
+    const listAgents = vi.fn();
+    const createTask = vi.fn().mockResolvedValue({ id: "task_new" });
+    const tools = buildOperatorTools(mockClient({ listAgents, createTask }), "usr_owner");
+    await getHandler(tools, "create_task")({
+      repoId: "repo_1", title: "t", description: "d", assignedTo: "@auto",
+    });
+    expect(listAgents).not.toHaveBeenCalled();
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ assignedTo: "@auto" }));
+  });
+
+  it("add_task_comment (operator) posts as reply and returns MCP content", async () => {
+    const addTaskComment = vi.fn().mockResolvedValue({ id: "msg_op_1", body: "approved" });
+    const tools = buildOperatorTools(mockClient({ addTaskComment }));
+    const result = await getHandler(tools, "add_task_comment")({ taskId: "task_1", body: "approved" });
+    expect(addTaskComment).toHaveBeenCalledWith("task_1", { body: "approved", type: "reply" });
+    expect(result.content[0].text).toContain("msg_op_1");
   });
 });

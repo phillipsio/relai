@@ -354,6 +354,42 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
     },
 
     {
+      name: "get_task_comments",
+      description:
+        "Fetch the comments posted on a task's discussion thread. Returns the thread id and all " +
+        "messages in chronological order. Use this to read review notes, handoff details, or " +
+        "any discussion tied to a specific task without loading the full thread separately.",
+      inputSchema: z.object({
+        taskId: z.string().describe("The task whose comments to fetch."),
+      }),
+      handler: async (input: { taskId: string }) => {
+        const result = await client.getTaskComments(input.taskId);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      },
+    },
+
+    {
+      name: "add_task_comment",
+      description:
+        "Post a comment on a task's discussion thread. The task's thread is created lazily on " +
+        "first access — you don't need to create a thread first. Use this to record findings, " +
+        "review notes, or status updates directly on the task rather than in a separate thread. " +
+        "Prefer 'finding' or 'status' as the type for inline notes.",
+      inputSchema: z.object({
+        taskId: z.string().describe("The task to comment on."),
+        body:   z.string().min(1).describe("Comment text."),
+        type:   z
+          .enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"])
+          .optional()
+          .describe("Message type. Defaults to 'status'."),
+      }),
+      handler: async (input: { taskId: string; body: string; type?: string }) => {
+        const message = await client.addTaskComment(input.taskId, { body: input.body, type: input.type });
+        return { content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }] };
+      },
+    },
+
+    {
       name: "submit_review",
       description:
         "Submit your approval decision on a task that names you as the reviewer (verifyKind=" +
@@ -423,8 +459,152 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
 // human (you, e.g. from a phone) drives these to triage and unblock work
 // remotely. Keep this set small — it's a different surface from the 13 agent
 // tools, not an extension of them.
-export function buildOperatorTools(client: ApiClient) {
+// 10-minute window — mirrors the routing scheduler's online filter in
+// packages/api/src/lib/router/rules.ts and message-loop.ts.
+const ONLINE_WINDOW_MS = 10 * 60 * 1000;
+
+export function buildOperatorTools(client: ApiClient, ownerId?: string) {
   return [
+    {
+      name: "list_repos",
+      description:
+        "List all your repos. Returns id, name, repoUrl, description, and defaultAssignee for " +
+        "each. Use this first to get repo IDs before calling list_agents or create_task.",
+      inputSchema: z.object({}),
+      handler: async () => {
+        const repos = await client.listRepos();
+        return {
+          content: [{
+            type: "text" as const,
+            text: repos.length === 0
+              ? "No repos found."
+              : JSON.stringify({ repos }, null, 2),
+          }],
+        };
+      },
+    },
+
+    {
+      name: "list_agents",
+      description:
+        "List agents across your repos, with a computed online field (true if seen within the " +
+        "last 10 minutes — the same window the routing scheduler uses). Pass repoId to scope to " +
+        "one repo; omit to list across all your repos. Use this to see who is available before " +
+        "creating a task or posting a message.",
+      inputSchema: z.object({
+        repoId: z.string().optional().describe("Scope to a specific repo. Omit to list across all your repos."),
+      }),
+      handler: async (input: { repoId?: string }) => {
+        const rawAgents = await client.listAgents(input.repoId);
+        const now = Date.now();
+        const agents = (rawAgents as Array<Record<string, unknown>>).map((a) => ({
+          id:             a.id,
+          name:           a.name,
+          role:           a.role,
+          specialization: a.specialization,
+          workerType:     a.workerType,
+          repoId:         a.repoId,
+          lastSeenAt:     a.lastSeenAt,
+          online:         typeof a.lastSeenAt === "string"
+            ? now - new Date(a.lastSeenAt).getTime() < ONLINE_WINDOW_MS
+            : false,
+        }));
+        return {
+          content: [{
+            type: "text" as const,
+            text: agents.length === 0
+              ? "No agents found."
+              : JSON.stringify({ agents }, null, 2),
+          }],
+        };
+      },
+    },
+
+    {
+      name: "create_task",
+      description:
+        "Create and immediately commit a task as the owner. Accepts an agent name or agent ID " +
+        "for assignedTo (case-insensitive name match within the given repoId). Use '@auto' to " +
+        "let the routing scheduler pick, or omit to use the repo's default. Owner-created tasks " +
+        "bypass the propose/commit gate and go directly into the lifecycle.",
+      inputSchema: z.object({
+        repoId:         z.string().describe("The repo to create the task in."),
+        title:          z.string().min(1).describe("Short, action-oriented task title."),
+        description:    z.string().min(1).describe("What to do, with enough context to start."),
+        assignedTo:     z.string().optional().describe("Agent name, agent ID (agent_*), or '@auto'. Omit for the repo default."),
+        priority:       z.enum(["low", "normal", "high", "urgent"]).optional().describe("Defaults to 'normal'."),
+        domains:        z.array(z.string()).optional().describe("Domain tags for routing."),
+        specialization: z.string().optional().describe("Specialization hint for routing."),
+      }),
+      handler: async (input: {
+        repoId: string; title: string; description: string;
+        assignedTo?: string; priority?: string; domains?: string[]; specialization?: string;
+      }) => {
+        // Resolve an agent name to an ID within the given repo.
+        let resolvedAssignedTo = input.assignedTo;
+        if (
+          resolvedAssignedTo &&
+          resolvedAssignedTo !== "@auto" &&
+          !resolvedAssignedTo.startsWith("agent_")
+        ) {
+          const rawAgents = await client.listAgents(input.repoId);
+          const needle = resolvedAssignedTo.toLowerCase();
+          const matches = (rawAgents as Array<{ id: string; name: string }>)
+            .filter((a) => a.name.toLowerCase() === needle);
+          if (matches.length === 0) {
+            const names = (rawAgents as Array<{ name: string }>).map((a) => a.name).join(", ");
+            return {
+              content: [{
+                type: "text" as const,
+                text: `No agent named "${input.assignedTo}" in repo ${input.repoId}.${names ? ` Available: ${names}` : ""}`,
+              }],
+            };
+          }
+          if (matches.length > 1) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Multiple agents named "${input.assignedTo}". Use the agent id instead: ${matches.map((a) => `${a.id}`).join(", ")}`,
+              }],
+            };
+          }
+          resolvedAssignedTo = matches[0].id;
+        }
+
+        const task = await client.createTask({
+          repoId:         input.repoId,
+          createdBy:      ownerId ?? "owner",
+          title:          input.title,
+          description:    input.description,
+          assignedTo:     resolvedAssignedTo,
+          priority:       input.priority,
+          domains:        input.domains,
+          specialization: input.specialization,
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
+
+    {
+      name: "add_task_comment",
+      description:
+        "Post a comment on a task as the human owner. The task's thread is created lazily on " +
+        "first access. Use this to record decisions, unblock a worker with instructions, or " +
+        "add context to a task without creating a separate thread.",
+      inputSchema: z.object({
+        taskId: z.string().describe("The task to comment on."),
+        body:   z.string().min(1).describe("Comment text."),
+        type:   z
+          .enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"])
+          .optional()
+          .describe("Message type. Defaults to 'reply'."),
+      }),
+      handler: async (input: { taskId: string; body: string; type?: string }) => {
+        const message = await client.addTaskComment(input.taskId, { body: input.body, type: input.type ?? "reply" });
+        return { content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }] };
+      },
+    },
+
     {
       name: "list_attention",
       description:

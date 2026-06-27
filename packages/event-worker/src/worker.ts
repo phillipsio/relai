@@ -42,9 +42,17 @@ export async function runEventWorker(config: EventWorkerConfig): Promise<never> 
     // The API filters delivery to events this agent is subscribed to (see
     // packages/api/src/routes/events.ts), so anything that arrives here is
     // already relevant — no client-side kind filtering needed.
+    //
+    // eventsource@3's EventSourceInit has no `headers` option (only
+    // `withCredentials`/`fetch`) — a `headers` property here is silently
+    // ignored at runtime despite type-checking via the `as` cast this
+    // replaced, so the Authorization header was never actually sent and
+    // every connection failed with 401. Inject it via the `fetch` hook,
+    // which the library documents and actually wires up.
     const es = new EventSource(`${config.apiUrl}/events`, {
-      headers: { Authorization: `Bearer ${config.apiSecret}` },
-    } as ConstructorParameters<typeof EventSource>[1]);
+      fetch: (input, init) =>
+        fetch(input, { ...init, headers: { ...init?.headers, Authorization: `Bearer ${config.apiSecret}` } }),
+    });
 
     let reconnectDelay = config.reconnectBaseMs;
 

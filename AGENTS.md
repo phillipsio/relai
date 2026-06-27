@@ -252,6 +252,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `OWNER_ID` | — | MCP owner-mode user id (`usr_…`); required alongside `API_OWNER_TOKEN`. Sent as `X-Owner-Id`. |
 | `RELAI_CONFIG_DIR` | `~/.config/relai` | Override CLI config location (multi-identity testing) |
 | `RELAI_SKIP_REPO_CHECK` | — | Escape hatch for the repo-access guard. When set, CLI login / MCP agent-mode / the workers skip the "you must be in a clone of this agent's repo" check. |
+| `RELAI_FEEDBACK_REPO_ID` | — | When set to a repo ID, enables `POST /relai-feedback` and the MCP `report_relai_issue` tool. Feedback tasks are created in this repo. Unset by default so the endpoint returns 501 on self-hosted installs that don't have a feedback triage repo configured. |
 
 The `dev` scripts for `api` and `mcp-server` load `.env` automatically via `tsx watch --env-file=../../.env`. The `web` package (Vite) does not use server env vars.
 

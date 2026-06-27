@@ -408,6 +408,24 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
     },
 
     {
+      name: "report_relai_issue",
+      description:
+        "Report a bug, missing feature, or confusing behavior in relai itself — not your project's " +
+        "work. Use this when you encounter a gap in the relai platform (missing tool, unexpected " +
+        "API behavior, confusing error) so the relai team can triage it. Returns disabled if the " +
+        "server's RELAI_FEEDBACK_REPO_ID is not configured.",
+      inputSchema: z.object({
+        summary:  z.string().min(1).max(200).describe("One-line description of the issue."),
+        details:  z.string().min(1).describe("Full details: what you tried, what happened, what you expected."),
+        severity: z.enum(["low", "normal", "high", "critical"]).optional().describe("Severity. Defaults to 'normal'."),
+      }),
+      handler: async (input: { summary: string; details: string; severity?: string }) => {
+        const result = await client.reportFeedback(input);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      },
+    },
+
+    {
       name: "commit_task",
       description:
         "Orchestrator-only: act on a worker's proposed task (a task in status 'proposed'). 'commit' " +
@@ -602,6 +620,23 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
       handler: async (input: { taskId: string; body: string; type?: string }) => {
         const message = await client.addTaskComment(input.taskId, { body: input.body, type: input.type ?? "reply" });
         return { content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }] };
+      },
+    },
+
+    {
+      name: "report_relai_issue",
+      description:
+        "Report a bug, missing feature, or confusing behavior in the relai platform. Creates a " +
+        "feedback task in relai's own project for triage. Returns disabled if " +
+        "RELAI_FEEDBACK_REPO_ID is not set on the server.",
+      inputSchema: z.object({
+        summary:  z.string().min(1).max(200).describe("One-line description of the issue."),
+        details:  z.string().min(1).describe("Full details: what you tried, what happened, what you expected."),
+        severity: z.enum(["low", "normal", "high", "critical"]).optional().describe("Severity. Defaults to 'normal'."),
+      }),
+      handler: async (input: { summary: string; details: string; severity?: string }) => {
+        const result = await client.reportFeedback(input);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       },
     },
 

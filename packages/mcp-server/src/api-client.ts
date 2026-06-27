@@ -156,6 +156,10 @@ export class ApiClient {
     return this.request<unknown>("POST", `/tasks/${taskId}/comments`, body);
   }
 
+  reportFeedback(body: { summary: string; details: string; severity?: string }) {
+    return this.request<unknown>("POST", "/relai-feedback", body);
+  }
+
   // Threads
   createThread(body: { repoId: string; title: string; type?: string }) {
     return this.request<unknown>("POST", "/threads", body);

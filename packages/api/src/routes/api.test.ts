@@ -1559,3 +1559,51 @@ describe("archive (tasks + threads)", () => {
     expect((withArch.json().data as Array<{ id: string }>).some((x) => x.id === tid)).toBe(true);
   });
 });
+
+describe("POST /relai-feedback", () => {
+  it("returns 501 when RELAI_FEEDBACK_REPO_ID is not set", async () => {
+    const prev = process.env.RELAI_FEEDBACK_REPO_ID;
+    delete process.env.RELAI_FEEDBACK_REPO_ID;
+    const res = await app.inject({
+      method: "POST", url: "/relai-feedback",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: "test", details: "test details" }),
+    });
+    expect(res.statusCode).toBe(501);
+    if (prev !== undefined) process.env.RELAI_FEEDBACK_REPO_ID = prev;
+  });
+
+  it("creates a feedback task in the target repo when RELAI_FEEDBACK_REPO_ID is set", async () => {
+    process.env.RELAI_FEEDBACK_REPO_ID = repoId;
+    const res = await app.inject({
+      method: "POST", url: "/relai-feedback",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: "Missing tool", details: "No report_relai_issue tool", severity: "high" }),
+    });
+    expect(res.statusCode).toBe(201);
+    const data = res.json().data;
+    expect(data.taskId).toBeDefined();
+    expect(data.title).toContain("Missing tool");
+    expect(data.repoId).toBe(repoId);
+
+    // Verify the task was actually created with correct fields.
+    const taskRes = await app.inject({ method: "GET", url: `/tasks/${data.taskId}`, headers: AUTH });
+    const task = taskRes.json().data;
+    expect(task.priority).toBe("high");
+    expect(task.domains).toContain("feedback");
+    expect(task.metadata.feedback.severity).toBe("high");
+
+    delete process.env.RELAI_FEEDBACK_REPO_ID;
+  });
+
+  it("returns 400 for missing required fields", async () => {
+    process.env.RELAI_FEEDBACK_REPO_ID = repoId;
+    const res = await app.inject({
+      method: "POST", url: "/relai-feedback",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: "only summary, no details" }),
+    });
+    expect(res.statusCode).toBe(400);
+    delete process.env.RELAI_FEEDBACK_REPO_ID;
+  });
+});

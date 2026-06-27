@@ -33,6 +33,7 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     }),
     getTaskComments: vi.fn().mockResolvedValue({ threadId: "thread_1", comments: [] }),
     addTaskComment: vi.fn().mockResolvedValue({ id: "msg_1", type: "status" }),
+    reportFeedback: vi.fn().mockResolvedValue({ taskId: "task_fb_1", title: "Feedback: …", repoId: "repo_relai" }),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -44,9 +45,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 17 tools", () => {
+  it("returns all 18 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(18);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -65,6 +66,7 @@ describe("buildTools", () => {
     expect(names).toContain("archive_thread");
     expect(names).toContain("get_task_comments");
     expect(names).toContain("add_task_comment");
+    expect(names).toContain("report_relai_issue");
   });
 });
 
@@ -387,6 +389,23 @@ describe("create_task", () => {
   });
 });
 
+describe("report_relai_issue", () => {
+  it("forwards summary/details/severity to reportFeedback and returns MCP content", async () => {
+    const reportFeedback = vi.fn().mockResolvedValue({ taskId: "task_fb_1", title: "Feedback: broken" });
+    const tools = buildTools(mockClient({ reportFeedback }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "report_relai_issue")({ summary: "broken", details: "it crashed", severity: "high" });
+    expect(reportFeedback).toHaveBeenCalledWith({ summary: "broken", details: "it crashed", severity: "high" });
+    expect(result.content[0].text).toContain("task_fb_1");
+  });
+
+  it("omits severity when not provided", async () => {
+    const reportFeedback = vi.fn().mockResolvedValue({ taskId: "task_fb_2" });
+    const tools = buildTools(mockClient({ reportFeedback }), AGENT_ID, REPO_ID);
+    await getHandler(tools, "report_relai_issue")({ summary: "minor", details: "small issue" });
+    expect(reportFeedback).toHaveBeenCalledWith({ summary: "minor", details: "small issue", severity: undefined });
+  });
+});
+
 describe("get_task_comments", () => {
   it("fetches comments for a task and returns MCP content", async () => {
     const getTaskComments = vi.fn().mockResolvedValue({ threadId: "thread_9", comments: [{ id: "msg_1", body: "hi" }] });
@@ -420,10 +439,18 @@ describe("buildOperatorTools (owner mode)", () => {
     const names = buildOperatorTools(mockClient()).map((t) => t.name);
     expect(names).toEqual(
       expect.arrayContaining([
-        "list_repos", "list_agents", "create_task", "add_task_comment",
+        "list_repos", "list_agents", "create_task", "add_task_comment", "report_relai_issue",
         "list_attention", "get_task", "reply_human", "review_task", "commit_proposal",
       ]),
     );
+  });
+
+  it("report_relai_issue (operator) forwards to reportFeedback and returns MCP content", async () => {
+    const reportFeedback = vi.fn().mockResolvedValue({ taskId: "task_fb_op", title: "Feedback" });
+    const tools = buildOperatorTools(mockClient({ reportFeedback }));
+    const result = await getHandler(tools, "report_relai_issue")({ summary: "oops", details: "it broke", severity: "critical" });
+    expect(reportFeedback).toHaveBeenCalledWith({ summary: "oops", details: "it broke", severity: "critical" });
+    expect(result.content[0].text).toContain("task_fb_op");
   });
 
   it("list_attention queries blocked/pending_verification/proposed across ALL owned projects (no repoId)", async () => {

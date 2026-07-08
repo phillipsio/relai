@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { eq, or, and } from "drizzle-orm";
-import { events, subscriptions, type Db } from "@getrelai/db";
+import { agents, events, subscriptions, type Db } from "@getrelai/db";
 import { newId } from "./id.js";
 
 export type EventKind =
@@ -98,12 +98,18 @@ export function deliverableTo(event: AppEvent, agentId: string, subscribers: str
 
 // Idempotent subscription. Used by routes to auto-subscribe creators/recipients
 // of an action to the entity it produced (sender → thread, creator → task, etc.).
+// The actor may not be an agent (e.g. an owner-created task where createdBy is a
+// usr_ id, or "system"/"owner"): subscriptions.agentId FKs agents.id, so skip
+// silently rather than violate the constraint — non-agents don't poll for events.
 export async function ensureSubscription(
   db: Db,
   agentId: string,
   targetType: "thread" | "task" | "agent",
   targetId: string,
 ): Promise<void> {
+  const [agent] = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId));
+  if (!agent) return;
+
   const [existing] = await db.select().from(subscriptions).where(and(
     eq(subscriptions.agentId,    agentId),
     eq(subscriptions.targetType, targetType),

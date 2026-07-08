@@ -348,6 +348,22 @@ describe("POST /tasks", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("creates a task when createdBy is a non-agent (owner/system) without a subscription FK error", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId,
+        createdBy: "usr_not_an_agent",
+        title: "owner-created task",
+        description: "createdBy is a usr_ id, not an agent — subscription must be skipped",
+        metadata: { externalRef: "FunctionizeTeam/test-repo#1" },
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.metadata.externalRef).toBe("FunctionizeTeam/test-repo#1");
+  });
+
   it("flags task for auto-routing when assignedTo='@auto'", async () => {
     const res = await app.inject({
       method: "POST", url: "/tasks",

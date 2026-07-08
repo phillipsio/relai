@@ -75,7 +75,7 @@ const server = new McpServer({
 
 // Register tools for the active mode.
 const tools = OWNER_MODE
-  ? buildOperatorTools(apiClient)
+  ? buildOperatorTools(apiClient, OWNER_ID)
   : buildTools(apiClient, AGENT_ID!, REPO_ID!);
 
 for (const tool of tools) {

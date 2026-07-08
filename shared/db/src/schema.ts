@@ -204,6 +204,10 @@ export const tasks = pgTable("tasks", {
   // `status` — a task is `completed`/`cancelled` and *later* archived. History
   // stays queryable via includeArchived=true.
   archivedAt:  timestamp("archived_at", { withTimezone: true }),
+  // IDs of tasks that must complete before this one can begin. The routing
+  // scheduler auto-unblocks this task (→ assigned) when all entries reach a
+  // terminal state. Managed via addBlockedBy/addBlocks on POST and PUT /tasks.
+  blockedBy:   text("blocked_by").array().notNull().default([]),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

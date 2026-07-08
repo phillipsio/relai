@@ -385,6 +385,76 @@ describe("POST /tasks", () => {
   });
 });
 
+describe("POST /tasks — addBlockedBy / addBlocks", () => {
+  it("creates a task with addBlockedBy wired immediately (no follow-up PUT needed)", async () => {
+    // Create the blocking task first.
+    const blockerRes = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, createdBy: agentId, title: "Blocker", description: "must finish first" }),
+    });
+    expect(blockerRes.statusCode).toBe(201);
+    const blockerTask = blockerRes.json().data;
+
+    // Create the blocked task and wire the dependency at creation time.
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId,
+        title: "Blocked task", description: "depends on blocker",
+        addBlockedBy: [blockerTask.id],
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const blocked = res.json().data;
+    expect(blocked.blockedBy).toEqual([blockerTask.id]);
+  });
+
+  it("wires addBlocks at creation time — target task's blockedBy contains the new task", async () => {
+    // Create the task that will be blocked.
+    const downstreamRes = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoId, createdBy: agentId, title: "Downstream", description: "needs to wait" }),
+    });
+    expect(downstreamRes.statusCode).toBe(201);
+    const downstreamTask = downstreamRes.json().data;
+
+    // Create the upstream blocker and tell it to block downstream.
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId,
+        title: "Upstream blocker", description: "must run first",
+        addBlocks: [downstreamTask.id],
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const upstream = res.json().data;
+
+    // Downstream task should now list the upstream task in its blockedBy.
+    const fetchRes = await app.inject({ method: "GET", url: `/tasks/${downstreamTask.id}`, headers: AUTH });
+    const fetched = fetchRes.json().data;
+    expect(fetched.blockedBy).toContain(upstream.id);
+  });
+
+  it("returns 400 with a clear error when addBlockedBy references a non-existent task", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/tasks",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId, createdBy: agentId,
+        title: "t", description: "d",
+        addBlockedBy: ["task_does_not_exist"],
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain("task_does_not_exist");
+  });
+});
+
 describe("GET /tasks", () => {
   it("returns tasks filtered by repoId", async () => {
     const res = await app.inject({
@@ -1487,5 +1557,53 @@ describe("archive (tasks + threads)", () => {
 
     const withArch = await app.inject({ method: "GET", url: `/threads?repoId=${repoId}&archived=true`, headers: AUTH });
     expect((withArch.json().data as Array<{ id: string }>).some((x) => x.id === tid)).toBe(true);
+  });
+});
+
+describe("POST /relai-feedback", () => {
+  it("returns 501 when RELAI_FEEDBACK_REPO_ID is not set", async () => {
+    const prev = process.env.RELAI_FEEDBACK_REPO_ID;
+    delete process.env.RELAI_FEEDBACK_REPO_ID;
+    const res = await app.inject({
+      method: "POST", url: "/relai-feedback",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: "test", details: "test details" }),
+    });
+    expect(res.statusCode).toBe(501);
+    if (prev !== undefined) process.env.RELAI_FEEDBACK_REPO_ID = prev;
+  });
+
+  it("creates a feedback task in the target repo when RELAI_FEEDBACK_REPO_ID is set", async () => {
+    process.env.RELAI_FEEDBACK_REPO_ID = repoId;
+    const res = await app.inject({
+      method: "POST", url: "/relai-feedback",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: "Missing tool", details: "No report_relai_issue tool", severity: "high" }),
+    });
+    expect(res.statusCode).toBe(201);
+    const data = res.json().data;
+    expect(data.taskId).toBeDefined();
+    expect(data.title).toContain("Missing tool");
+    expect(data.repoId).toBe(repoId);
+
+    // Verify the task was actually created with correct fields.
+    const taskRes = await app.inject({ method: "GET", url: `/tasks/${data.taskId}`, headers: AUTH });
+    const task = taskRes.json().data;
+    expect(task.priority).toBe("high");
+    expect(task.domains).toContain("feedback");
+    expect(task.metadata.feedback.severity).toBe("high");
+
+    delete process.env.RELAI_FEEDBACK_REPO_ID;
+  });
+
+  it("returns 400 for missing required fields", async () => {
+    process.env.RELAI_FEEDBACK_REPO_ID = repoId;
+    const res = await app.inject({
+      method: "POST", url: "/relai-feedback",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: "only summary, no details" }),
+    });
+    expect(res.statusCode).toBe(400);
+    delete process.env.RELAI_FEEDBACK_REPO_ID;
   });
 });

@@ -81,6 +81,12 @@ const createSchema = z.object({
   // Parent Epic (a "plan" thread) this Issue is spawned from. Optional.
   epicId:         z.string().optional(),
   metadata:       z.record(z.unknown()).default({}),
+  // Task dependency wiring. addBlockedBy: task IDs that must complete before
+  // this one; addBlocks: task IDs that this new task blocks (i.e. add this
+  // task's ID to their blockedBy lists). Validated at insert time: referenced
+  // task IDs must exist and belong to the same repo.
+  addBlockedBy:   z.array(z.string()).optional(),
+  addBlocks:      z.array(z.string()).optional(),
   // Optional verification predicate. When set, the `completed` transition is
   // gated: the API rewrites status to `pending_verification` and the
   // scheduler runs the predicate. Exit 0 promotes to `completed`; anything
@@ -121,6 +127,9 @@ const updateSchema = z.object({
   epicId:         z.string().nullable().optional(),
   threadId:       z.string().nullable().optional(),
   metadata:       z.record(z.unknown()).optional(),
+  // Task dependency mutations — append-only to avoid accidental clobbers.
+  addBlockedBy:   z.array(z.string()).optional(),
+  addBlocks:      z.array(z.string()).optional(),
   // Verification predicate can be edited after creation (e.g. re-point a
   // reviewer). The PUT handler validates the merged config + re-applies the
   // shell-author gate and reviewer-existence check. Fields cannot cross kinds.
@@ -212,14 +221,47 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       metadata   = { ...metadata, proposal: { suggestedAssignee: effective ?? null } };
     }
 
+    // Dependency wiring: validate any referenced task IDs before inserting.
+    const allDepIds = [
+      ...(body.data.addBlockedBy ?? []),
+      ...(body.data.addBlocks ?? []),
+    ];
+    if (allDepIds.length > 0) {
+      const depRows = await db
+        .select({ id: tasks.id, repoId: tasks.repoId })
+        .from(tasks)
+        .where(inArray(tasks.id, allDepIds));
+      const depMap = new Map(depRows.map((r) => [r.id, r.repoId]));
+      for (const id of allDepIds) {
+        if (!depMap.has(id)) {
+          return reply.status(400).send({ error: { code: "validation_error", message: `Dependency task not found: ${id}` } });
+        }
+        if (depMap.get(id) !== body.data.repoId) {
+          return reply.status(400).send({ error: { code: "validation_error", message: `Dependency task ${id} belongs to a different project` } });
+        }
+      }
+    }
+
+    const { addBlockedBy, addBlocks, ...insertData } = body.data;
     const [task] = await db.insert(tasks).values({
       id: newId("task"),
-      ...body.data,
+      ...insertData,
       assignedTo,
       autoAssign,
       status,
       metadata,
+      blockedBy: addBlockedBy ?? [],
     }).returning();
+
+    // Wire addBlocks: add this task's ID to each listed task's blockedBy array.
+    if (addBlocks && addBlocks.length > 0) {
+      for (const blockId of addBlocks) {
+        const [target] = await db.select({ blockedBy: tasks.blockedBy }).from(tasks).where(eq(tasks.id, blockId));
+        if (target && !target.blockedBy.includes(task.id)) {
+          await db.update(tasks).set({ blockedBy: [...target.blockedBy, task.id], updatedAt: new Date() }).where(eq(tasks.id, blockId));
+        }
+      }
+    }
 
     await ensureSubscription(db, body.data.createdBy, "task", task.id);
 
@@ -405,14 +447,36 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       }
     }
 
+    // Strip dependency-mutation fields from the column update — they are handled
+    // separately below and are not direct column setters.
+    const { addBlockedBy: updAddBlockedBy, addBlocks: updAddBlocks, ...columnUpdates } = updates as Record<string, unknown> & { addBlockedBy?: string[]; addBlocks?: string[] };
+
+    // If addBlockedBy is provided, merge with the existing blockedBy array.
+    let mergedBlockedBy: string[] | undefined;
+    if (updAddBlockedBy && updAddBlockedBy.length > 0) {
+      const existing = scope.task.blockedBy ?? [];
+      const toAdd = updAddBlockedBy.filter((id: string) => !existing.includes(id));
+      mergedBlockedBy = toAdd.length > 0 ? [...existing, ...toAdd] : undefined;
+    }
+
     // Clear stalledAt on any update — the row is moving again.
     const [task] = await db
       .update(tasks)
-      .set({ ...updates, updatedAt: new Date(), stalledAt: null })
+      .set({ ...columnUpdates, ...(mergedBlockedBy ? { blockedBy: mergedBlockedBy } : {}), updatedAt: new Date(), stalledAt: null })
       .where(eq(tasks.id, request.params.id))
       .returning();
 
     if (!task) return reply.status(404).send({ error: { code: "not_found", message: "Task not found" } });
+
+    // Wire addBlocks: add this task's ID to each listed task's blockedBy array.
+    if (updAddBlocks && updAddBlocks.length > 0) {
+      for (const blockId of updAddBlocks) {
+        const [target] = await db.select({ id: tasks.id, blockedBy: tasks.blockedBy, repoId: tasks.repoId }).from(tasks).where(eq(tasks.id, blockId));
+        if (target && target.repoId === task.repoId && !target.blockedBy.includes(task.id)) {
+          await db.update(tasks).set({ blockedBy: [...target.blockedBy, task.id], updatedAt: new Date() }).where(eq(tasks.id, blockId));
+        }
+      }
+    }
 
     await publish(db, {
       id:         newId("evt"),

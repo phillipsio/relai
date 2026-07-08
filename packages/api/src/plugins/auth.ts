@@ -23,7 +23,7 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
 
   // Endpoints that authenticate via their request body (e.g. invite codes)
   // and therefore must be reachable without a bearer token.
-  const PUBLIC_PATHS = new Set<string>(["/auth/accept-invite"]);
+  const PUBLIC_PATHS = new Set<string>(["/auth/accept-invite", "/livez"]);
 
   fastify.addHook("onRequest", async (request, reply) => {
     if (PUBLIC_PATHS.has(request.url.split("?")[0])) return;

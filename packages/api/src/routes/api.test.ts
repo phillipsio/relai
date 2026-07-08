@@ -50,6 +50,15 @@ describe("GET /health", () => {
   });
 });
 
+// ── /livez ───────────────────────────────────────────────────────────────────
+describe("GET /livez", () => {
+  it("returns ok WITHOUT auth and probes the DB", async () => {
+    const res = await app.inject({ method: "GET", url: "/livez" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+});
+
 // ── auth ──────────────────────────────────────────────────────────────────────
 describe("auth", () => {
   it("rejects requests with no token", async () => {

@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
+import { sql } from "drizzle-orm";
 import { createDb } from "@getrelai/db";
 import authPlugin from "./plugins/auth.js";
 import { repoRoutes } from "./routes/repos.js";
@@ -43,6 +44,17 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(feedbackRoutes, { db });
 
   fastify.get("/health", async () => ({ ok: true }));
+
+  // Unauthenticated readiness probe (in PUBLIC_PATHS) — verifies the process is
+  // up AND the DB is reachable, so a monitor can tell "running" from "healthy".
+  fastify.get("/livez", async (_request, reply) => {
+    try {
+      await db.execute(sql`select 1`);
+      return { ok: true };
+    } catch {
+      return reply.status(503).send({ ok: false, error: "db_unreachable" });
+    }
+  });
 
   // Start background routing scheduler + notification delivery (disabled in tests)
   if (scheduler) {

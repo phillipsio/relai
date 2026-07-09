@@ -33,6 +33,41 @@ vi.mock("@getrelai/claude-worker", () => ({
   assertRepoOrExit: vi.fn().mockResolvedValue(undefined),
 }));
 
+const TEST_CONFIG: EventWorkerConfig = {
+  agentId: "agent_1",
+  repoId: "repo_1",
+  apiUrl: "http://localhost:3010",
+  apiSecret: "secret-token",
+  repoPath: "/tmp/repo",
+  pollIntervalMs: 15_000,
+  maxBackoffMs: 300_000,
+  maxTaskRounds: 5,
+  model: "sonnet",
+  specialization: "writer",
+  claudeBin: "claude",
+  reconnectBaseMs: 2_000,
+  reconnectMaxMs: 60_000,
+};
+
+// Mocks the has-work check's two GET calls (plus selfSubscribe's POST) by URL.
+// `failHasWorkCheck` simulates a network blip on the has-work signals specifically.
+function makeFetchMock({ tasks = [], messages = [], failHasWorkCheck = false }: { tasks?: unknown[]; messages?: unknown[]; failHasWorkCheck?: boolean } = {}) {
+  return vi.fn(async (input: unknown) => {
+    const url = String(input);
+    if (url.includes("/subscriptions")) return { ok: true };
+    if (failHasWorkCheck) throw new Error("network blip");
+    if (url.includes("/tasks")) return { ok: true, json: async () => ({ data: tasks }) };
+    if (url.includes("/messages/unread")) return { ok: true, json: async () => ({ data: messages }) };
+    return { ok: true };
+  });
+}
+
+async function flushMicrotasks(times = 10): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 describe("runEventWorker", () => {
   beforeEach(() => {
     esInstances.length = 0;
@@ -143,5 +178,50 @@ describe("runEventWorker", () => {
       await new Promise((resolve) => setImmediate(resolve));
     }
     expect(runClaudeSessionMock.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
+  it("skips spawning a session when there are no assigned tasks and no unread messages", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ tasks: [], messages: [] }));
+    const { runEventWorker } = await import("./worker.js");
+    const runClaudeSessionMock = vi.mocked(runClaudeSession);
+    runClaudeSessionMock.mockClear(); // prior tests in this file already invoked it
+
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+
+    expect(runClaudeSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("spawns a session when an assigned task is present", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ tasks: [{ id: "task_1" }], messages: [] }));
+    const { runEventWorker } = await import("./worker.js");
+    const runClaudeSessionMock = vi.mocked(runClaudeSession);
+
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+
+    expect(runClaudeSessionMock).toHaveBeenCalled();
+  });
+
+  it("spawns a session when an unread message is present", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ tasks: [], messages: [{ id: "msg_1" }] }));
+    const { runEventWorker } = await import("./worker.js");
+    const runClaudeSessionMock = vi.mocked(runClaudeSession);
+
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+
+    expect(runClaudeSessionMock).toHaveBeenCalled();
+  });
+
+  it("falls through to spawning a session when the has-work check errors", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ failHasWorkCheck: true }));
+    const { runEventWorker } = await import("./worker.js");
+    const runClaudeSessionMock = vi.mocked(runClaudeSession);
+
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+
+    expect(runClaudeSessionMock).toHaveBeenCalled();
   });
 });

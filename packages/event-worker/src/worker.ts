@@ -19,6 +19,25 @@ async function selfSubscribe(config: EventWorkerConfig): Promise<void> {
   }
 }
 
+// Cheap pre-spawn gate: check the two REST signals a spawned session would
+// actually act on (its assigned/in_progress tasks, its unread messages)
+// before paying for a `claude --print` process. Mirrors what the session's
+// own "if no assigned tasks, stop immediately" prompt guard checks, but
+// without the cost of spawning first (packages/claude-worker/src/prompt.ts).
+async function hasWork(config: EventWorkerConfig): Promise<boolean> {
+  const headers = { Authorization: `Bearer ${config.apiSecret}` };
+  const [tasksRes, messagesRes] = await Promise.all([
+    fetch(`${config.apiUrl}/tasks?repoId=${config.repoId}&assignedTo=${config.agentId}&status=assigned,in_progress`, { headers }),
+    fetch(`${config.apiUrl}/messages/unread?agentId=${config.agentId}&repoId=${config.repoId}`, { headers }),
+  ]);
+  if (!tasksRes.ok || !messagesRes.ok) {
+    throw new Error(`has-work check failed (tasks ${tasksRes.status}, messages ${messagesRes.status})`);
+  }
+  const { data: myTasks } = (await tasksRes.json()) as { data: unknown[] };
+  const { data: unreadMessages } = (await messagesRes.json()) as { data: unknown[] };
+  return myTasks.length > 0 || unreadMessages.length > 0;
+}
+
 // Mirrors the `EventKind` union in packages/api/src/lib/events.ts. The API
 // writes each event with a named `event: <kind>` SSE field (see
 // packages/api/src/routes/events.ts) rather than the default unnamed
@@ -54,6 +73,25 @@ export async function runEventWorker(config: EventWorkerConfig): Promise<never> 
 
   const queue = createRunQueue(async () => {
     await heartbeat(config, "[event-worker]");
+
+    let shouldRun: boolean;
+    try {
+      shouldRun = await hasWork(config);
+    } catch (err) {
+      // A transient network blip on the cheap check must not silently stop
+      // the worker from doing real work — fall through and spawn.
+      console.warn(
+        "[event-worker] has-work check failed — spawning session to be safe:",
+        err instanceof Error ? err.message : String(err),
+      );
+      shouldRun = true;
+    }
+
+    if (!shouldRun) {
+      console.log("[event-worker] No work — skipping session");
+      return;
+    }
+
     try {
       console.log("[event-worker] Event received — running session...");
       await runClaudeSession(config);

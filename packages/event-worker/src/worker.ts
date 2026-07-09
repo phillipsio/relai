@@ -19,6 +19,30 @@ async function selfSubscribe(config: EventWorkerConfig): Promise<void> {
   }
 }
 
+// Mirrors the `EventKind` union in packages/api/src/lib/events.ts. The API
+// writes each event with a named `event: <kind>` SSE field (see
+// packages/api/src/routes/events.ts) rather than the default unnamed
+// "message" type, so listeners must be registered per kind via
+// `addEventListener` — `onmessage` only fires for unnamed events and never
+// sees these. Keep this list in sync with the server's EventKind union.
+const EVENT_KINDS = [
+  "message.posted",
+  "task.created",
+  "task.proposed",
+  "task.committed",
+  "task.proposal_rejected",
+  "task.proposed_overdue",
+  "task.updated",
+  "task.stalled",
+  "task.verified",
+  "task.verification_failed",
+  "task.review_requested",
+  "task.review_submitted",
+  "task.review_overdue",
+  "thread.created",
+  "thread.concluded",
+] as const;
+
 // SSE-driven run loop, factored out so other packages (e.g. @getrelai/agent's
 // self-registering persistent service) can run it in-process.
 export async function runEventWorker(config: EventWorkerConfig): Promise<never> {
@@ -61,7 +85,7 @@ export async function runEventWorker(config: EventWorkerConfig): Promise<never> 
       reconnectDelay = config.reconnectBaseMs;
     };
 
-    es.onmessage = (raw: MessageEvent) => {
+    const onEvent = (raw: MessageEvent) => {
       try {
         const event = JSON.parse(raw.data as string);
         console.log(`[event-worker] Event: ${event.kind ?? "unknown"}`);
@@ -70,6 +94,11 @@ export async function runEventWorker(config: EventWorkerConfig): Promise<never> 
       }
       queue.notify();
     };
+
+    es.onmessage = onEvent;
+    for (const kind of EVENT_KINDS) {
+      es.addEventListener(kind, onEvent);
+    }
 
     es.onerror = () => {
       console.warn(`[event-worker] Stream error — reconnecting in ${Math.round(reconnectDelay / 1000)}s`);

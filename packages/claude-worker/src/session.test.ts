@@ -3,8 +3,19 @@ import { EventEmitter } from "events";
 import type { ClaudeWorkerConfig } from "./config.js";
 
 const spawnMock = vi.fn();
+const writeFileSyncMock = vi.fn();
 
 vi.mock("child_process", () => ({ spawn: spawnMock }));
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  return {
+    ...actual,
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      writeFileSyncMock(...args);
+      return actual.writeFileSync(...args);
+    },
+  };
+});
 
 function makeFakeProc() {
   const proc = new EventEmitter() as any;
@@ -56,5 +67,41 @@ describe("runClaudeSession", () => {
 
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
+  });
+
+  it("spawns the relai mcp-server via tsx against source, not node against dist", async () => {
+    writeFileSyncMock.mockClear();
+
+    const proc = makeFakeProc();
+    spawnMock.mockReturnValue(proc);
+
+    const { runClaudeSession } = await import("./session.js");
+
+    const config: ClaudeWorkerConfig = {
+      agentId: "agent_1",
+      repoId: "repo_1",
+      apiUrl: "http://localhost:3010",
+      apiSecret: "secret",
+      repoPath: "/tmp/repo",
+      pollIntervalMs: 15_000,
+      maxBackoffMs: 300_000,
+      maxTaskRounds: 5,
+      model: "sonnet",
+      specialization: "writer",
+      claudeBin: "claude",
+    };
+
+    const resultPromise = runClaudeSession(config);
+    queueMicrotask(() => {
+      proc.stdout.emit("data", Buffer.from('{"type":"result","subtype":"success"}\n'));
+      proc.emit("close", 0);
+    });
+    await resultPromise;
+
+    const [, mcpConfigJson] = writeFileSyncMock.mock.calls[0];
+    const { command, args } = JSON.parse(mcpConfigJson as string).mcpServers.relai;
+    expect(command).toMatch(/mcp-server\/node_modules\/\.bin\/tsx$/);
+    expect(args[0]).toMatch(/mcp-server\/src\/index\.ts$/);
+    expect(args[0]).not.toMatch(/dist\/index\.js$/);
   });
 });

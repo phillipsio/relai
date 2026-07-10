@@ -1,5 +1,6 @@
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { MCPServerConfig } from "@github/copilot-sdk";
+import { fileURLToPath } from "url";
 import { loadConfig } from "./config.js";
 import { buildPrompt } from "./prompt.js";
 import { checkRepoMatch, fetchRepoUrl } from "@getrelai/git";
@@ -84,8 +85,8 @@ async function runIteration(client: CopilotClient, config: ReturnType<typeof loa
 }
 
 function buildMcpServers(config: ReturnType<typeof loadConfig>): Record<string, MCPServerConfig> {
-  const mcpServerEntry = new URL("../../mcp-server/src/index.ts", import.meta.url).pathname;
-  const mcpServerTsx = new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url).pathname;
+  const mcpServerEntry = fileURLToPath(new URL("../../mcp-server/src/index.ts", import.meta.url));
+  const mcpServerTsx = fileURLToPath(new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url));
   return {
     relai: {
       command: mcpServerTsx,

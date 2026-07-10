@@ -2,15 +2,16 @@ import { spawn } from "child_process";
 import { writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { fileURLToPath } from "url";
 import { buildPrompt } from "./prompt.js";
 import type { ClaudeWorkerConfig } from "./config.js";
 
 function mcpServerEntry(): string {
-  return new URL("../../mcp-server/src/index.ts", import.meta.url).pathname;
+  return fileURLToPath(new URL("../../mcp-server/src/index.ts", import.meta.url));
 }
 
 function mcpServerTsx(): string {
-  return new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url).pathname;
+  return fileURLToPath(new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url));
 }
 
 function writeMcpConfig(config: ClaudeWorkerConfig): string {

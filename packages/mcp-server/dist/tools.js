@@ -34,6 +34,10 @@ function buildTools(client, agentId, repoId) {
                 verifyCommand: zod_1.z.string().optional().describe("For verifyKind='shell' (orchestrator only): command that must exit 0."),
                 verifyCwd: zod_1.z.string().optional().describe("Working directory for shell/file_exists predicates."),
                 verifyTimeoutMs: zod_1.z.number().int().optional().describe("Timeout for shell predicate (1000–600000 ms)."),
+                metadata: zod_1.z
+                    .record(zod_1.z.unknown())
+                    .optional()
+                    .describe("Optional structured data to attach — e.g. task-chain fields like branchName, roundNumber, parentTaskId."),
             }),
             handler: async (input) => {
                 // createdBy + repoId are injected from this agent's identity. Status is
@@ -54,6 +58,7 @@ function buildTools(client, agentId, repoId) {
                     verifyCommand: input.verifyCommand,
                     verifyCwd: input.verifyCwd,
                     verifyTimeoutMs: input.verifyTimeoutMs,
+                    metadata: input.metadata,
                 });
                 return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
             },
@@ -318,6 +323,38 @@ function buildTools(client, agentId, repoId) {
             },
         },
         {
+            name: "get_task_comments",
+            description: "Fetch the comments posted on a task's discussion thread. Returns the thread id and all " +
+                "messages in chronological order. Use this to read review notes, handoff details, or " +
+                "any discussion tied to a specific task without loading the full thread separately.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The task whose comments to fetch."),
+            }),
+            handler: async (input) => {
+                const result = await client.getTaskComments(input.taskId);
+                return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+            },
+        },
+        {
+            name: "add_task_comment",
+            description: "Post a comment on a task's discussion thread. The task's thread is created lazily on " +
+                "first access — you don't need to create a thread first. Use this to record findings, " +
+                "review notes, or status updates directly on the task rather than in a separate thread. " +
+                "Prefer 'finding' or 'status' as the type for inline notes.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The task to comment on."),
+                body: zod_1.z.string().min(1).describe("Comment text."),
+                type: zod_1.z
+                    .enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"])
+                    .optional()
+                    .describe("Message type. Defaults to 'status'."),
+            }),
+            handler: async (input) => {
+                const message = await client.addTaskComment(input.taskId, { body: input.body, type: input.type });
+                return { content: [{ type: "text", text: JSON.stringify(message, null, 2) }] };
+            },
+        },
+        {
             name: "submit_review",
             description: "Submit your approval decision on a task that names you as the reviewer (verifyKind=" +
                 "'reviewer_agent'). The task must be in 'pending_verification'. Approve to promote it to " +
@@ -331,6 +368,22 @@ function buildTools(client, agentId, repoId) {
             handler: async (input) => {
                 const task = await client.submitReview(input.taskId, { decision: input.decision, note: input.note });
                 return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "report_relai_issue",
+            description: "Report a bug, missing feature, or confusing behavior in relai itself — not your project's " +
+                "work. Use this when you encounter a gap in the relai platform (missing tool, unexpected " +
+                "API behavior, confusing error) so the relai team can triage it. Returns disabled if the " +
+                "server's RELAI_FEEDBACK_REPO_ID is not configured.",
+            inputSchema: zod_1.z.object({
+                summary: zod_1.z.string().min(1).max(200).describe("One-line description of the issue."),
+                details: zod_1.z.string().min(1).describe("Full details: what you tried, what happened, what you expected."),
+                severity: zod_1.z.enum(["low", "normal", "high", "critical"]).optional().describe("Severity. Defaults to 'normal'."),
+            }),
+            handler: async (input) => {
+                const result = await client.reportFeedback(input);
+                return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
             },
         },
         {
@@ -380,8 +433,154 @@ function buildTools(client, agentId, repoId) {
 // human (you, e.g. from a phone) drives these to triage and unblock work
 // remotely. Keep this set small — it's a different surface from the 13 agent
 // tools, not an extension of them.
-function buildOperatorTools(client) {
+// 10-minute window — mirrors the routing scheduler's online filter in
+// packages/api/src/lib/router/rules.ts and message-loop.ts.
+const ONLINE_WINDOW_MS = 10 * 60 * 1000;
+function buildOperatorTools(client, ownerId) {
     return [
+        {
+            name: "list_repos",
+            description: "List all your repos. Returns id, name, repoUrl, description, and defaultAssignee for " +
+                "each. Use this first to get repo IDs before calling list_agents or create_task.",
+            inputSchema: zod_1.z.object({}),
+            handler: async () => {
+                const repos = await client.listRepos();
+                return {
+                    content: [{
+                            type: "text",
+                            text: repos.length === 0
+                                ? "No repos found."
+                                : JSON.stringify({ repos }, null, 2),
+                        }],
+                };
+            },
+        },
+        {
+            name: "list_agents",
+            description: "List agents across your repos, with a computed online field (true if seen within the " +
+                "last 10 minutes — the same window the routing scheduler uses). Pass repoId to scope to " +
+                "one repo; omit to list across all your repos. Use this to see who is available before " +
+                "creating a task or posting a message.",
+            inputSchema: zod_1.z.object({
+                repoId: zod_1.z.string().optional().describe("Scope to a specific repo. Omit to list across all your repos."),
+            }),
+            handler: async (input) => {
+                const rawAgents = await client.listAgents(input.repoId);
+                const now = Date.now();
+                const agents = rawAgents.map((a) => ({
+                    id: a.id,
+                    name: a.name,
+                    role: a.role,
+                    specialization: a.specialization,
+                    workerType: a.workerType,
+                    repoId: a.repoId,
+                    lastSeenAt: a.lastSeenAt,
+                    online: typeof a.lastSeenAt === "string"
+                        ? now - new Date(a.lastSeenAt).getTime() < ONLINE_WINDOW_MS
+                        : false,
+                }));
+                return {
+                    content: [{
+                            type: "text",
+                            text: agents.length === 0
+                                ? "No agents found."
+                                : JSON.stringify({ agents }, null, 2),
+                        }],
+                };
+            },
+        },
+        {
+            name: "create_task",
+            description: "Create and immediately commit a task as the owner. Accepts an agent name or agent ID " +
+                "for assignedTo (case-insensitive name match within the given repoId). Use '@auto' to " +
+                "let the routing scheduler pick, or omit to use the repo's default. Owner-created tasks " +
+                "bypass the propose/commit gate and go directly into the lifecycle.",
+            inputSchema: zod_1.z.object({
+                repoId: zod_1.z.string().describe("The repo to create the task in."),
+                title: zod_1.z.string().min(1).describe("Short, action-oriented task title."),
+                description: zod_1.z.string().min(1).describe("What to do, with enough context to start."),
+                assignedTo: zod_1.z.string().optional().describe("Agent name, agent ID (agent_*), or '@auto'. Omit for the repo default."),
+                priority: zod_1.z.enum(["low", "normal", "high", "urgent"]).optional().describe("Defaults to 'normal'."),
+                domains: zod_1.z.array(zod_1.z.string()).optional().describe("Domain tags for routing."),
+                specialization: zod_1.z.string().optional().describe("Specialization hint for routing."),
+                metadata: zod_1.z.record(zod_1.z.unknown()).optional().describe("Optional structured data to attach (e.g. task-chain fields)."),
+            }),
+            handler: async (input) => {
+                // Resolve an agent name to an ID within the given repo.
+                let resolvedAssignedTo = input.assignedTo;
+                if (resolvedAssignedTo &&
+                    resolvedAssignedTo !== "@auto" &&
+                    !resolvedAssignedTo.startsWith("agent_")) {
+                    const rawAgents = await client.listAgents(input.repoId);
+                    const needle = resolvedAssignedTo.toLowerCase();
+                    const matches = rawAgents
+                        .filter((a) => a.name.toLowerCase() === needle);
+                    if (matches.length === 0) {
+                        const names = rawAgents.map((a) => a.name).join(", ");
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `No agent named "${input.assignedTo}" in repo ${input.repoId}.${names ? ` Available: ${names}` : ""}`,
+                                }],
+                        };
+                    }
+                    if (matches.length > 1) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Multiple agents named "${input.assignedTo}". Use the agent id instead: ${matches.map((a) => `${a.id}`).join(", ")}`,
+                                }],
+                        };
+                    }
+                    resolvedAssignedTo = matches[0].id;
+                }
+                const task = await client.createTask({
+                    repoId: input.repoId,
+                    createdBy: ownerId ?? "owner",
+                    title: input.title,
+                    description: input.description,
+                    assignedTo: resolvedAssignedTo,
+                    priority: input.priority,
+                    domains: input.domains,
+                    specialization: input.specialization,
+                    metadata: input.metadata,
+                });
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "add_task_comment",
+            description: "Post a comment on a task as the human owner. The task's thread is created lazily on " +
+                "first access. Use this to record decisions, unblock a worker with instructions, or " +
+                "add context to a task without creating a separate thread.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The task to comment on."),
+                body: zod_1.z.string().min(1).describe("Comment text."),
+                type: zod_1.z
+                    .enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"])
+                    .optional()
+                    .describe("Message type. Defaults to 'reply'."),
+            }),
+            handler: async (input) => {
+                const message = await client.addTaskComment(input.taskId, { body: input.body, type: input.type ?? "reply" });
+                return { content: [{ type: "text", text: JSON.stringify(message, null, 2) }] };
+            },
+        },
+        {
+            name: "report_relai_issue",
+            description: "Report a bug, missing feature, or confusing behavior in the relai platform. Creates a " +
+                "feedback task in relai's own project for triage. Returns disabled if " +
+                "RELAI_FEEDBACK_REPO_ID is not set on the server.",
+            inputSchema: zod_1.z.object({
+                summary: zod_1.z.string().min(1).max(200).describe("One-line description of the issue."),
+                details: zod_1.z.string().min(1).describe("Full details: what you tried, what happened, what you expected."),
+                severity: zod_1.z.enum(["low", "normal", "high", "critical"]).optional().describe("Severity. Defaults to 'normal'."),
+            }),
+            handler: async (input) => {
+                const result = await client.reportFeedback(input);
+                return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+            },
+        },
         {
             name: "list_attention",
             description: "List everything across ALL your projects that needs you right now: tasks that are 'blocked' " +
@@ -468,6 +667,69 @@ function buildOperatorTools(client) {
                 if (input.note !== undefined)
                     body.note = input.note;
                 const task = await client.commitTask(input.taskId, body);
+                return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+            },
+        },
+        {
+            name: "assign_task",
+            description: "Assign (or reassign) an already-committed task to a specific agent, setting its owner and " +
+                "moving it to 'assigned'. This is the follow-up path for tasks created via create_task " +
+                "without an assignee (which land in 'pending') — commit_proposal only acts on 'proposed' " +
+                "tasks. Accepts an agent name or agent ID (case-insensitive name match within the task's " +
+                "repo). '@auto' is not supported here — use create_task or commit_proposal for router " +
+                "assignment. Pass status to override the default 'assigned'.",
+            inputSchema: zod_1.z.object({
+                taskId: zod_1.z.string().describe("The task id to assign."),
+                assignedTo: zod_1.z.string().describe("Agent name or agent ID (agent_*). '@auto' is not supported."),
+                status: zod_1.z
+                    .enum(["pending", "assigned", "in_progress", "pending_verification", "completed", "blocked", "cancelled"])
+                    .optional()
+                    .describe("Status to set alongside the assignee. Defaults to 'assigned'."),
+            }),
+            handler: async (input) => {
+                if (input.assignedTo === "@auto") {
+                    return {
+                        content: [{
+                                type: "text",
+                                text: "assign_task assigns to a specific agent and does not support '@auto'. Use create_task or commit_proposal for router assignment.",
+                            }],
+                    };
+                }
+                // Resolve an agent name to an ID, scoped to the task's own repo.
+                let resolvedAssignedTo = input.assignedTo;
+                if (!resolvedAssignedTo.startsWith("agent_")) {
+                    const existing = await client.getTask(input.taskId);
+                    const repoId = existing?.repoId;
+                    if (!repoId) {
+                        return { content: [{ type: "text", text: `Task ${input.taskId} not found.` }] };
+                    }
+                    const rawAgents = await client.listAgents(repoId);
+                    const needle = resolvedAssignedTo.toLowerCase();
+                    const matches = rawAgents
+                        .filter((a) => a.name.toLowerCase() === needle);
+                    if (matches.length === 0) {
+                        const names = rawAgents.map((a) => a.name).join(", ");
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `No agent named "${input.assignedTo}" in repo ${repoId}.${names ? ` Available: ${names}` : ""}`,
+                                }],
+                        };
+                    }
+                    if (matches.length > 1) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Multiple agents named "${input.assignedTo}". Use the agent id instead: ${matches.map((a) => a.id).join(", ")}`,
+                                }],
+                        };
+                    }
+                    resolvedAssignedTo = matches[0].id;
+                }
+                const task = await client.updateTask(input.taskId, {
+                    assignedTo: resolvedAssignedTo,
+                    status: input.status ?? "assigned",
+                });
                 return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
             },
         },

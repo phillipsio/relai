@@ -17,6 +17,7 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyCommand: z.ZodOptional<z.ZodString>;
         verifyCwd: z.ZodOptional<z.ZodString>;
         verifyTimeoutMs: z.ZodOptional<z.ZodNumber>;
+        metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     }, "strip", z.ZodTypeAny, {
         title: string;
         description: string;
@@ -31,6 +32,7 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyCommand?: string | undefined;
         verifyCwd?: string | undefined;
         verifyTimeoutMs?: number | undefined;
+        metadata?: Record<string, unknown> | undefined;
     }, {
         title: string;
         description: string;
@@ -45,6 +47,7 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyCommand?: string | undefined;
         verifyCwd?: string | undefined;
         verifyTimeoutMs?: number | undefined;
+        metadata?: Record<string, unknown> | undefined;
     }>;
     handler: (input: {
         title: string;
@@ -60,6 +63,7 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyCommand?: string;
         verifyCwd?: string;
         verifyTimeoutMs?: number;
+        metadata?: Record<string, unknown>;
     }) => Promise<{
         content: {
             type: "text";
@@ -275,6 +279,32 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     description: string;
     inputSchema: z.ZodObject<{
         taskId: z.ZodString;
+        body: z.ZodString;
+        type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+        body: string;
+        type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
+    }, {
+        taskId: string;
+        body: string;
+        type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        body: string;
+        type?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
         decision: z.ZodEnum<["approve", "reject"]>;
         note: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
@@ -290,6 +320,32 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         taskId: string;
         decision: "approve" | "reject";
         note?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        summary: z.ZodString;
+        details: z.ZodString;
+        severity: z.ZodOptional<z.ZodEnum<["low", "normal", "high", "critical"]>>;
+    }, "strip", z.ZodTypeAny, {
+        summary: string;
+        details: string;
+        severity?: "low" | "normal" | "high" | "critical" | undefined;
+    }, {
+        summary: string;
+        details: string;
+        severity?: "low" | "normal" | "high" | "critical" | undefined;
+    }>;
+    handler: (input: {
+        summary: string;
+        details: string;
+        severity?: string;
     }) => Promise<{
         content: {
             type: "text";
@@ -375,11 +431,127 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         }[];
     }>;
 })[];
-export declare function buildOperatorTools(client: ApiClient): ({
+export declare function buildOperatorTools(client: ApiClient, ownerId?: string): ({
     name: string;
     description: string;
     inputSchema: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
     handler: () => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        repoId: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        repoId?: string | undefined;
+    }, {
+        repoId?: string | undefined;
+    }>;
+    handler: (input: {
+        repoId?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        repoId: z.ZodString;
+        title: z.ZodString;
+        description: z.ZodString;
+        assignedTo: z.ZodOptional<z.ZodString>;
+        priority: z.ZodOptional<z.ZodEnum<["low", "normal", "high", "urgent"]>>;
+        domains: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        specialization: z.ZodOptional<z.ZodString>;
+        metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    }, "strip", z.ZodTypeAny, {
+        repoId: string;
+        title: string;
+        description: string;
+        assignedTo?: string | undefined;
+        priority?: "low" | "normal" | "high" | "urgent" | undefined;
+        domains?: string[] | undefined;
+        specialization?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
+    }, {
+        repoId: string;
+        title: string;
+        description: string;
+        assignedTo?: string | undefined;
+        priority?: "low" | "normal" | "high" | "urgent" | undefined;
+        domains?: string[] | undefined;
+        specialization?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
+    }>;
+    handler: (input: {
+        repoId: string;
+        title: string;
+        description: string;
+        assignedTo?: string;
+        priority?: string;
+        domains?: string[];
+        specialization?: string;
+        metadata?: Record<string, unknown>;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        body: z.ZodString;
+        type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;
+    }, "strip", z.ZodTypeAny, {
+        taskId: string;
+        body: string;
+        type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
+    }, {
+        taskId: string;
+        body: string;
+        type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        body: string;
+        type?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        summary: z.ZodString;
+        details: z.ZodString;
+        severity: z.ZodOptional<z.ZodEnum<["low", "normal", "high", "critical"]>>;
+    }, "strip", z.ZodTypeAny, {
+        summary: string;
+        details: string;
+        severity?: "low" | "normal" | "high" | "critical" | undefined;
+    }, {
+        summary: string;
+        details: string;
+        severity?: "low" | "normal" | "high" | "critical" | undefined;
+    }>;
+    handler: (input: {
+        summary: string;
+        details: string;
+        severity?: string;
+    }) => Promise<{
         content: {
             type: "text";
             text: string;
@@ -479,6 +651,32 @@ export declare function buildOperatorTools(client: ApiClient): ({
         decision?: "commit" | "reject";
         assignedTo?: string;
         note?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        assignedTo: z.ZodString;
+        status: z.ZodOptional<z.ZodEnum<["pending", "assigned", "in_progress", "pending_verification", "completed", "blocked", "cancelled"]>>;
+    }, "strip", z.ZodTypeAny, {
+        assignedTo: string;
+        taskId: string;
+        status?: "assigned" | "in_progress" | "pending" | "completed" | "blocked" | "cancelled" | "pending_verification" | undefined;
+    }, {
+        assignedTo: string;
+        taskId: string;
+        status?: "assigned" | "in_progress" | "pending" | "completed" | "blocked" | "cancelled" | "pending_verification" | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        assignedTo: string;
+        status?: string;
     }) => Promise<{
         content: {
             type: "text";

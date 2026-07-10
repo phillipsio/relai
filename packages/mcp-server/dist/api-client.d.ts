@@ -12,6 +12,7 @@ export declare class ApiClient {
         id: string;
         repoUrl?: string | null;
     }>;
+    listRepos(): Promise<unknown[]>;
     getTasks(params: {
         repoId?: string;
         status?: string;
@@ -80,7 +81,17 @@ export declare class ApiClient {
         domains?: string[];
     }): Promise<unknown>;
     heartbeat(agentId: string): Promise<unknown>;
-    listAgents(repoId: string): Promise<unknown[]>;
+    listAgents(repoId?: string): Promise<unknown[]>;
+    getTaskComments(taskId: string): Promise<unknown>;
+    addTaskComment(taskId: string, body: {
+        body: string;
+        type?: string;
+    }): Promise<unknown>;
+    reportFeedback(body: {
+        summary: string;
+        details: string;
+        severity?: string;
+    }): Promise<unknown>;
     createThread(body: {
         repoId: string;
         title: string;

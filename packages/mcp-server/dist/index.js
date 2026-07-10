@@ -58,7 +58,7 @@ const server = new mcp_js_1.McpServer({
 });
 // Register tools for the active mode.
 const tools = OWNER_MODE
-    ? (0, tools_js_1.buildOperatorTools)(apiClient)
+    ? (0, tools_js_1.buildOperatorTools)(apiClient, OWNER_ID)
     : (0, tools_js_1.buildTools)(apiClient, AGENT_ID, REPO_ID);
 for (const tool of tools) {
     server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);

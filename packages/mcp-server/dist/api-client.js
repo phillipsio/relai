@@ -30,6 +30,9 @@ class ApiClient {
     getRepo(id) {
         return this.request("GET", `/repos/${id}`);
     }
+    listRepos() {
+        return this.request("GET", "/repos");
+    }
     // Tasks
     getTasks(params) {
         const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null));
@@ -72,7 +75,17 @@ class ApiClient {
         return this.request("PUT", `/agents/${agentId}/heartbeat`, {});
     }
     listAgents(repoId) {
-        return this.request("GET", `/agents?repoId=${encodeURIComponent(repoId)}`);
+        const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";
+        return this.request("GET", `/agents${qs}`);
+    }
+    getTaskComments(taskId) {
+        return this.request("GET", `/tasks/${taskId}/comments`);
+    }
+    addTaskComment(taskId, body) {
+        return this.request("POST", `/tasks/${taskId}/comments`, body);
+    }
+    reportFeedback(body) {
+        return this.request("POST", "/relai-feedback", body);
     }
     // Threads
     createThread(body) {

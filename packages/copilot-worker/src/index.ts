@@ -84,13 +84,18 @@ async function runIteration(client: CopilotClient, config: ReturnType<typeof loa
   }
 }
 
+// Invoke tsx's CLI script directly with the *current* node binary
+// (process.execPath) instead of going through the `tsx` shebang script —
+// see packages/agent/src/service.ts for the same pattern and why: on a
+// machine with multiple Node installs, `env node` can resolve to a
+// different (and possibly broken) binary than the one running this worker.
 function buildMcpServers(config: ReturnType<typeof loadConfig>): Record<string, MCPServerConfig> {
   const mcpServerEntry = fileURLToPath(new URL("../../mcp-server/src/index.ts", import.meta.url));
-  const mcpServerTsx = fileURLToPath(new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url));
+  const mcpServerTsxCli = fileURLToPath(new URL("../../mcp-server/node_modules/tsx/dist/cli.mjs", import.meta.url));
   return {
     relai: {
-      command: mcpServerTsx,
-      args: [mcpServerEntry],
+      command: process.execPath,
+      args: [mcpServerTsxCli, mcpServerEntry],
       env: {
         ORCHESTRATOR_API_URL: config.apiUrl,
         ORCHESTRATOR_API_SECRET: config.apiSecret,

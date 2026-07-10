@@ -100,8 +100,9 @@ describe("runClaudeSession", () => {
 
     const [, mcpConfigJson] = writeFileSyncMock.mock.calls[0];
     const { command, args } = JSON.parse(mcpConfigJson as string).mcpServers.relai;
-    expect(command).toMatch(/mcp-server\/node_modules\/\.bin\/tsx$/);
-    expect(args[0]).toMatch(/mcp-server\/src\/index\.ts$/);
-    expect(args[0]).not.toMatch(/dist\/index\.js$/);
+    expect(command).toBe(process.execPath);
+    expect(args[0]).toMatch(/mcp-server\/node_modules\/tsx\/dist\/cli\.mjs$/);
+    expect(args[1]).toMatch(/mcp-server\/src\/index\.ts$/);
+    expect(args.join(" ")).not.toMatch(/dist\/index\.js/);
   });
 });

@@ -10,16 +10,22 @@ function mcpServerEntry(): string {
   return fileURLToPath(new URL("../../mcp-server/src/index.ts", import.meta.url));
 }
 
-function mcpServerTsx(): string {
-  return fileURLToPath(new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url));
+// Invoke tsx's CLI script directly with the *current* node binary
+// (process.execPath) instead of going through the `tsx` shebang script
+// (`#!/usr/bin/env node`) — see packages/agent/src/service.ts for the same
+// pattern and why: on a machine with multiple Node installs, `env node` can
+// resolve to a different (and possibly broken) binary than the one running
+// this worker.
+function mcpServerTsxCli(): string {
+  return fileURLToPath(new URL("../../mcp-server/node_modules/tsx/dist/cli.mjs", import.meta.url));
 }
 
 function writeMcpConfig(config: ClaudeWorkerConfig): string {
   const mcpConfig = {
     mcpServers: {
       relai: {
-        command: mcpServerTsx(),
-        args: [mcpServerEntry()],
+        command: process.execPath,
+        args: [mcpServerTsxCli(), mcpServerEntry()],
         env: {
           API_URL: config.apiUrl,
           API_SECRET: config.apiSecret,

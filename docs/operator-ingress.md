@@ -82,6 +82,32 @@ Add the deployed MCP endpoint as a custom/remote MCP connector in claude.ai
 (works on mobile), authenticated with the owner credential. Once connected, the
 operator tools are available to any session — including your phone.
 
+## Owner notifications (push instead of poll)
+
+`list_attention` is a pull: you ask what needs you. An **owner notification
+channel** flips it to a push. Register a webhook or Slack channel scoped to your
+owner id, and relai fires it whenever a task in any of your repos crosses into an
+attention state — `task.proposed`, `task.blocked`, or `task.pending_verification`
+— so you don't need an external poller (curling `/tasks?status=…` on a cron) to
+learn you're needed.
+
+Create one with a `POST /notification-channels` that carries **no `agentId`**
+(owner-mode requests are scoped to your owner id automatically; the admin path
+can pass an explicit `ownerId`):
+
+```jsonc
+// POST /notification-channels   (owner-mode auth: X-Owner-Id + SERVICE_ADMIN_TOKEN)
+{ "kind": "webhook", "config": { "url": "https://your-endpoint/relai-hook" } }
+// or: { "kind": "slack", "config": { "webhookUrl": "https://hooks.slack.com/services/…" } }
+```
+
+Owner channels reuse the same HMAC signing (`X-Relai-Signature`), retry/backoff,
+and 5-strike circuit breaker as agent channels; they differ only in that they
+fire on the attention-transition events across all your repos rather than on a
+single agent's subscriptions. `GET /notification-channels` (owner-mode) lists
+your owner channels alongside your agents'; `PUT …/:id { "disabled": false }`
+clears a tripped breaker after you fix the endpoint.
+
 ## Operating principle: echo before you act
 
 Reads are free; **writes confirm**. The failure mode here isn't a crash — it's

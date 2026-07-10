@@ -230,7 +230,12 @@ export const notificationChannelKindEnum = pgEnum("notification_channel_kind", [
 
 export const notificationChannels = pgTable("notification_channels", {
   id:              text("id").primaryKey(),
-  agentId:         text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  // A channel is scoped to EITHER an agent OR an owner — exactly one is set
+  // (enforced in the route layer). Agent channels fire on the agent's event
+  // subscriptions; owner channels fire on attention-transition events
+  // (task.proposed/blocked/pending_verification) across all the owner's repos.
+  agentId:         text("agent_id").references(() => agents.id, { onDelete: "cascade" }),
+  ownerId:         text("owner_id").references(() => users.id, { onDelete: "cascade" }),
   kind:            notificationChannelKindEnum("kind").notNull(),
   // Shape depends on kind. For "webhook": { url: string, headers?: Record<string, string> }.
   // For "slack": { webhookUrl: string } — a Slack Incoming Webhook URL; delivery

@@ -490,6 +490,30 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       createdAt:  task.updatedAt.toISOString(),
     });
 
+    // Attention-transition events for owner-level notification fan-out: fire a
+    // dedicated kind when a task first enters blocked / pending_verification
+    // (not on a no-op re-write of the same status), so owner channels can push
+    // "this needs you" without polling. task.proposed is emitted at proposal
+    // time; these two complete the trio the owner notifier keys on.
+    if (updates.status && updates.status !== scope.task.status) {
+      const attentionKind =
+        updates.status === "blocked"              ? "task.blocked" as const :
+        updates.status === "pending_verification" ? "task.pending_verification" as const :
+        null;
+      if (attentionKind) {
+        await publish(db, {
+          id:         newId("evt"),
+          kind:       attentionKind,
+          repoId:     task.repoId,
+          targetType: "task",
+          targetId:   task.id,
+          actorId:    request.agent?.id,
+          payload:    { task, changes: updates },
+          createdAt:  task.updatedAt.toISOString(),
+        });
+      }
+    }
+
     // Reviewer-agent kind: nudge the reviewer with a dedicated event and
     // ensure they're subscribed to the task so the SSE stream picks it up.
     if (reviewerToNotify) {

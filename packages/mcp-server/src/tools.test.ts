@@ -381,6 +381,14 @@ describe("create_task", () => {
     }));
   });
 
+  it("passes task-chain metadata through to createTask", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "task_new" });
+    const handler = getHandler(buildTools(mockClient({ createTask: create }), AGENT_ID, REPO_ID), "create_task");
+    const metadata = { branchName: "feat/x", roundNumber: 2, parentTaskId: "task_parent" };
+    await (handler as Function)({ title: "t", description: "d", metadata });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ metadata }));
+  });
+
   it("returns MCP content format with the created task", async () => {
     const handler = getHandler(buildTools(mockClient({ createTask: vi.fn().mockResolvedValue({ id: "task_new" }) }), AGENT_ID, REPO_ID), "create_task");
     const result = await (handler as Function)({ title: "t", description: "d" });
@@ -587,6 +595,16 @@ describe("buildOperatorTools (owner mode)", () => {
     });
     expect(listAgents).not.toHaveBeenCalled();
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ assignedTo: "@auto" }));
+  });
+
+  it("create_task (operator) passes metadata through", async () => {
+    const createTask = vi.fn().mockResolvedValue({ id: "task_new" });
+    const tools = buildOperatorTools(mockClient({ createTask }), "usr_owner");
+    const metadata = { parentTaskId: "task_parent", roundNumber: 1 };
+    await getHandler(tools, "create_task")({
+      repoId: "repo_1", title: "t", description: "d", assignedTo: "agent_abc", metadata,
+    });
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ metadata }));
   });
 
   it("add_task_comment (operator) posts as reply and returns MCP content", async () => {

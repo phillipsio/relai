@@ -84,11 +84,12 @@ async function runIteration(client: CopilotClient, config: ReturnType<typeof loa
 }
 
 function buildMcpServers(config: ReturnType<typeof loadConfig>): Record<string, MCPServerConfig> {
-  const mcpServerPath = new URL("../../mcp-server/dist/index.js", import.meta.url).pathname;
+  const mcpServerEntry = new URL("../../mcp-server/src/index.ts", import.meta.url).pathname;
+  const mcpServerTsx = new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url).pathname;
   return {
     relai: {
-      command: "node",
-      args: [mcpServerPath],
+      command: mcpServerTsx,
+      args: [mcpServerEntry],
       env: {
         ORCHESTRATOR_API_URL: config.apiUrl,
         ORCHESTRATOR_API_SECRET: config.apiSecret,

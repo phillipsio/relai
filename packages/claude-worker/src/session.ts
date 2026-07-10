@@ -5,16 +5,20 @@ import { tmpdir } from "os";
 import { buildPrompt } from "./prompt.js";
 import type { ClaudeWorkerConfig } from "./config.js";
 
-function mcpServerPath(): string {
-  return new URL("../../mcp-server/dist/index.js", import.meta.url).pathname;
+function mcpServerEntry(): string {
+  return new URL("../../mcp-server/src/index.ts", import.meta.url).pathname;
+}
+
+function mcpServerTsx(): string {
+  return new URL("../../mcp-server/node_modules/.bin/tsx", import.meta.url).pathname;
 }
 
 function writeMcpConfig(config: ClaudeWorkerConfig): string {
   const mcpConfig = {
     mcpServers: {
       relai: {
-        command: "node",
-        args: [mcpServerPath()],
+        command: mcpServerTsx(),
+        args: [mcpServerEntry()],
         env: {
           API_URL: config.apiUrl,
           API_SECRET: config.apiSecret,

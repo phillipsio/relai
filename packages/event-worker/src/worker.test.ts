@@ -70,6 +70,12 @@ async function flushMicrotasks(times = 10): Promise<void> {
 
 describe("runEventWorker", () => {
   beforeEach(() => {
+    // Reset call history between tests. Without this, runClaudeSession's mock
+    // accumulates calls across the file, so the spawn/message/fallback tests
+    // below would pass on toHaveBeenCalled() even if their own code path never
+    // spawned (a false pass). clearAllMocks resets .mock.calls only — the
+    // factory's mockResolvedValue implementations are preserved.
+    vi.clearAllMocks();
     esInstances.length = 0;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
   });
@@ -184,7 +190,6 @@ describe("runEventWorker", () => {
     vi.stubGlobal("fetch", makeFetchMock({ tasks: [], messages: [] }));
     const { runEventWorker } = await import("./worker.js");
     const runClaudeSessionMock = vi.mocked(runClaudeSession);
-    runClaudeSessionMock.mockClear(); // prior tests in this file already invoked it
 
     void runEventWorker(TEST_CONFIG);
     await flushMicrotasks();
@@ -200,7 +205,9 @@ describe("runEventWorker", () => {
     void runEventWorker(TEST_CONFIG);
     await flushMicrotasks();
 
-    expect(runClaudeSessionMock).toHaveBeenCalled();
+    // Exactly one spawn from the single startup queue.notify() (no SSE events
+    // dispatched here), which the per-test clearAllMocks now makes assertable.
+    expect(runClaudeSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("spawns a session when an unread message is present", async () => {
@@ -211,7 +218,7 @@ describe("runEventWorker", () => {
     void runEventWorker(TEST_CONFIG);
     await flushMicrotasks();
 
-    expect(runClaudeSessionMock).toHaveBeenCalled();
+    expect(runClaudeSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls through to spawning a session when the has-work check errors", async () => {
@@ -222,6 +229,6 @@ describe("runEventWorker", () => {
     void runEventWorker(TEST_CONFIG);
     await flushMicrotasks();
 
-    expect(runClaudeSessionMock).toHaveBeenCalled();
+    expect(runClaudeSessionMock).toHaveBeenCalledTimes(1);
   });
 });

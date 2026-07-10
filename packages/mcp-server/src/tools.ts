@@ -34,12 +34,17 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         verifyCommand: z.string().optional().describe("For verifyKind='shell' (orchestrator only): command that must exit 0."),
         verifyCwd: z.string().optional().describe("Working directory for shell/file_exists predicates."),
         verifyTimeoutMs: z.number().int().optional().describe("Timeout for shell predicate (1000–600000 ms)."),
+        metadata: z
+          .record(z.unknown())
+          .optional()
+          .describe("Optional structured data to attach — e.g. task-chain fields like branchName, roundNumber, parentTaskId."),
       }),
       handler: async (input: {
         title: string; description: string; priority?: string; assignedTo?: string;
         domains?: string[]; specialization?: string;
         verifyKind?: string; verifyReviewerId?: string; verifyThreadId?: string;
         verifyPath?: string; verifyCommand?: string; verifyCwd?: string; verifyTimeoutMs?: number;
+        metadata?: Record<string, unknown>;
       }) => {
         // createdBy + repoId are injected from this agent's identity. Status is
         // intentionally NOT set — the API derives it from the effective assignee.
@@ -59,6 +64,7 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
           verifyCommand: input.verifyCommand,
           verifyCwd: input.verifyCwd,
           verifyTimeoutMs: input.verifyTimeoutMs,
+          metadata: input.metadata,
         });
         return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
       },
@@ -553,10 +559,12 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
         priority:       z.enum(["low", "normal", "high", "urgent"]).optional().describe("Defaults to 'normal'."),
         domains:        z.array(z.string()).optional().describe("Domain tags for routing."),
         specialization: z.string().optional().describe("Specialization hint for routing."),
+        metadata:       z.record(z.unknown()).optional().describe("Optional structured data to attach (e.g. task-chain fields)."),
       }),
       handler: async (input: {
         repoId: string; title: string; description: string;
         assignedTo?: string; priority?: string; domains?: string[]; specialization?: string;
+        metadata?: Record<string, unknown>;
       }) => {
         // Resolve an agent name to an ID within the given repo.
         let resolvedAssignedTo = input.assignedTo;
@@ -598,6 +606,7 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
           priority:       input.priority,
           domains:        input.domains,
           specialization: input.specialization,
+          metadata:       input.metadata,
         });
         return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
       },

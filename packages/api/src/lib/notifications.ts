@@ -1,11 +1,20 @@
 import { eq, and, inArray, isNull } from "drizzle-orm";
 import { createHmac, randomBytes } from "node:crypto";
-import { notificationChannels, type Db } from "@getrelai/db";
-import { bus, resolveSubscribers, type AppEvent } from "./events.js";
+import { notificationChannels, repos, type Db } from "@getrelai/db";
+import { bus, resolveSubscribers, type AppEvent, type EventKind } from "./events.js";
 
 // Trip the breaker after this many consecutive failures. Cleared on success or
 // when an operator PUTs `disabled: false`.
 const FAILURE_THRESHOLD = 5;
+
+// Owner-scoped channels fire only on attention-transition events — the "this
+// needs a human" moments — across all of that owner's repos, rather than on
+// every event the way agent/subscription channels do.
+const OWNER_ATTENTION_KINDS = new Set<EventKind>([
+  "task.proposed",
+  "task.blocked",
+  "task.pending_verification",
+]);
 
 // Default delivery options. `retries: 2` = up to 3 attempts total.
 const DEFAULT_RETRIES = 2;
@@ -31,18 +40,51 @@ export function startNotificationDelivery(db: Db): () => void {
 }
 
 export async function deliver(db: Db, event: AppEvent, opts: DeliverOptions = {}): Promise<void> {
-  const agentIds = await resolveSubscribers(db, event);
-  if (agentIds.length === 0) return;
-
-  const channels = await db
-    .select()
-    .from(notificationChannels)
-    .where(and(
-      inArray(notificationChannels.agentId, agentIds),
-      isNull(notificationChannels.disabledAt),
-    ));
-
+  const channels = await selectChannels(db, event);
+  if (channels.length === 0) return;
   await Promise.all(channels.map((ch) => deliverOne(db, ch, event, opts)));
+}
+
+// Resolve the channels an event fans out to, from two independent paths:
+//   1. Agent channels — the existing subscription-driven path: agents
+//      subscribed to the event's target, fired for every event.
+//   2. Owner channels — repo-owner channels, fired only on attention-transition
+//      events, resolved via the event's repo → repos.ownerId. Independent of
+//      subscriptions (an owner needn't subscribe to anything).
+// Deduped by channel id (scopes are disjoint, but a defensive union is cheap).
+async function selectChannels(db: Db, event: AppEvent): Promise<Channel[]> {
+  const byId = new Map<string, Channel>();
+
+  const agentIds = await resolveSubscribers(db, event);
+  if (agentIds.length > 0) {
+    const rows = await db
+      .select()
+      .from(notificationChannels)
+      .where(and(
+        inArray(notificationChannels.agentId, agentIds),
+        isNull(notificationChannels.disabledAt),
+      ));
+    for (const r of rows) byId.set(r.id, r);
+  }
+
+  if (OWNER_ATTENTION_KINDS.has(event.kind) && event.repoId) {
+    const [repo] = await db
+      .select({ ownerId: repos.ownerId })
+      .from(repos)
+      .where(eq(repos.id, event.repoId));
+    if (repo?.ownerId) {
+      const rows = await db
+        .select()
+        .from(notificationChannels)
+        .where(and(
+          eq(notificationChannels.ownerId, repo.ownerId),
+          isNull(notificationChannels.disabledAt),
+        ));
+      for (const r of rows) byId.set(r.id, r);
+    }
+  }
+
+  return [...byId.values()];
 }
 
 function generateSecret(): string {

@@ -11,6 +11,8 @@ export type EventKind =
   | "task.proposal_rejected"
   | "task.proposed_overdue"
   | "task.updated"
+  | "task.blocked"
+  | "task.pending_verification"
   | "task.stalled"
   | "task.verified"
   | "task.verification_failed"

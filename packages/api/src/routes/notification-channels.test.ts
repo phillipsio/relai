@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { createHmac } from "node:crypto";
 import { buildServer } from "../server.js";
 import { deliver } from "../lib/notifications.js";
-import { createDb, notificationChannels } from "@getrelai/db";
+import { createDb, notificationChannels, users, repos } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { AppEvent } from "../lib/events.js";
@@ -473,5 +473,110 @@ describe("slack delivery", () => {
     const [row] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, channelId));
     expect(row.failureCount).toBe(5);
     expect(row.disabledAt).not.toBeNull();
+  });
+});
+
+describe("owner-scoped notification channels", () => {
+  const fetchMock = vi.fn();
+  let originalFetch: typeof fetch;
+  const db = createDb(DB_URL);
+  let ownerId: string;
+  let ownedRepoId: string;
+  let ownerChannelId: string;
+
+  beforeAll(async () => {
+    ownerId = `usr_ownernotif_${Date.now()}`;
+    await db.insert(users).values({ id: ownerId, email: `${ownerId}@test.example` });
+    const r = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ owned notif" }),
+    });
+    ownedRepoId = r.json().data.id;
+    await db.update(repos).set({ ownerId }).where(eq(repos.id, ownedRepoId));
+  });
+
+  afterAll(async () => {
+    // Delete the repo via the route first (clears its agents + agent channels,
+    // which FK the repo), then the user (cascades the owned repo's ownership
+    // and any owner-scoped channels).
+    await app.inject({ method: "DELETE", url: `/repos/${ownedRepoId}`, headers: ADMIN });
+    await db.delete(users).where(eq(users.id, ownerId));
+  });
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  const attentionEvent = (repoIdArg: string, kind: AppEvent["kind"] = "task.blocked"): AppEvent => ({
+    id: "evt_owner_1", kind, repoId: repoIdArg, targetType: "task", targetId: "task_x",
+    payload: { task: { title: "t", status: "blocked", priority: "normal" } }, createdAt: new Date().toISOString(),
+  });
+
+  it("POST with an explicit ownerId creates an owner-scoped channel (no agentId)", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ ownerId, kind: "webhook", config: { url: "https://owner.test/hook" } }),
+    });
+    expect(res.statusCode).toBe(201);
+    const data = res.json().data;
+    expect(data.id).toMatch(/^nch_/);
+    expect(data.agentId).toBeNull();
+    expect(data.ownerId).toBe(ownerId);
+    ownerChannelId = data.id;
+  });
+
+  it("POST 404s for an unknown owner", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ ownerId: "usr_nope", kind: "webhook", config: { url: "https://x.test/h" } }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("a per-agent caller cannot create an owner channel (no privilege escalation)", async () => {
+    // Register an agent and use ITS token: passing someone's ownerId must not
+    // create an owner-scoped channel — it falls back to a self-scoped agent
+    // channel instead.
+    const reg = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: ownedRepoId, name: "escalation-probe", role: "worker" }),
+    });
+    const token = reg.json().token as string;
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ownerId, kind: "webhook", config: { url: "https://evil.test/hook" } }),
+    });
+    expect(res.statusCode).toBe(201);
+    const data = res.json().data;
+    expect(data.ownerId).toBeNull();
+    expect(data.agentId).toBe(reg.json().data.id);
+  });
+
+  it("fires on an attention-transition event for the owner's repo — no subscription needed", async () => {
+    await deliver(db, attentionEvent(ownedRepoId, "task.blocked"), { retries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://owner.test/hook");
+  });
+
+  it("fires on task.pending_verification and task.proposed too", async () => {
+    await deliver(db, attentionEvent(ownedRepoId, "task.pending_verification"), { retries: 0 });
+    await deliver(db, attentionEvent(ownedRepoId, "task.proposed"), { retries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT fire on a non-attention event (e.g. task.updated / message.posted)", async () => {
+    await deliver(db, attentionEvent(ownedRepoId, "task.updated"), { retries: 0 });
+    await deliver(db, { ...attentionEvent(ownedRepoId), kind: "message.posted", targetType: "thread", targetId: "thread_x" }, { retries: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire for an attention event on a repo the owner does not own", async () => {
+    await deliver(db, attentionEvent(repoId, "task.blocked"), { retries: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

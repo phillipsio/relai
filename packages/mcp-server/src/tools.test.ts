@@ -440,7 +440,7 @@ describe("buildOperatorTools (owner mode)", () => {
     expect(names).toEqual(
       expect.arrayContaining([
         "list_repos", "list_agents", "create_task", "add_task_comment", "report_relai_issue",
-        "list_attention", "get_task", "reply_human", "review_task", "commit_proposal",
+        "list_attention", "get_task", "reply_human", "review_task", "commit_proposal", "assign_task",
       ]),
     );
   });
@@ -501,6 +501,50 @@ describe("buildOperatorTools (owner mode)", () => {
     const tools = buildOperatorTools(mockClient({ commitTask }));
     await getHandler(tools, "commit_proposal")({ taskId: "task_1", decision: "reject", note: "duplicate" });
     expect(commitTask).toHaveBeenCalledWith("task_1", { decision: "reject", note: "duplicate" });
+  });
+
+  it("assign_task sets assignedTo + default status 'assigned' via updateTask (agent id)", async () => {
+    const updateTask = vi.fn().mockResolvedValue({ id: "task_1", status: "assigned", assignedTo: "agent_xyz" });
+    const tools = buildOperatorTools(mockClient({ updateTask }));
+    await getHandler(tools, "assign_task")({ taskId: "task_1", assignedTo: "agent_xyz" });
+    expect(updateTask).toHaveBeenCalledWith("task_1", { assignedTo: "agent_xyz", status: "assigned" });
+  });
+
+  it("assign_task honors an explicit status override", async () => {
+    const updateTask = vi.fn().mockResolvedValue({ id: "task_1", status: "in_progress" });
+    const tools = buildOperatorTools(mockClient({ updateTask }));
+    await getHandler(tools, "assign_task")({ taskId: "task_1", assignedTo: "agent_xyz", status: "in_progress" });
+    expect(updateTask).toHaveBeenCalledWith("task_1", { assignedTo: "agent_xyz", status: "in_progress" });
+  });
+
+  it("assign_task resolves an agent name to an id within the task's repo", async () => {
+    const getTask = vi.fn().mockResolvedValue({ id: "task_1", repoId: "proj_a" });
+    const listAgents = vi.fn().mockResolvedValue([{ id: "agent_alice", name: "Alice" }, { id: "agent_bob", name: "Bob" }]);
+    const updateTask = vi.fn().mockResolvedValue({ id: "task_1", status: "assigned", assignedTo: "agent_bob" });
+    const tools = buildOperatorTools(mockClient({ getTask, listAgents, updateTask }));
+    await getHandler(tools, "assign_task")({ taskId: "task_1", assignedTo: "bob" });
+    expect(getTask).toHaveBeenCalledWith("task_1");
+    expect(listAgents).toHaveBeenCalledWith("proj_a");
+    expect(updateTask).toHaveBeenCalledWith("task_1", { assignedTo: "agent_bob", status: "assigned" });
+  });
+
+  it("assign_task errors on an unknown agent name and does not call updateTask", async () => {
+    const getTask = vi.fn().mockResolvedValue({ id: "task_1", repoId: "proj_a" });
+    const listAgents = vi.fn().mockResolvedValue([{ id: "agent_alice", name: "Alice" }]);
+    const updateTask = vi.fn();
+    const tools = buildOperatorTools(mockClient({ getTask, listAgents, updateTask }));
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_1", assignedTo: "nobody" });
+    expect(result.content[0].text).toContain('No agent named "nobody"');
+    expect(result.content[0].text).toContain("Alice");
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
+  it("assign_task rejects '@auto' with guidance and does not call updateTask", async () => {
+    const updateTask = vi.fn();
+    const tools = buildOperatorTools(mockClient({ updateTask }));
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_1", assignedTo: "@auto" });
+    expect(result.content[0].text).toContain("does not support '@auto'");
+    expect(updateTask).not.toHaveBeenCalled();
   });
 
   it("list_repos calls listRepos and wraps in a record", async () => {

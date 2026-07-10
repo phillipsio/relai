@@ -42,6 +42,7 @@ so no `repoId` argument is needed — the owner token scopes everything.
 | `reply_human` | The unblock primitive — reply on a task's `blockedThreadId`; the watcher resumes the worker with your answer. | `POST /threads/:id/messages` (recorded as `human`) |
 | `review_task` | Approve/reject a reviewer-gated task in `pending_verification`. | `POST /tasks/:id/review` |
 | `commit_proposal` | Commit (assign) or reject a worker's `proposed` task. | `POST /tasks/:id/commit` |
+| `assign_task` | Assign or reassign an already-committed task (a `pending`/unassigned one, e.g. from `create_task`) to a specific agent by name or id, moving it to `assigned`. Use `commit_proposal` for `proposed` tasks and for `@auto` routing. | `PUT /tasks/:id` |
 
 ## Setup
 
@@ -88,7 +89,7 @@ Reads are free; **writes confirm**. The failure mode here isn't a crash — it's
 resuming a worker (or approving a review) on a *misread* verbal instruction from
 your phone while you're distracted. Phone-Claude should always show the exact
 reply/decision it's about to post and wait for your confirmation before calling
-`reply_human` / `review_task` / `commit_proposal`. Everything the owner does is
+`reply_human` / `review_task` / `commit_proposal` / `assign_task`. Everything the owner does is
 recorded as `human` in the event/verification trail, so the thread reads
 correctly when you're back at your desk.
 

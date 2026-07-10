@@ -736,5 +736,71 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
         return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
       },
     },
+
+    {
+      name: "assign_task",
+      description:
+        "Assign (or reassign) an already-committed task to a specific agent, setting its owner and " +
+        "moving it to 'assigned'. This is the follow-up path for tasks created via create_task " +
+        "without an assignee (which land in 'pending') — commit_proposal only acts on 'proposed' " +
+        "tasks. Accepts an agent name or agent ID (case-insensitive name match within the task's " +
+        "repo). '@auto' is not supported here — use create_task or commit_proposal for router " +
+        "assignment. Pass status to override the default 'assigned'.",
+      inputSchema: z.object({
+        taskId:     z.string().describe("The task id to assign."),
+        assignedTo: z.string().describe("Agent name or agent ID (agent_*). '@auto' is not supported."),
+        status:     z
+          .enum(["pending", "assigned", "in_progress", "pending_verification", "completed", "blocked", "cancelled"])
+          .optional()
+          .describe("Status to set alongside the assignee. Defaults to 'assigned'."),
+      }),
+      handler: async (input: { taskId: string; assignedTo: string; status?: string }) => {
+        if (input.assignedTo === "@auto") {
+          return {
+            content: [{
+              type: "text" as const,
+              text: "assign_task assigns to a specific agent and does not support '@auto'. Use create_task or commit_proposal for router assignment.",
+            }],
+          };
+        }
+        // Resolve an agent name to an ID, scoped to the task's own repo.
+        let resolvedAssignedTo = input.assignedTo;
+        if (!resolvedAssignedTo.startsWith("agent_")) {
+          const existing = await client.getTask(input.taskId) as { repoId?: string } | null;
+          const repoId = existing?.repoId;
+          if (!repoId) {
+            return { content: [{ type: "text" as const, text: `Task ${input.taskId} not found.` }] };
+          }
+          const rawAgents = await client.listAgents(repoId);
+          const needle = resolvedAssignedTo.toLowerCase();
+          const matches = (rawAgents as Array<{ id: string; name: string }>)
+            .filter((a) => a.name.toLowerCase() === needle);
+          if (matches.length === 0) {
+            const names = (rawAgents as Array<{ name: string }>).map((a) => a.name).join(", ");
+            return {
+              content: [{
+                type: "text" as const,
+                text: `No agent named "${input.assignedTo}" in repo ${repoId}.${names ? ` Available: ${names}` : ""}`,
+              }],
+            };
+          }
+          if (matches.length > 1) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Multiple agents named "${input.assignedTo}". Use the agent id instead: ${matches.map((a) => a.id).join(", ")}`,
+              }],
+            };
+          }
+          resolvedAssignedTo = matches[0].id;
+        }
+
+        const task = await client.updateTask(input.taskId, {
+          assignedTo: resolvedAssignedTo,
+          status: input.status ?? "assigned",
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      },
+    },
   ];
 }

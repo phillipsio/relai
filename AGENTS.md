@@ -210,6 +210,8 @@ Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the repo 
 
 Tests use vitest. Test files live alongside source as `*.test.ts`.
 
+**The `packages/api` suite runs against a dedicated `relai_test` database** (same Postgres container/port 5433, same `relai`/`relai` role — no new user needed), never the dev DB. `packages/api/vitest.config.ts` sets `test.env.DATABASE_URL` to `relai_test`, which overrides every test file's own `DATABASE_URL ?? "...relai"` fallback, and a `globalSetup` (`packages/api/src/test/global-setup.ts`) truncates every table before each run. This makes DB hygiene structural rather than per-test discipline: a test that forgets cleanup can only pollute state within its own run, and it can never touch what the local dashboard shows. (This repo hit the discipline-based failure mode twice — 2026-05-06 and 2026-06-26 — before this fix landed.) One-time setup, and again after any schema change: see "Dev setup" below. After a column rename, the raw-SQL rename must be applied to **both** `relai` and `relai_test` before `db:push` reconciles either.
+
 Currently tested:
 - `packages/api/src/routes/api.test.ts` — full route coverage with `app.inject()` against a real Postgres
 - `packages/api/src/routes/auth.test.ts` — token resolution, deprecated-secret fallback, whitelist
@@ -267,6 +269,10 @@ cp .env.example .env
 pnpm install
 docker compose up -d
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
+  pnpm --filter @getrelai/db db:push
+# One-time: dedicated test DB so `pnpm test` can never touch the dev DB above.
+docker exec relai-postgres-1 psql -U relai -d relai -c "CREATE DATABASE relai_test"
+DATABASE_URL=postgresql://relai:relai@localhost:5433/relai_test \
   pnpm --filter @getrelai/db db:push
 pnpm --filter @getrelai/api dev        # terminal 1 — must be running before seed
 # In a second terminal:

@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
+import { TEST_DATABASE_URL } from "./src/test/test-db.js";
 
 // drizzle-orm and postgres live in shared/db/node_modules, not here.
 // Alias them so vite can resolve them during tests.
@@ -16,5 +17,11 @@ export default defineConfig({
     environment: "node",
     name: "@getrelai/api",
     include: ["src/**/*.test.ts"],
+    // Every test file falls back to DATABASE_URL when unset; setting it here
+    // means that fallback never fires, so tests can't touch the dev DB no
+    // matter what a given test file does. globalSetup truncates relai_test
+    // before this run starts, so leaked rows can't survive to the next run.
+    env: { DATABASE_URL: TEST_DATABASE_URL },
+    globalSetup: "./src/test/global-setup.ts",
   },
 });

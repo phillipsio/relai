@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { EventWorkerConfig } from "./config.js";
-import { runClaudeSession } from "@getrelai/claude-worker";
+import { runClaudeSession, blockOverflowedTasks } from "@getrelai/claude-worker";
 
 const esInstances: any[] = [];
 class FakeEventSource {
@@ -27,11 +27,17 @@ class FakeEventSource {
 }
 vi.mock("eventsource", () => ({ EventSource: FakeEventSource }));
 
-vi.mock("@getrelai/claude-worker", () => ({
-  runClaudeSession: vi.fn().mockResolvedValue(undefined),
-  heartbeat: vi.fn().mockResolvedValue(undefined),
-  assertRepoOrExit: vi.fn().mockResolvedValue(undefined),
-}));
+// Real classifySessionError: a stub would let the overflow test pass regardless.
+vi.mock("@getrelai/claude-worker", async () => {
+  const actual = await vi.importActual<typeof import("@getrelai/claude-worker")>("@getrelai/claude-worker");
+  return {
+    runClaudeSession: vi.fn().mockResolvedValue(undefined),
+    heartbeat: vi.fn().mockResolvedValue(undefined),
+    assertRepoOrExit: vi.fn().mockResolvedValue(undefined),
+    classifySessionError: actual.classifySessionError,
+    blockOverflowedTasks: vi.fn().mockResolvedValue([]),
+  };
+});
 
 const TEST_CONFIG: EventWorkerConfig = {
   agentId: "agent_1",
@@ -230,5 +236,33 @@ describe("runEventWorker", () => {
     await flushMicrotasks();
 
     expect(runClaudeSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Otherwise the task stays in_progress and every later event respawns it.
+  it("blocks the in-flight task when a session dies of context overflow", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ tasks: [{ id: "task_1" }], messages: [] }));
+    vi.mocked(runClaudeSession).mockRejectedValueOnce(
+      new Error("claude exited with code 1: prompt is too long: 213539 tokens > 200000"),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runEventWorker } = await import("./worker.js");
+
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+
+    expect(vi.mocked(blockOverflowedTasks)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(blockOverflowedTasks).mock.calls[0][1]).toContain("prompt is too long");
+  });
+
+  it("leaves tasks alone when a session dies of a transient error", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ tasks: [{ id: "task_1" }], messages: [] }));
+    vi.mocked(runClaudeSession).mockRejectedValueOnce(new Error("fetch failed: ECONNREFUSED"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runEventWorker } = await import("./worker.js");
+
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+
+    expect(vi.mocked(blockOverflowedTasks)).not.toHaveBeenCalled();
   });
 });

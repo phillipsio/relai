@@ -57,6 +57,7 @@ packages/
   web/            React + Vite + TanStack Query dashboard (Issues + Epics surface)
   mcp-server/     MCP server — the integration point for any MCP-compatible agent
   claude-worker/  Headless Claude Code worker loop
+  event-worker/   SSE-driven worker loop (what @getrelai/agent runs)
   copilot-worker/ Copilot agent worker loop
   cli/            Commander.js CLI — the `relai` binary
 ```
@@ -206,6 +207,16 @@ Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the repo 
 
 **Repo path**: Relai stores `repoPath` on the agent record and shows it in setup instructions, but cannot enforce it for interactive sessions. Always start your agent session from the correct directory — the agent will work in whatever directory it was launched from.
 
+### Worker session-failure classification (packages/claude-worker/src/errors.ts)
+
+`classifySessionError()` sorts a failed `claude --print` session into three classes, because they need different remedies:
+
+- **`credentials`** (bad key/token, exhausted credits) — no session can succeed until a human fixes the account, so the poll loop backs off exponentially up to `maxBackoffMs` and warns loudly.
+- **`overflow`** (context window exceeded: `prompt is too long`, `input is too long for requested model`, `context_window_exceeded`, `request too large`) — **backing off is wrong here, because waiting does not make the task smaller.** The worker instead moves its `in_progress` tasks to `blocked` via `blockOverflowedTasks()` (`block-task.ts`), recording `metadata.blockedReason` plus a capped `metadata.overflow.detail`. A blocked task stops matching both the poll loop and the event-worker's `hasWork` gate, which is what actually ends the respawn loop; an orchestrator or human then splits it. Deliberately sets no `blockedThreadId`, so the API's resume watcher will not auto-revive it. Since workers share one subscription budget, leaving this misclassified let a single oversized task burn fleet-wide tokens on a guaranteed-failing retry.
+- **`transient`** (rate limit, overload, network blip) — clears on its own; normal cadence.
+
+Both entrypoints classify: `claude-worker`'s poll loop (which falls back to backoff when an overflow left no task to blame, e.g. the unread backlog itself was too large) and `event-worker`'s catch block.
+
 ## Testing
 
 Tests use vitest. Test files live alongside source as `*.test.ts`.
@@ -228,9 +239,12 @@ Currently tested:
 - `packages/api/src/lib/verify-reviewer-agent.test.ts` — reviewer_agent predicate (approve, reject)
 - `packages/api/src/lib/router/rules.test.ts` — rules-based routing logic
 - `packages/api/src/lib/router/message-loop.test.ts` — handoff/finding/decision/question/escalation handling in the API's in-process loop
+- `packages/claude-worker/src/errors.test.ts` — session-failure classification (credentials vs overflow vs transient)
+- `packages/claude-worker/src/block-task.test.ts` — overflow task-blocking (metadata merge, in_progress-only scope, never throws)
+- `packages/event-worker/src/worker.test.ts` — SSE loop, has-work gate, and overflow → block wiring
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~339 tests across the workspace (api alone: ~201). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~493 tests across the workspace (api alone: ~201). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 

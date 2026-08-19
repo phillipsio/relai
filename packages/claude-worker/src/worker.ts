@@ -1,4 +1,5 @@
-import { isFatalError } from "./errors.js";
+import { classifySessionError } from "./errors.js";
+import { blockOverflowedTasks } from "./block-task.js";
 import { runClaudeSession } from "./session.js";
 import { checkRepoMatch, fetchRepoUrl } from "@getrelai/git";
 import type { ClaudeWorkerConfig } from "./config.js";
@@ -45,21 +46,31 @@ export async function runWorker(config: ClaudeWorkerConfig): Promise<never> {
       consecutiveFatal = 0;
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
-      if (isFatalError(text)) {
-        // A credential/credit failure won't clear by re-spawning in 15s — that
-        // just burns a tight loop (this bit us when a worker ran out of credits
-        // and respawned every poll). Back off exponentially, capped, and warn
-        // loudly so a human can fix it; resume automatically once it clears.
-        consecutiveFatal++;
-        delay = Math.min(config.maxBackoffMs, config.pollIntervalMs * 2 ** consecutiveFatal);
+      const failure = classifySessionError(text);
+
+      // Retiring the task beats backing off — a wait makes it no smaller.
+      // Backoff is the fallback when there is nothing to retire.
+      const blocked = failure === "overflow" ? await blockOverflowedTasks(config, text) : [];
+
+      if (blocked.length > 0) {
+        consecutiveFatal = 0;
         console.error(
-          `[claude-worker] FATAL error (likely exhausted credits or bad credentials) — ` +
-          `backing off ${Math.round(delay / 1000)}s before retry #${consecutiveFatal}. ` +
-          `Fix the credit/credential issue; the worker will resume automatically.\n  ${text}`,
+          `[claude-worker] Session ran out of context — blocked ${blocked.join(", ")} pending a split.\n  ${text}`,
         );
-      } else {
+      } else if (failure === "transient") {
         consecutiveFatal = 0;
         console.error("[claude-worker] Session error:", text);
+      } else {
+        consecutiveFatal++;
+        delay = Math.min(config.maxBackoffMs, config.pollIntervalMs * 2 ** consecutiveFatal);
+        const cause = failure === "overflow"
+          ? "context overflow with no task in flight to block"
+          : "likely exhausted credits or bad credentials";
+        console.error(
+          `[claude-worker] FATAL error (${cause}) — ` +
+          `backing off ${Math.round(delay / 1000)}s before retry #${consecutiveFatal}. ` +
+          `Fix the underlying issue; the worker will resume automatically.\n  ${text}`,
+        );
       }
     }
     await new Promise((resolve) => setTimeout(resolve, delay));

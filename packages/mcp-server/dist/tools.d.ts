@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ApiClient } from "./api-client.js";
+export declare const PEER_BOUNDARY: string;
 export declare function buildTools(client: ApiClient, agentId: string, repoId: string): ({
     name: string;
     description: string;

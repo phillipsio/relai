@@ -240,7 +240,7 @@ describe("watchBlockedTasks (operator unblock path)", () => {
 
     const db = createDb(DB_URL);
     await db.update(tasks)
-      .set({ status: "blocked", metadata: { blockedThreadId: threadId } })
+      .set({ status: "blocked", blockedAt: new Date(), metadata: { blockedThreadId: threadId } })
       .where(eq(tasks.id, taskId));
     return { taskId, threadId };
   }

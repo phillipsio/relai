@@ -208,6 +208,10 @@ export const tasks = pgTable("tasks", {
   // Set by the scheduler when a task has been `in_progress` longer than the
   // stall threshold without any update. Cleared on any subsequent PUT /tasks/:id.
   stalledAt:   timestamp("stalled_at", { withTimezone: true }),
+  // Stamped on each transition into `blocked`. The resume watcher compares a
+  // human reply against this rather than createdAt, or any message already on
+  // the thread would resume the task the instant it blocked.
+  blockedAt:   timestamp("blocked_at", { withTimezone: true }),
   // Set when a terminal-state task is archived out of the default live views
   // (session_start, GET /tasks) to keep startup payloads small. Orthogonal to
   // `status` — a task is `completed`/`cancelled` and *later* archived. History

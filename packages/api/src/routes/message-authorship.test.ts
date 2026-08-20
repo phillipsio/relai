@@ -149,7 +149,7 @@ describe("the blocked-task watcher cannot be driven by an agent", () => {
 
     const db = createDb(DB_URL);
     await db.update(tasks)
-      .set({ status: "blocked", metadata: { blockedThreadId: blockThread } })
+      .set({ status: "blocked", blockedAt: new Date(), metadata: { blockedThreadId: blockThread } })
       .where(eq(tasks.id, taskId));
 
     return { taskId, blockThread };

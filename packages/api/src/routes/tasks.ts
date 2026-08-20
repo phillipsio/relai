@@ -433,6 +433,10 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // The scheduler will run the predicate on the next tick.
     const updates: Record<string, unknown> = { ...body.data };
 
+    // Stamped on every transition into `blocked`, including a re-block, so the
+    // answer to an earlier question cannot resume a later blocking.
+    if (updates.status === "blocked") updates.blockedAt = new Date();
+
     // metadata is a single jsonb column, so a client PUT would otherwise replace
     // the whole thing. Merge instead, and take every server-owned key from the
     // existing row: those are written by dedicated routes and schedulers and then

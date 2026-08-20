@@ -126,6 +126,14 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
     (t) => typeof (t.metadata as Record<string, unknown>).blockedThreadId === "string"
   );
 
+  const unstamped = watchable.filter((t) => !t.blockedAt);
+  if (unstamped.length > 0) {
+    console.warn(
+      `[scheduler] ${unstamped.length} blocked task(s) have no blockedAt and are not watchable: ` +
+      unstamped.map((t) => t.id).join(", "),
+    );
+  }
+
   for (const task of watchable) {
     const meta = (task.metadata ?? {}) as Record<string, unknown>;
     const threadId = meta.blockedThreadId as string;
@@ -136,9 +144,12 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
       .where(eq(messages.threadId, threadId))
       .orderBy(messages.createdAt);
 
-    const taskCreatedAt = new Date(task.createdAt).getTime();
+    // No stamp means we cannot tell which replies predate the blocking, so leave
+    // it alone rather than resuming off whatever is already on the thread.
+    if (!task.blockedAt) continue;
+    const blockedAt = new Date(task.blockedAt).getTime();
     const humanReply = msgs.find(
-      (m) => m.authorKind === "human" && new Date(m.createdAt).getTime() > taskCreatedAt
+      (m) => m.authorKind === "human" && new Date(m.createdAt).getTime() > blockedAt
     );
 
     if (!humanReply) continue;

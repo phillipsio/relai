@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const agentRoleEnum = pgEnum("agent_role", ["orchestrator", "worker"]);
 
@@ -154,7 +154,9 @@ export const messages = pgTable("messages", {
   metadata:  jsonb("metadata").default({}).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   readBy:    text("read_by").array().notNull().default([]),
-});
+}, (t) => ({
+  thread: index("messages_thread_idx").on(t.threadId, t.createdAt),
+}));
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
@@ -223,7 +225,12 @@ export const tasks = pgTable("tasks", {
   blockedBy:   text("blocked_by").array().notNull().default([]),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // The routing and verify schedulers scan by repo and status on every tick.
+  repoStatus: index("tasks_repo_status_idx").on(t.repoId, t.status),
+  // GET /tasks?assignedTo= and every worker's own queue.
+  assignee:   index("tasks_assigned_idx").on(t.assignedTo),
+}));
 
 // ── Subscriptions ─────────────────────────────────────────────────────────────
 
@@ -235,7 +242,13 @@ export const subscriptions = pgTable("subscriptions", {
   targetType: subscriptionTargetTypeEnum("target_type").notNull(),
   targetId:   text("target_id").notNull(),
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // Both callers dedupe with a select-then-insert, which two concurrent
+  // subscribes can interleave. This makes the idempotency actual.
+  agentTarget: uniqueIndex("subscriptions_agent_target_unique").on(t.agentId, t.targetType, t.targetId),
+  // resolveSubscribers() matches on exactly this pair, on every publish.
+  target:      index("subscriptions_target_idx").on(t.targetType, t.targetId),
+}));
 
 // ── Notification channels ─────────────────────────────────────────────────────
 
@@ -301,7 +314,9 @@ export const events = pgTable("events", {
   alsoNotify: jsonb("also_notify").notNull().default([]),
   payload:    jsonb("payload").notNull().default({}),
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  repoRecent: index("events_repo_created_idx").on(t.repoId, t.createdAt),
+}));
 
 export const routingLog = pgTable("routing_log", {
   id:         text("id").primaryKey(),

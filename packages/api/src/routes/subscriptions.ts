@@ -66,7 +66,17 @@ export const subscriptionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify
     const [row] = await db.insert(subscriptions).values({
       id: newId("sub"),
       ...body.data,
-    }).returning();
+    }).onConflictDoNothing().returning();
+    // Lost the race against a concurrent identical subscribe: the unique index
+    // absorbed it, so return the row that won rather than a 500.
+    if (!row) {
+      const [won] = await db.select().from(subscriptions).where(and(
+        eq(subscriptions.agentId,    body.data.agentId),
+        eq(subscriptions.targetType, body.data.targetType),
+        eq(subscriptions.targetId,   body.data.targetId),
+      ));
+      return reply.status(200).send({ data: won });
+    }
     return reply.status(201).send({ data: row });
   });
 

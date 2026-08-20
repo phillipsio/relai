@@ -168,3 +168,54 @@ describe("an agent cannot act on another agent's inbox", () => {
     expect(unread.statusCode).toBe(200);
   });
 });
+
+describe("subscription idempotency is enforced by the database", () => {
+  // Both writers dedupe with select-then-insert, which concurrent calls can
+  // interleave. The unique index is what makes the guarantee real.
+  it("survives concurrent identical subscribes without duplicating or erroring", async () => {
+    const db = createDb(DB_URL);
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        subscribe(asAgent(tokenA), { agentId: agentA, targetType: "thread", targetId: threadA }),
+      ),
+    );
+
+    for (const r of results) expect([200, 201]).toContain(r.statusCode);
+
+    const rows = await db.select().from(subscriptions).where(and(
+      eq(subscriptions.agentId, agentA),
+      eq(subscriptions.targetId, threadA),
+    ));
+    expect(rows).toHaveLength(1);
+  });
+
+  // The concurrency tests above pass with or without the index, because the
+  // app-level dedupe usually wins the race under the test runner's scheduling.
+  // This bypasses that dedupe entirely, so it fails if the constraint is absent.
+  it("rejects a duplicate written straight to the table", async () => {
+    const db = createDb(DB_URL);
+    const row = { agentId: agentA, targetType: "thread" as const, targetId: threadA };
+
+    await db.insert(subscriptions).values({ id: `sub_dup_a_${Date.now()}`, ...row }).onConflictDoNothing();
+    await expect(
+      db.insert(subscriptions).values({ id: `sub_dup_b_${Date.now()}`, ...row }),
+    ).rejects.toThrow();
+
+    const rows = await db.select().from(subscriptions).where(and(
+      eq(subscriptions.agentId, agentA),
+      eq(subscriptions.targetId, threadA),
+    ));
+    expect(rows).toHaveLength(1);
+  });
+
+  it("survives concurrent calls through the internal helper too", async () => {
+    const db = createDb(DB_URL);
+    await Promise.all(Array.from({ length: 6 }, () => ensureSubscription(db, agentA, "task", taskA)));
+
+    const rows = await db.select().from(subscriptions).where(and(
+      eq(subscriptions.agentId, agentA),
+      eq(subscriptions.targetId, taskA),
+    ));
+    expect(rows).toHaveLength(1);
+  });
+});

@@ -123,5 +123,5 @@ export async function ensureSubscription(
   await db.insert(subscriptions).values({
     id: newId("sub"),
     agentId, targetType, targetId,
-  });
+  }).onConflictDoNothing();
 }

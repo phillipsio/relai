@@ -71,6 +71,8 @@ packages/
 
 ### Data model (shared/db)
 
+**Index convention.** Add an index when a query runs on every request or every scheduler tick, and a `uniqueIndex` when a route's idempotency currently rests on a select-then-insert (which two concurrent callers can interleave). Both are cheap to add while tables are small and awkward later, because drizzle applies each migration inside a transaction and `CREATE INDEX CONCURRENTLY` cannot run in one. Foreign keys do **not** create indexes in Postgres, so a hot lookup by FK still needs one declared. Current set: `subscriptions(agentId,targetType,targetId)` unique plus `(targetType,targetId)` for the per-publish fan-out, `messages(threadId,createdAt)`, `tasks(repoId,status)` and `tasks(assignedTo)` for the scheduler scans, `events(repoId,createdAt)` for `/session/start`. `tokens.tokenHash` and `invites.codeHash` were already unique, which covers the auth hot path.
+
 Twelve tables: `repos`, `agents`, `tokens`, `invites`, `threads`, `messages`, `tasks`, `subscriptions`, `notification_channels`, `verification_log`, `events`, `routing_log`. All IDs are prefixed strings (`repo_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`, `tok_`, `inv_`, `sub_`, `evt_`, `verif_`). Enums are Postgres-native (`pgEnum`).
 
 - `repos` has `defaultAssignee` (agent ID, the literal `"@auto"`, or null) — applied when a task is created without an explicit assignee. `repoUrl` is restricted to `https://`/`ssh://` and settable only by orchestrators (or the deprecated admin/owner path) — it feeds `git ls-remote` for the `git_pushed` verifyKind, so an unrestricted value or worker-settable field would be an SSRF vector against the API host's outbound git.

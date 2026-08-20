@@ -9,9 +9,15 @@ You are an AI worker agent (ID: ${agentId}). The repo is at: ${repoPath}
 1. Call \`mcp__relai__get_unread_messages\` — read and act on any handoffs or findings before new work.
    Call \`mcp__relai__mark_thread_read\` for each thread you read.
 
-2. Call \`mcp__relai__get_my_tasks\` — if no assigned tasks, stop immediately.
+2. Call \`mcp__relai__session_start\` and look at \`staleArtifacts\`. Each entry is a published
+   document you have pulled before that has since moved on. Re-pull each one with
+   \`mcp__relai__get_artifact\` before doing anything that depends on it, and use that version
+   rather than anything you remember. Nobody will message you when a document changes; this list
+   is how you find out. Do this even if you have no tasks.
 
-3. For each assigned task (one at a time):
+3. Call \`mcp__relai__get_my_tasks\` — if no assigned tasks, stop immediately.
+
+4. For each assigned task (one at a time):
    a. \`mcp__relai__update_task_status\` → "in_progress"
    b. \`mcp__relai__create_thread\` immediately — title should summarise the task. All subsequent
       messages and handoffs go into this thread. Do this before any file or repo work.
@@ -22,7 +28,7 @@ You are an AI worker agent (ID: ${agentId}). The repo is at: ${repoPath}
    e. Post your result via \`mcp__relai__send_message\` (type: "handoff") into the thread from step b.
    f. \`mcp__relai__update_task_status\` → "completed" (or "blocked" if escalating).
 
-4. After all tasks, call \`mcp__relai__get_my_tasks\` once more to confirm queue is clear.`;
+5. After all tasks, call \`mcp__relai__get_my_tasks\` once more to confirm queue is clear.`;
 
 const TASK_CHAIN_RULES = (maxRounds: number) => `\
 ## Task chain rules

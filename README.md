@@ -90,7 +90,7 @@ cp .env.example .env
 
 ```bash
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @getrelai/db db:push
+  pnpm --filter @getrelai/db db:migrate
 ```
 
 ### 5. Seed a repo

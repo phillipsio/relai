@@ -11,9 +11,12 @@ pnpm install
 # Start Postgres (port 5433 — avoids conflict with other local DBs on 5432)
 docker compose up -d
 
-# Push Drizzle schema to the database (run once after clone, and after schema changes)
+# Apply migrations (run once after clone, and after any schema change)
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @getrelai/db db:push
+  pnpm --filter @getrelai/db db:migrate
+
+# After editing shared/db/src/schema.ts, generate a migration and commit it
+pnpm --filter @getrelai/db db:generate
 
 # Seed a fresh database (creates repo + orchestrator agent, patches .env)
 # API must be running first
@@ -41,7 +44,11 @@ pnpm build
 
 drizzle-kit reads `DATABASE_URL` from the environment — there is no automatic `.env` loading for it. Pass it explicitly or `export` it first.
 
-**Schema renames bypass `db:push`.** drizzle-kit's `push` is interactive and prompts on column renames (e.g. `routing_mode → default_assignee`), which makes it unscriptable. For a rename, run the `ALTER TABLE … RENAME COLUMN …` directly via `docker exec relai-postgres-1 psql -U relai -d relai -c "..."` and let `db:push` reconcile the rest on the next run.
+**Schema changes go through migrations, not `push`.** Edit `shared/db/src/schema.ts`, run `db:generate` to emit a versioned file under `shared/db/drizzle/`, review that SQL as part of the diff, and apply it with `db:migrate`. Commit the generated file and `drizzle/meta/`.
+
+`db:push` is retained only as a local escape hatch and should not be used to apply anything. It is interactive: it prompts on renames, and in practice it also **hangs** on additive changes such as a new enum type plus a column (hit twice on 2026-08-20 while landing `messages.author_kind` and `invites.role`), which makes it unusable non-interactively and therefore unusable in any deploy step.
+
+Migrations are applied per database, so run `db:migrate` against **both** `relai` and `relai_test`. The history was baselined on 2026-08-20: `drizzle/0000_initial_baseline.sql` describes the whole schema as it stood, and was verified by building a scratch database from it and diffing against the live one (identical across all 129 OSS columns; the `cloud_*` tables belong to the closed dashboard's own drizzle config and are deliberately absent). Existing databases were marked as having applied it rather than running it.
 
 ## Architecture
 
@@ -222,7 +229,7 @@ Both entrypoints classify: `claude-worker`'s poll loop (which falls back to back
 
 Tests use vitest. Test files live alongside source as `*.test.ts`.
 
-**The `packages/api` suite runs against a dedicated `relai_test` database** (same Postgres container/port 5433, same `relai`/`relai` role — no new user needed), never the dev DB. `packages/api/vitest.config.ts` sets `test.env.DATABASE_URL` to `relai_test`, which overrides every test file's own `DATABASE_URL ?? "...relai"` fallback, and a `globalSetup` (`packages/api/src/test/global-setup.ts`) truncates every table before each run. This makes DB hygiene structural rather than per-test discipline: a test that forgets cleanup can only pollute state within its own run, and it can never touch what the local dashboard shows. (This repo hit the discipline-based failure mode twice — 2026-05-06 and 2026-06-26 — before this fix landed.) One-time setup, and again after any schema change: see "Dev setup" below. After a column rename, the raw-SQL rename must be applied to **both** `relai` and `relai_test` before `db:push` reconciles either.
+**The `packages/api` suite runs against a dedicated `relai_test` database** (same Postgres container/port 5433, same `relai`/`relai` role — no new user needed), never the dev DB. `packages/api/vitest.config.ts` sets `test.env.DATABASE_URL` to `relai_test`, which overrides every test file's own `DATABASE_URL ?? "...relai"` fallback, and a `globalSetup` (`packages/api/src/test/global-setup.ts`) truncates every table before each run. This makes DB hygiene structural rather than per-test discipline: a test that forgets cleanup can only pollute state within its own run, and it can never touch what the local dashboard shows. (This repo hit the discipline-based failure mode twice — 2026-05-06 and 2026-06-26 — before this fix landed.) One-time setup, and again after any schema change: see "Dev setup" below. Schema changes must be applied to **both** `relai` and `relai_test` via `db:migrate`.
 
 Currently tested:
 - `packages/api/src/routes/api.test.ts` — full route coverage with `app.inject()` against a real Postgres
@@ -284,11 +291,11 @@ cp .env.example .env
 pnpm install
 docker compose up -d
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @getrelai/db db:push
+  pnpm --filter @getrelai/db db:migrate
 # One-time: dedicated test DB so `pnpm test` can never touch the dev DB above.
 docker exec relai-postgres-1 psql -U relai -d relai -c "CREATE DATABASE relai_test"
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai_test \
-  pnpm --filter @getrelai/db db:push
+  pnpm --filter @getrelai/db db:migrate
 pnpm --filter @getrelai/api dev        # terminal 1 — must be running before seed
 # In a second terminal:
 API_SECRET=<your-secret> tsx scripts/seed.ts my-repo my-agent orchestrator
@@ -314,9 +321,13 @@ Workflow:
 
 ## Deploy
 
-The repo ships a production `Dockerfile` + `fly.toml` targeting Fly.io. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). Schema migrations run automatically via the `[deploy] release_command` in `fly.toml` (`pnpm --filter @getrelai/db db:push`); column renames must still be applied manually via raw SQL first. See `docs/deploy-fly.md` for the full walkthrough.
+The repo ships a production `Dockerfile` + `render.yaml` targeting Render. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). See `docs/deploy-render.md`.
 
-`/health` is auth-gated, so the Fly health probe is a TCP check today. The web dashboard isn't deployed by this config — host it separately or skip for CLI/MCP-only setups.
+**Nothing applies the schema on deploy.** Render's free plan has no pre-deploy command, so migrations are applied by hand against the database's external URL: `DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:migrate`. Do this before the first deploy (or the API boots against an empty database) and after any schema change.
+
+The Fly config was removed on 2026-08-20. It was never deployed, and its `[deploy] release_command` ran `db:push` **from the deployed image**, so rolling back to an older image would have diffed newer tables as deletions and dropped them with their data. If Fly is revisited, the release command must run `db:migrate`, never `push`.
+
+`/health` is auth-gated, so a health probe needs either a token or an unauthenticated `/livez` route. The web dashboard isn't deployed by this config — host it separately or skip for CLI/MCP-only setups.
 
 ## Critical rules
 
@@ -324,7 +335,7 @@ The repo ships a production `Dockerfile` + `fly.toml` targeting Fly.io. The imag
 - **Port 5433 for Postgres** — docker-compose maps `5433:5432` to avoid conflicting with other local databases.
 - **Port 3010 for API** — avoids common dev server port conflicts.
 - **drizzle-kit does not auto-load `.env`** — always pass `DATABASE_URL` explicitly.
-- **drizzle-kit `push` prompts on renames** — apply `ALTER TABLE … RENAME COLUMN` directly via `docker exec` instead.
+- **Schema changes go through `db:generate` + `db:migrate`** — `push` is interactive, hangs on additive changes, and must never be used in a deploy step.
 - **`tsx watch --env-file` flag order** — `tsx watch --env-file=../../.env src/index.ts` (watch before flag). Reversing causes tsx to treat `watch` as the script path.
 - **Routing is sequential, not parallel** — tasks are routed one at a time within a cycle to avoid racing on agent availability.
 - **MCP tool handlers must return MCP content format** — see MCP server section above.

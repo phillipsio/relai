@@ -26,6 +26,16 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     const access = await assertRepoAccess(request, db, body.data.repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
+    // Registering an agent mints a credential and names its own role, so it is
+    // an orchestrator/owner act. Without this a worker could hand itself an
+    // orchestrator token, which reaches shell verify predicates and therefore
+    // command execution in this process.
+    if (request.agent && request.agent.role !== "orchestrator") {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only orchestrator agents may register agents." },
+      });
+    }
+
     const [agent] = await db.insert(agents).values({
       id:             newId("agent"),
       repoId:      body.data.repoId,

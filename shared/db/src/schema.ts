@@ -110,6 +110,9 @@ export const invites = pgTable("invites", {
   createdBy:              text("created_by").references(() => agents.id),
   suggestedName:          text("suggested_name"),
   suggestedSpecialization: text("suggested_specialization"),
+  // Pinned by whoever creates the invite; the accepter cannot choose its own
+  // role. Only an orchestrator/owner may mint an invite carrying "orchestrator".
+  role:                   agentRoleEnum("role").notNull().default("worker"),
   expiresAt:              timestamp("expires_at",  { withTimezone: true }).notNull(),
   acceptedAt:             timestamp("accepted_at", { withTimezone: true }),
   acceptedAgentId:        text("accepted_agent_id").references(() => agents.id),

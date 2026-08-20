@@ -294,6 +294,9 @@ export const events = pgTable("events", {
   kind:       text("kind").notNull(),
   targetType: text("target_type").notNull(),  // "thread" | "task" | "agent"
   targetId:   text("target_id").notNull(),
+  // Who caused the event. Null for scheduler/system-originated ones. No FK: an
+  // actor may be an agent id, a usr_ owner id, or "human" on the admin path.
+  actorId:    text("actor_id"),
   // Mirrors AppEvent.alsoNotify — secondary subjects matched during fan-out.
   alsoNotify: jsonb("also_notify").notNull().default([]),
   payload:    jsonb("payload").notNull().default({}),

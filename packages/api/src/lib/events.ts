@@ -36,7 +36,8 @@ export interface AppEvent {
   // unset for system-originated events (scheduler verification/routing). Used to
   // suppress echoing an event back to its own author over SSE — without it, an
   // agent that updates a task receives its own update and (for the event watcher)
-  // wakes itself for a change it just made. Delivery-only; not persisted.
+  // wakes itself for a change it just made. Also persisted, so "who did this"
+  // is answerable after the fact.
   actorId?:   string;
   payload:    Record<string, unknown>;
   createdAt:  string;
@@ -59,6 +60,7 @@ export async function publish(db: Db, event: AppEvent): Promise<void> {
       kind:       event.kind,
       targetType: event.targetType,
       targetId:   event.targetId,
+      actorId:    event.actorId ?? null,
       alsoNotify: event.alsoNotify ?? [],
       payload:    event.payload,
       createdAt:  new Date(event.createdAt),

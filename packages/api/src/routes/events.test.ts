@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { bus, resolveSubscribers, deliverableTo, type AppEvent } from "../lib/events.js";
-import { createDb, subscriptions } from "@getrelai/db";
+import { bus, publish, resolveSubscribers, deliverableTo, type AppEvent } from "../lib/events.js";
+import { createDb, subscriptions, events as eventsTable } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
@@ -46,6 +46,37 @@ afterAll(async () => {
     await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   }
   await app?.close();
+});
+
+describe("events record who caused them", () => {
+  it("persists actorId so the row answers who did this", async () => {
+    const db = createDb(DB_URL);
+
+    const repo = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN, body: JSON.stringify({ name: "__test__ actor" }),
+    });
+    const actorRepoId = repo.json().data.id;
+    const id = `evt_actor_${Date.now()}`;
+
+    await publish(db, {
+      id, kind: "task.updated", repoId: actorRepoId, targetType: "task", targetId: "task_z",
+      actorId: "agent_the_actor", payload: {}, createdAt: new Date().toISOString(),
+    });
+
+    const [row] = await db.select().from(eventsTable).where(eq(eventsTable.id, id));
+    expect(row.actorId).toBe("agent_the_actor");
+
+    // System-originated events (schedulers) legitimately have no actor.
+    const sysId = `evt_sys_${Date.now()}`;
+    await publish(db, {
+      id: sysId, kind: "task.verified", repoId: actorRepoId, targetType: "task", targetId: "task_z",
+      payload: {}, createdAt: new Date().toISOString(),
+    });
+    const [sysRow] = await db.select().from(eventsTable).where(eq(eventsTable.id, sysId));
+    expect(sysRow.actorId).toBeNull();
+
+    await app.inject({ method: "DELETE", url: `/repos/${actorRepoId}`, headers: ADMIN });
+  });
 });
 
 describe("subscriptions CRUD", () => {

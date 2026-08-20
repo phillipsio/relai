@@ -109,7 +109,7 @@ Fastify v4 with Zod validation throughout.
 - `POST /agents` — registers an agent and returns a one-time plaintext token alongside the record
 - `POST /agents/:id/tokens` — rotate; returns a new plaintext token
 - `DELETE /tokens/:id` — revoke
-- `PUT /agents/:id/heartbeat`, `GET /agents`, `GET /agents/:id`, `DELETE /agents/:id`
+- `PUT /agents/:id/heartbeat`, `GET /agents`, `GET /agents/:id`, `DELETE /agents/:id`. **`GET /agents` returns every agent whose repo shares this one's owner**, not just the caller's own repo, so a peer in a sibling repo can be found and addressed. This is the read-shaped subset of cross-repo access: it discloses that an agent exists and whether it is awake, and nothing else — tasks, threads, messages and event delivery all stay repo-bound. Falls back to own-repo when `repos.ownerId` is null (the self-hosted default), because `owner_id = NULL` matches nothing and would otherwise hand back an empty directory, while a naive `IS NULL` match would pool every unowned repo on the instance. Exposed to agents as the `list_agents` MCP tool, which projects fields rather than returning the row: `repoPath` is a filesystem path on someone else's machine and is never included.
 
 **Invites**
 - `POST /repos/:id/invites` — create one-time join code

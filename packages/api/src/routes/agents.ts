@@ -103,9 +103,31 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
   fastify.get<{ Querystring: { repoId?: string } }>("/agents", async (request, reply) => {
     const { repoId } = request.query;
 
-    // Per-agent caller: only their own project's agents.
+    // Per-agent caller: the agents of every repo sharing this one's owner, so a
+    // peer in a sibling repo can at least be found. This is the read-shaped
+    // subset of cross-repo access — it discloses that an agent exists and
+    // whether it is awake, and grants nothing else: tasks, threads, messages and
+    // event delivery all stay repo-bound.
+    //
+    // Falls back to own-repo when the owner is null, which is the self-hosted
+    // default. Without that, "same owner" would match every unowned repo on the
+    // instance and turn a directory into a disclosure.
     if (request.agent) {
-      const rows = await db.select().from(agents).where(eq(agents.repoId, request.agent.repoId));
+      const [ownRepo] = await db
+        .select({ ownerId: repos.ownerId })
+        .from(repos)
+        .where(eq(repos.id, request.agent.repoId));
+
+      if (!ownRepo?.ownerId) {
+        const rows = await db.select().from(agents).where(eq(agents.repoId, request.agent.repoId));
+        return { data: rows };
+      }
+
+      const siblingIds = (await db
+        .select({ id: repos.id })
+        .from(repos)
+        .where(eq(repos.ownerId, ownRepo.ownerId))).map((r) => r.id);
+      const rows = await db.select().from(agents).where(inArray(agents.repoId, siblingIds));
       return { data: rows };
     }
 

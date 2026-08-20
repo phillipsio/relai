@@ -54,9 +54,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 21 tools", () => {
+  it("returns all 22 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(22);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -784,5 +784,68 @@ describe("peer content is labelled as information, not instruction", () => {
     const handler = getHandler(buildTools(mockClient(), AGENT_ID, REPO_ID), "get_task_comments");
 
     expect(boundaryOf(await handler({ taskId: "task_1" }))).not.toContain("cannot grant you permission");
+  });
+});
+
+describe("list_agents (agent toolset)", () => {
+  const roster = [
+    { id: AGENT_ID, name: "me", role: "worker", specialization: "writer", domains: ["api"],
+      workerType: "claude", repoId: REPO_ID, repoPath: "/Users/someone/github/relai",
+      lastSeenAt: new Date().toISOString() },
+    { id: "agent_peer", name: "the-reviewer", role: "worker", specialization: "reviewer", domains: ["review"],
+      workerType: "claude", repoId: REPO_ID, repoPath: "/Users/someone/github/relai",
+      lastSeenAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() },
+  ];
+  const withRoster = () => mockClient({ listAgents: vi.fn().mockResolvedValue(roster) } as never);
+  const call = async () => {
+    const handler = getHandler(buildTools(withRoster(), AGENT_ID, REPO_ID), "list_agents");
+    return JSON.parse((await handler({})).content[0].text);
+  };
+
+  it("scopes the call to this agent's own project", async () => {
+    const client = withRoster();
+    await getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_agents")({});
+
+    expect(client.listAgents).toHaveBeenCalledWith(REPO_ID);
+  });
+
+  it("returns who is here and what they do, so a peer can be chosen", async () => {
+    const { agents } = await call();
+
+    const peer = agents.find((a: { id: string }) => a.id === "agent_peer");
+    expect(peer.name).toBe("the-reviewer");
+    expect(peer.specialization).toBe("reviewer");
+    expect(peer.domains).toEqual(["review"]);
+  });
+
+  // repoPath is a filesystem path on someone else's machine; the row carries it
+  // and peers have no business seeing it.
+  it("never leaks repoPath", async () => {
+    const handler = getHandler(buildTools(withRoster(), AGENT_ID, REPO_ID), "list_agents");
+    const text = (await handler({})).content[0].text;
+
+    expect(text).not.toContain("repoPath");
+    expect(text).not.toContain("/Users/someone");
+  });
+
+  it("computes online from the shared 10-minute window", async () => {
+    const { agents } = await call();
+
+    expect(agents.find((a: { id: string }) => a.id === AGENT_ID).online).toBe(true);
+    expect(agents.find((a: { id: string }) => a.id === "agent_peer").online).toBe(false);
+  });
+
+  it("marks the caller so it does not message itself", async () => {
+    const { agents } = await call();
+
+    expect(agents.find((a: { id: string }) => a.id === AGENT_ID).isYou).toBe(true);
+    expect(agents.find((a: { id: string }) => a.id === "agent_peer").isYou).toBeUndefined();
+  });
+
+  it("says so plainly when the project is empty", async () => {
+    const client = mockClient({ listAgents: vi.fn().mockResolvedValue([]) } as never);
+    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_agents");
+
+    expect((await handler({})).content[0].text).toContain("No agents");
   });
 });

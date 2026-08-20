@@ -228,6 +228,8 @@ Both entrypoints classify: `claude-worker`'s poll loop (which falls back to back
 
 ## Testing
 
+CI (`.github/workflows/ci.yml`) runs `pnpm typecheck` and `pnpm test` on every push to `main` and on every pull request, against a `postgres:16` service. It creates `relai_test` and applies migrations before the suite, and sets `TEST_DATABASE_URL` (port 5432 in CI, where nothing else competes for it, rather than the 5433 used locally). Before CI existed the only gate was a machine-local pre-push hook that any `SKIP_PR_REVIEW=1` bypassed.
+
 Tests use vitest. Test files live alongside source as `*.test.ts`.
 
 **The `packages/api` suite runs against a dedicated `relai_test` database** (same Postgres container/port 5433, same `relai`/`relai` role — no new user needed), never the dev DB. `packages/api/vitest.config.ts` sets `test.env.DATABASE_URL` to `relai_test`, which overrides every test file's own `DATABASE_URL ?? "...relai"` fallback, and a `globalSetup` (`packages/api/src/test/global-setup.ts`) truncates every table before each run. This makes DB hygiene structural rather than per-test discipline: a test that forgets cleanup can only pollute state within its own run, and it can never touch what the local dashboard shows. (This repo hit the discipline-based failure mode twice — 2026-05-06 and 2026-06-26 — before this fix landed.) One-time setup, and again after any schema change: see "Dev setup" below. Schema changes must be applied to **both** `relai` and `relai_test` via `db:migrate`.

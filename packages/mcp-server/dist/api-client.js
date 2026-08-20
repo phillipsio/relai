@@ -33,6 +33,17 @@ class ApiClient {
     listRepos() {
         return this.request("GET", "/repos");
     }
+    // Artifacts
+    publishArtifact(body) {
+        return this.request("POST", "/artifacts", body);
+    }
+    getArtifact(repoId, name, version) {
+        const qs = new URLSearchParams({ repoId, ...(version ? { version: String(version) } : {}) });
+        return this.request("GET", `/artifacts/${encodeURIComponent(name)}?${qs}`);
+    }
+    listArtifacts(repoId) {
+        return this.request("GET", `/artifacts?repoId=${encodeURIComponent(repoId)}`);
+    }
     // Tasks
     getTasks(params) {
         const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null));

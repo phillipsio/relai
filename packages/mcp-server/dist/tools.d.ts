@@ -4,6 +4,80 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
+        name: z.ZodString;
+        body: z.ZodString;
+        description: z.ZodOptional<z.ZodString>;
+        contentType: z.ZodOptional<z.ZodString>;
+        visibility: z.ZodOptional<z.ZodEnum<["repo", "private"]>>;
+        taskId: z.ZodOptional<z.ZodString>;
+        metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        body: string;
+        description?: string | undefined;
+        contentType?: string | undefined;
+        visibility?: "repo" | "private" | undefined;
+        taskId?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
+    }, {
+        name: string;
+        body: string;
+        description?: string | undefined;
+        contentType?: string | undefined;
+        visibility?: "repo" | "private" | undefined;
+        taskId?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
+    }>;
+    handler: (input: {
+        name: string;
+        body: string;
+        description?: string;
+        contentType?: string;
+        visibility?: "repo" | "private";
+        taskId?: string;
+        metadata?: Record<string, unknown>;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        name: z.ZodString;
+        version: z.ZodOptional<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        version?: number | undefined;
+    }, {
+        name: string;
+        version?: number | undefined;
+    }>;
+    handler: (input: {
+        name: string;
+        version?: number;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
+    handler: () => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
         title: z.ZodString;
         description: z.ZodString;
         priority: z.ZodOptional<z.ZodEnum<["low", "normal", "high", "urgent"]>>;
@@ -19,9 +93,10 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyTimeoutMs: z.ZodOptional<z.ZodNumber>;
         metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     }, "strip", z.ZodTypeAny, {
-        title: string;
         description: string;
+        title: string;
         assignedTo?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
         priority?: "low" | "normal" | "high" | "urgent" | undefined;
         domains?: string[] | undefined;
         specialization?: string | undefined;
@@ -32,11 +107,11 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyCommand?: string | undefined;
         verifyCwd?: string | undefined;
         verifyTimeoutMs?: number | undefined;
-        metadata?: Record<string, unknown> | undefined;
     }, {
-        title: string;
         description: string;
+        title: string;
         assignedTo?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
         priority?: "low" | "normal" | "high" | "urgent" | undefined;
         domains?: string[] | undefined;
         specialization?: string | undefined;
@@ -47,7 +122,6 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         verifyCommand?: string | undefined;
         verifyCwd?: string | undefined;
         verifyTimeoutMs?: number | undefined;
-        metadata?: Record<string, unknown> | undefined;
     }>;
     handler: (input: {
         title: string;
@@ -125,14 +199,14 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     }, "strip", z.ZodTypeAny, {
         type: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply";
-        threadId: string;
         body: string;
+        threadId: string;
         metadata?: Record<string, unknown> | undefined;
         toAgent?: string | undefined;
     }, {
         type: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply";
-        threadId: string;
         body: string;
+        threadId: string;
         metadata?: Record<string, unknown> | undefined;
         toAgent?: string | undefined;
     }>;
@@ -143,16 +217,6 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         toAgent?: string;
         metadata?: Record<string, unknown>;
     }) => Promise<{
-        content: {
-            type: "text";
-            text: string;
-        }[];
-    }>;
-} | {
-    name: string;
-    description: string;
-    inputSchema: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
-    handler: () => Promise<{
         content: {
             type: "text";
             text: string;
@@ -282,12 +346,12 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         body: z.ZodString;
         type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;
     }, "strip", z.ZodTypeAny, {
-        taskId: string;
         body: string;
+        taskId: string;
         type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
     }, {
-        taskId: string;
         body: string;
+        taskId: string;
         type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
     }>;
     handler: (input: {
@@ -375,8 +439,8 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     }, "strip", z.ZodTypeAny, {
         taskId: string;
         assignedTo?: string | undefined;
-        title?: string | undefined;
         description?: string | undefined;
+        title?: string | undefined;
         priority?: "low" | "normal" | "high" | "urgent" | undefined;
         domains?: string[] | undefined;
         specialization?: string | undefined;
@@ -392,8 +456,8 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     }, {
         taskId: string;
         assignedTo?: string | undefined;
-        title?: string | undefined;
         description?: string | undefined;
+        title?: string | undefined;
         priority?: "low" | "normal" | "high" | "urgent" | undefined;
         domains?: string[] | undefined;
         specialization?: string | undefined;
@@ -473,22 +537,22 @@ export declare function buildOperatorTools(client: ApiClient, ownerId?: string):
         metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     }, "strip", z.ZodTypeAny, {
         repoId: string;
-        title: string;
         description: string;
+        title: string;
         assignedTo?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
         priority?: "low" | "normal" | "high" | "urgent" | undefined;
         domains?: string[] | undefined;
         specialization?: string | undefined;
-        metadata?: Record<string, unknown> | undefined;
     }, {
         repoId: string;
-        title: string;
         description: string;
+        title: string;
         assignedTo?: string | undefined;
+        metadata?: Record<string, unknown> | undefined;
         priority?: "low" | "normal" | "high" | "urgent" | undefined;
         domains?: string[] | undefined;
         specialization?: string | undefined;
-        metadata?: Record<string, unknown> | undefined;
     }>;
     handler: (input: {
         repoId: string;
@@ -513,12 +577,12 @@ export declare function buildOperatorTools(client: ApiClient, ownerId?: string):
         body: z.ZodString;
         type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;
     }, "strip", z.ZodTypeAny, {
-        taskId: string;
         body: string;
+        taskId: string;
         type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
     }, {
-        taskId: string;
         body: string;
+        taskId: string;
         type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
     }>;
     handler: (input: {
@@ -583,12 +647,12 @@ export declare function buildOperatorTools(client: ApiClient, ownerId?: string):
         body: z.ZodString;
         type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;
     }, "strip", z.ZodTypeAny, {
-        threadId: string;
         body: string;
+        threadId: string;
         type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
     }, {
-        threadId: string;
         body: string;
+        threadId: string;
         type?: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply" | undefined;
     }>;
     handler: (input: {

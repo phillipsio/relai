@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq, and, sql, inArray, desc, isNull } from "drizzle-orm";
+import { eq, and, sql, inArray, desc, isNull, max } from "drizzle-orm";
 import {
   repos, tasks, threads, messages, subscriptions, events,
+  artifacts, artifactVersions, artifactReads,
   type Db,
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
@@ -134,6 +135,31 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       summary: summarizeEvent(e.kind, (payload ?? {}) as Record<string, unknown>),
     }));
 
+    // Artifacts this agent has pulled that have moved on since. Derived from the
+    // recorded read rather than from events, so a publisher shipping five
+    // versions leaves one item here instead of five notifications to coalesce.
+    const readRows = await db
+      .select({
+        artifactId: artifactReads.artifactId,
+        readVersion: artifactReads.version,
+        name: artifacts.name,
+        repoId: artifacts.repoId,
+      })
+      .from(artifactReads)
+      .innerJoin(artifacts, eq(artifacts.id, artifactReads.artifactId))
+      .where(and(eq(artifactReads.agentId, agent.id), eq(artifacts.repoId, project.id)));
+
+    const staleArtifacts = (await Promise.all(readRows.map(async (r) => {
+      const [{ value }] = await db
+        .select({ value: max(artifactVersions.version) })
+        .from(artifactVersions)
+        .where(eq(artifactVersions.artifactId, r.artifactId));
+      const current = value ?? 0;
+      return current > r.readVersion
+        ? { name: r.name, readVersion: r.readVersion, currentVersion: current }
+        : null;
+    }))).filter((x): x is NonNullable<typeof x> => x !== null);
+
     return {
       data: {
         agent: {
@@ -153,6 +179,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         unreadMessages,
         openThreads,
         recentEvents,
+        staleArtifacts,
       },
     };
   });

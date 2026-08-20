@@ -13,6 +13,42 @@ export declare class ApiClient {
         repoUrl?: string | null;
     }>;
     listRepos(): Promise<unknown[]>;
+    publishArtifact(body: {
+        repoId: string;
+        name: string;
+        body: string;
+        description?: string;
+        contentType?: string;
+        visibility?: string;
+        taskId?: string;
+        metadata?: Record<string, unknown>;
+    }): Promise<{
+        artifact: {
+            id: string;
+            name: string;
+        };
+        version: {
+            version: number;
+        };
+    }>;
+    getArtifact(repoId: string, name: string, version?: number): Promise<{
+        artifact: {
+            name: string;
+            description: string | null;
+            ownerAgentId: string | null;
+        };
+        version: {
+            version: number;
+            body: string;
+            contentType: string;
+            createdAt: string;
+        };
+    }>;
+    listArtifacts(repoId: string): Promise<{
+        name: string;
+        description: string | null;
+        currentVersion: number;
+    }[]>;
     getTasks(params: {
         repoId?: string;
         status?: string;

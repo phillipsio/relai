@@ -45,6 +45,30 @@ export class ApiClient {
     return this.request<unknown[]>("GET", "/repos");
   }
 
+  // Artifacts
+  publishArtifact(body: {
+    repoId: string; name: string; body: string; description?: string;
+    contentType?: string; visibility?: string; taskId?: string; metadata?: Record<string, unknown>;
+  }) {
+    return this.request<{ artifact: { id: string; name: string }; version: { version: number } }>(
+      "POST", "/artifacts", body,
+    );
+  }
+
+  getArtifact(repoId: string, name: string, version?: number) {
+    const qs = new URLSearchParams({ repoId, ...(version ? { version: String(version) } : {}) });
+    return this.request<{
+      artifact: { name: string; description: string | null; ownerAgentId: string | null };
+      version: { version: number; body: string; contentType: string; createdAt: string };
+    }>("GET", `/artifacts/${encodeURIComponent(name)}?${qs}`);
+  }
+
+  listArtifacts(repoId: string) {
+    return this.request<Array<{ name: string; description: string | null; currentVersion: number }>>(
+      "GET", `/artifacts?repoId=${encodeURIComponent(repoId)}`,
+    );
+  }
+
   // Tasks
   getTasks(params: { repoId?: string; status?: string; assignedTo?: string }) {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]);

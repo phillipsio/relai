@@ -62,6 +62,7 @@ const EVENT_KINDS = [
   "task.review_overdue",
   "thread.created",
   "thread.concluded",
+  "artifact.published",
 ] as const;
 
 // SSE-driven run loop, factored out so other packages (e.g. @getrelai/agent's

@@ -8,6 +8,7 @@ import { repoRoutes } from "./routes/repos.js";
 import { agentRoutes } from "./routes/agents.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { inviteRoutes } from "./routes/invites.js";
+import { artifactRoutes } from "./routes/artifacts.js";
 import { subscriptionRoutes } from "./routes/subscriptions.js";
 import { eventRoutes } from "./routes/events.js";
 import { taskRoutes } from "./routes/tasks.js";
@@ -41,6 +42,7 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(agentRoutes, { db });
   fastify.register(tokenRoutes, { db });
   fastify.register(inviteRoutes, { db });
+  fastify.register(artifactRoutes, { db });
   fastify.register(subscriptionRoutes, { db });
   fastify.register(eventRoutes, { db });
   fastify.register(taskRoutes, { db });

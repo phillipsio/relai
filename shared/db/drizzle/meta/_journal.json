@@ -29,6 +29,13 @@
       "when": 1787251154123,
       "tag": "0003_add_hot_path_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787252944435,
+      "tag": "0004_add_artifacts",
+      "breakpoints": true
     }
   ]
 }

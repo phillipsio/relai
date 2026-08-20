@@ -158,6 +158,57 @@ export const messages = pgTable("messages", {
   thread: index("messages_thread_idx").on(t.threadId, t.createdAt),
 }));
 
+// ── Artifacts ─────────────────────────────────────────────────────────────────
+
+// Defaults to `repo`: every other entity in a repo is already readable by every
+// agent in it, and an artifact whose point is to be pulled by a colleague is
+// useless hidden. `private` exists for drafts.
+export const artifactVisibilityEnum = pgEnum("artifact_visibility", ["repo", "private"]);
+
+export const artifacts = pgTable("artifacts", {
+  id:           text("id").primaryKey(),
+  repoId:       text("repo_id").references(() => repos.id, { onDelete: "cascade" }).notNull(),
+  // Nullable so the deprecated admin/owner path can publish without an agent
+  // identity. Only the owner (or that path) may publish a new version.
+  ownerAgentId: text("owner_agent_id").references(() => agents.id),
+  name:         text("name").notNull(),
+  description:  text("description"),
+  visibility:   artifactVisibilityEnum("visibility").notNull().default("repo"),
+  createdAt:    timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  repoName: uniqueIndex("artifacts_repo_name_unique").on(t.repoId, t.name),
+}));
+
+export const artifactVersions = pgTable("artifact_versions", {
+  id:                 text("id").primaryKey(),
+  artifactId:         text("artifact_id").references(() => artifacts.id, { onDelete: "cascade" }).notNull(),
+  version:            integer("version").notNull(),
+  body:               text("body").notNull(),
+  contentType:        text("content_type").notNull().default("text/markdown"),
+  publishedByAgentId: text("published_by_agent_id").references(() => agents.id),
+  // Provenance back to the work that produced this. No FK, same reasoning as
+  // tasks.threadId: it would be circular and is not always a task.
+  taskId:             text("task_id"),
+  metadata:           jsonb("metadata").default({}).notNull(),
+  createdAt:          timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  // Two concurrent publishes both compute max+1, so this is what makes the
+  // version sequence actually a sequence.
+  artifactVersion: uniqueIndex("artifact_versions_artifact_version_unique").on(t.artifactId, t.version),
+}));
+
+// What each agent last pulled. Staleness is state, not a stream: five publishes
+// in an hour leave one stale flag rather than five notifications to coalesce.
+export const artifactReads = pgTable("artifact_reads", {
+  id:         text("id").primaryKey(),
+  artifactId: text("artifact_id").references(() => artifacts.id, { onDelete: "cascade" }).notNull(),
+  agentId:    text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  version:    integer("version").notNull(),
+  readAt:     timestamp("read_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  agentArtifact: uniqueIndex("artifact_reads_agent_artifact_unique").on(t.artifactId, t.agentId),
+}));
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 export const tasks = pgTable("tasks", {

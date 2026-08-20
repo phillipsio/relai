@@ -20,7 +20,8 @@ export type EventKind =
   | "task.review_submitted"
   | "task.review_overdue"
   | "thread.created"
-  | "thread.concluded";
+  | "thread.concluded"
+  | "artifact.published";
 
 export interface AppEvent {
   id:         string;

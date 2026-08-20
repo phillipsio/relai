@@ -563,6 +563,25 @@ describe("owner-scoped notification channels", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://owner.test/hook");
   });
 
+  // Asserting the set itself, not three examples: the bug this fixes was
+  // task.proposed_overdue never being added, which per-kind tests cannot catch.
+  it("pins exactly which kinds count as needing a human", async () => {
+    const { OWNER_ATTENTION_KINDS } = await import("../lib/notifications.js");
+    expect([...OWNER_ATTENTION_KINDS].sort()).toEqual([
+      "task.blocked",
+      "task.pending_verification",
+      "task.proposed",
+      "task.proposed_overdue",
+      "task.review_overdue",
+    ]);
+  });
+
+  it("fires on the overdue nudges, which is what a stalled proposal produces", async () => {
+    await deliver(db, attentionEvent(ownedRepoId, "task.proposed_overdue"), { retries: 0 });
+    await deliver(db, attentionEvent(ownedRepoId, "task.review_overdue"), { retries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("fires on task.pending_verification and task.proposed too", async () => {
     await deliver(db, attentionEvent(ownedRepoId, "task.pending_verification"), { retries: 0 });
     await deliver(db, attentionEvent(ownedRepoId, "task.proposed"), { retries: 0 });

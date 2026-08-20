@@ -10,10 +10,18 @@ const FAILURE_THRESHOLD = 5;
 // Owner-scoped channels fire only on attention-transition events — the "this
 // needs a human" moments — across all of that owner's repos, rather than on
 // every event the way agent/subscription channels do.
-const OWNER_ATTENTION_KINDS = new Set<EventKind>([
+//
+// Criterion for adding a kind: work has stopped and will not move again without
+// a person. The two `*_overdue` kinds qualify by construction — they exist only
+// because a nudge went unanswered, and each is emitted once, so they cannot spam.
+// `task.stalled` is deliberately absent: a slow worker is the orchestrator's
+// problem, and it is the noisiest signal of the set.
+export const OWNER_ATTENTION_KINDS = new Set<EventKind>([
   "task.proposed",
   "task.blocked",
   "task.pending_verification",
+  "task.proposed_overdue",
+  "task.review_overdue",
 ]);
 
 // Default delivery options. `retries: 2` = up to 3 attempts total.

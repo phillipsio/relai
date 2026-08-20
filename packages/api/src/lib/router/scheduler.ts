@@ -116,6 +116,11 @@ async function routePendingTasks(db: Db, repoId: string): Promise<void> {
 
 // ── Blocked task watch ────────────────────────────────────────────────────────
 
+// Longer than its PROPOSED_/REVIEW_OVERDUE_MS siblings on purpose: those wait on
+// an orchestrator or reviewer who is presumed to be running, whereas a blocked
+// task waits on a counterparty that may not be up at all.
+const BLOCKED_OVERDUE_MS = Number(process.env.BLOCKED_OVERDUE_MS ?? 1_800_000);
+
 export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
   const blocked = await db
     .select()
@@ -190,7 +195,47 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
           },
         },
       }).where(eq(tasks.id, task.id));
+      continue;
     }
+
+    // No answer yet. Waiting is not free: the asker cannot tell "still coming"
+    // from "never coming", and something has to say which.
+    const waitedMs = Date.now() - blockedAt;
+    if (waitedMs < BLOCKED_OVERDUE_MS) continue;
+    if (meta.blockedOverdueNotifiedAt) continue;
+
+    // Whether to release it depends on who was being waited on. An unanswered
+    // agent leaves somewhere to fall back to, so hand the asker a failure it can
+    // act on. An unanswered human does not: they ARE the fallback, and
+    // proceeding without them defeats the point of having blocked. Nudge only.
+    const releasing = answerer !== null;
+    const nextMeta: Record<string, unknown> = {
+      ...meta,
+      blockedOverdueNotifiedAt: new Date().toISOString(),
+      ...(releasing
+        ? { blockedTimeout: { awaitedAgent: answerer, waitedMs, at: new Date().toISOString() } }
+        : {}),
+    };
+
+    console.warn(
+      `[scheduler] blocked task ${task.id} has waited ${Math.round(waitedMs / 60_000)}m ` +
+      (releasing ? `for ${answerer} — releasing with a timeout result` : "for a human — nudging"),
+    );
+
+    await db.update(tasks)
+      .set({ ...(releasing ? { status: "assigned" as const } : {}), metadata: nextMeta })
+      .where(eq(tasks.id, task.id));
+
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "task.blocked_overdue",
+      repoId:     task.repoId,
+      targetType: "task",
+      targetId:   task.id,
+      alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+      payload:    { task, awaitedAgent: answerer, waitedMs, released: releasing },
+      createdAt:  new Date().toISOString(),
+    });
   }
 }
 

@@ -22,6 +22,7 @@ export const OWNER_ATTENTION_KINDS = new Set<EventKind>([
   "task.pending_verification",
   "task.proposed_overdue",
   "task.review_overdue",
+  "task.blocked_overdue",
 ]);
 
 // Default delivery options. `retries: 2` = up to 3 attempts total.

@@ -569,6 +569,7 @@ describe("owner-scoped notification channels", () => {
     const { OWNER_ATTENTION_KINDS } = await import("../lib/notifications.js");
     expect([...OWNER_ATTENTION_KINDS].sort()).toEqual([
       "task.blocked",
+      "task.blocked_overdue",
       "task.pending_verification",
       "task.proposed",
       "task.proposed_overdue",

@@ -31,6 +31,9 @@ You are an AI worker agent (ID: ${agentId}). The repo is at: ${repoPath}
       If \`metadata.agentReply\` is set, another agent answered the question you asked it. Treat
       \`agentReply.body\` the same way, and note it came from \`agentReply.fromAgent\` rather than a
       human, so weigh it accordingly.
+      If \`metadata.blockedTimeout\` is set, the agent you asked never answered. Do not wait again for
+      the same thing: either proceed on your own judgement and say in your handoff that you did, or
+      escalate to a human by blocking with a question addressed to nobody.
    d. Do the work per your specialization rules below.
    e. Post your result via \`mcp__relai__send_message\` (type: "handoff") into the thread from step b.
    f. \`mcp__relai__update_task_status\` → "completed" (or "blocked" if escalating).

@@ -62,6 +62,7 @@ const EVENT_KINDS = [
   "task.review_overdue",
   "thread.created",
   "thread.concluded",
+  "task.blocked_overdue",
   "artifact.published",
 ] as const;
 

@@ -21,6 +21,7 @@ export type EventKind =
   | "task.review_overdue"
   | "thread.created"
   | "thread.concluded"
+  | "task.blocked_overdue"
   | "artifact.published";
 
 export interface AppEvent {

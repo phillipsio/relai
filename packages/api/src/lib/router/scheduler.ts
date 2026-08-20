@@ -297,8 +297,8 @@ const VERIFIERS: Record<VerifyKind, VerifierEntry> = {
     logLabel: (t) => `reviewer_agent:${t.verifyReviewerId}`,
     needsAsyncDecision: true,
     run: async ({ task }) => {
-      const review = (task.metadata as Record<string, unknown>).review as ReviewDecision;
-      return runReviewerAgentVerification(review);
+      const review = (task.metadata as Record<string, unknown>).review as ReviewDecision | undefined;
+      return runReviewerAgentVerification(review, task.verifyReviewerId);
     },
   },
 };

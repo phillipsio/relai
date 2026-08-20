@@ -148,18 +148,49 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
     // it alone rather than resuming off whatever is already on the thread.
     if (!task.blockedAt) continue;
     const blockedAt = new Date(task.blockedAt).getTime();
-    const humanReply = msgs.find(
-      (m) => m.authorKind === "human" && new Date(m.createdAt).getTime() > blockedAt
-    );
+    const after = (m: { createdAt: Date }) => new Date(m.createdAt).getTime() > blockedAt;
 
-    if (!humanReply) continue;
+    const humanReply = msgs.find((m) => m.authorKind === "human" && after(m));
 
-    console.log(`[scheduler] Human replied to blocked task ${task.id} — resuming`);
+    // An agent's answer also releases the task, but only the agent that was
+    // actually asked. The question is the asker's own message on this thread
+    // naming a recipient; anything looser would let any agent in the repo
+    // resume anyone's work, and a self-addressed question would let the asker
+    // unblock itself. authorKind and fromAgent are both route-derived, so
+    // neither can be spoofed to satisfy this.
+    const asker = task.assignedTo;
+    const ask = asker
+      ? [...msgs].reverse().find((m) => m.fromAgent === asker && typeof m.toAgent === "string" && m.toAgent !== "")
+      : undefined;
+    const answerer = ask?.toAgent && ask.toAgent !== asker ? ask.toAgent : null;
+    const agentReply = answerer
+      ? msgs.find((m) => m.authorKind === "agent" && m.fromAgent === answerer && after(m))
+      : undefined;
 
-    await db.update(tasks).set({
-      status: "assigned",
-      metadata: { ...meta, humanReply: humanReply.body, humanRepliedAt: humanReply.createdAt },
-    }).where(eq(tasks.id, task.id));
+    // A human answer outranks an agent's when both landed.
+    if (humanReply) {
+      console.log(`[scheduler] Human replied to blocked task ${task.id} — resuming`);
+      await db.update(tasks).set({
+        status: "assigned",
+        metadata: { ...meta, humanReply: humanReply.body, humanRepliedAt: humanReply.createdAt },
+      }).where(eq(tasks.id, task.id));
+      continue;
+    }
+
+    if (agentReply) {
+      console.log(`[scheduler] ${agentReply.fromAgent} answered blocked task ${task.id} — resuming`);
+      await db.update(tasks).set({
+        status: "assigned",
+        metadata: {
+          ...meta,
+          agentReply: {
+            body:      agentReply.body,
+            fromAgent: agentReply.fromAgent,
+            at:        agentReply.createdAt,
+          },
+        },
+      }).where(eq(tasks.id, task.id));
+    }
   }
 }
 

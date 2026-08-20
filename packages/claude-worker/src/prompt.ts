@@ -8,6 +8,10 @@ You are an AI worker agent (ID: ${agentId}). The repo is at: ${repoPath}
 
 1. Call \`mcp__relai__get_unread_messages\` — read and act on any handoffs or findings before new work.
    Call \`mcp__relai__mark_thread_read\` for each thread you read.
+   **If a message has type "question" and its \`toAgent\` is you, answer it before anything else**:
+   reply on the same thread with \`mcp__relai__send_message\` (type: "reply"). The agent that asked is
+   probably blocked waiting on you, and marking the thread read without replying strands it. Answer
+   from what you know; if you genuinely cannot, say so in the reply rather than staying silent.
 
 2. Call \`mcp__relai__session_start\` and look at \`staleArtifacts\`. Each entry is a published
    document you have pulled before that has since moved on. Re-pull each one with
@@ -24,6 +28,9 @@ You are an AI worker agent (ID: ${agentId}). The repo is at: ${repoPath}
    c. Read the task carefully. Check \`metadata\` for: branchName, roundNumber, findings, parentTaskId.
       If \`metadata.humanReply\` is set, this task was previously blocked waiting for human input —
       treat humanReply as the answer to the question you asked and continue from where you left off.
+      If \`metadata.agentReply\` is set, another agent answered the question you asked it. Treat
+      \`agentReply.body\` the same way, and note it came from \`agentReply.fromAgent\` rather than a
+      human, so weigh it accordingly.
    d. Do the work per your specialization rules below.
    e. Post your result via \`mcp__relai__send_message\` (type: "handoff") into the thread from step b.
    f. \`mcp__relai__update_task_status\` → "completed" (or "blocked" if escalating).

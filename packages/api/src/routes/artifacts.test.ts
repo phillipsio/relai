@@ -157,6 +157,21 @@ describe("the consumer learns a pull went stale without being told", () => {
     expect(stale.map((s) => s.name)).not.toContain("surface");
   });
 
+  // Found by dogfooding through the MCP tools: an explicit older-version pull
+  // moved the read pointer backwards and reported the agent stale on something
+  // it had already read.
+  it("does not go stale after deliberately reading an older version", async () => {
+    await publish(publisherToken, { name: "backref", body: "v1" });
+    await publish(publisherToken, { name: "backref", body: "v2" });
+
+    await pull(consumerToken, "backref");             // current: v2
+    await pull(consumerToken, "backref", "&version=1");  // historical lookup
+
+    const res = await sessionStart(consumerToken);
+    const stale = res.json().data.staleArtifacts as Array<{ name: string }>;
+    expect(stale.map((s) => s.name)).not.toContain("backref");
+  });
+
   it("does not report staleness to an agent that never pulled it", async () => {
     await publish(publisherToken, { name: "unread-by-consumer", body: "v1" });
     await publish(publisherToken, { name: "unread-by-consumer", body: "v2" });

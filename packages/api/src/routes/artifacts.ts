@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { and, desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, max, sql } from "drizzle-orm";
 import { artifacts, artifactVersions, artifactReads } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
@@ -159,7 +159,10 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
           readAt:     new Date(),
         }).onConflictDoUpdate({
           target: [artifactReads.artifactId, artifactReads.agentId],
-          set:    { version: version.version, readAt: new Date() },
+          // Only ever advances. Pulling an older version deliberately (to diff
+          // against, say) must not move the pointer backwards and report the
+          // agent stale on a version it had already seen.
+          set: { version: sql`GREATEST(artifact_reads.version, excluded.version)`, readAt: new Date() },
         });
         await ensureSubscription(db, request.agent.id, "task", artifact.id);
       }

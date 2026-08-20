@@ -35,7 +35,7 @@ pnpm test                             # all packages
 pnpm --filter @getrelai/api test
 pnpm --filter @getrelai/mcp-server test
 
-# Typecheck all packages
+# Typecheck all packages (11 projects — every workspace package has a typecheck script)
 pnpm typecheck
 
 # Build all packages

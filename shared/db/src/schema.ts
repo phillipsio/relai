@@ -17,6 +17,10 @@ export const messageTypeEnum = pgEnum("message_type", [
   "status", "handoff", "finding", "decision", "question", "escalation", "reply",
 ]);
 
+// Route-derived from the authenticated caller, never from the request body.
+// The blocked-task watcher keys on this, not on free-text `fromAgent`.
+export const messageAuthorKindEnum = pgEnum("message_author_kind", ["agent", "human"]);
+
 export const routingMethodEnum = pgEnum("routing_method", ["rules", "claude"]);
 
 export const verifyKindEnum = pgEnum("verify_kind", ["shell", "file_exists", "thread_concluded", "reviewer_agent", "git_pushed"]);
@@ -139,6 +143,8 @@ export const messages = pgTable("messages", {
   id:        text("id").primaryKey(),
   threadId:  text("thread_id").references(() => threads.id).notNull(),
   fromAgent: text("from_agent").notNull(),
+  // Defaults to "agent" so backfilling old rows is one UPDATE for the human ones.
+  authorKind: messageAuthorKindEnum("author_kind").notNull().default("agent"),
   toAgent:   text("to_agent"),
   type:      messageTypeEnum("type").notNull(),
   body:      text("body").notNull(),

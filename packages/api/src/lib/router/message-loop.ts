@@ -96,6 +96,7 @@ async function sendMessage(db: Db, args: SendArgs): Promise<Message> {
     id:        newId("msg"),
     threadId:  args.threadId,
     fromAgent: args.fromAgent,
+    authorKind: "agent",
     toAgent:   args.toAgent,
     type:      args.type,
     body:      args.body,

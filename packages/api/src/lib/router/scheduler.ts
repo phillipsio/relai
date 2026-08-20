@@ -138,7 +138,7 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
 
     const taskCreatedAt = new Date(task.createdAt).getTime();
     const humanReply = msgs.find(
-      (m) => m.fromAgent === "human" && new Date(m.createdAt).getTime() > taskCreatedAt
+      (m) => m.authorKind === "human" && new Date(m.createdAt).getTime() > taskCreatedAt
     );
 
     if (!humanReply) continue;

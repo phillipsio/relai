@@ -798,6 +798,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       id:        newId("msg"),
       threadId:  thread.id,
       fromAgent,
+      authorKind: request.agent ? "agent" : "human",
       type:      body.data.type ?? "status",
       body:      body.data.body,
     }).returning();

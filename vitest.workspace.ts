@@ -7,5 +7,6 @@ export default defineWorkspace([
   "packages/event-worker",
   "packages/agent",
   "packages/cli",
+  "packages/slack-bridge",
   "shared/git",
 ]);

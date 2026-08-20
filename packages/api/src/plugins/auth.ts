@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import fp from "fastify-plugin";
 import { eq, and, isNull } from "drizzle-orm";
 import { tokens, agents, type Db } from "@getrelai/db";
-import { hashToken, looksLikeAgentToken } from "../lib/tokens.js";
+import { hashToken, looksLikeAgentToken, secretsMatch } from "../lib/tokens.js";
 
 type Agent = typeof agents.$inferSelect;
 
@@ -57,7 +57,7 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
       return;
     }
 
-    if (process.env.SERVICE_ADMIN_TOKEN && token === process.env.SERVICE_ADMIN_TOKEN) {
+    if (secretsMatch(token, process.env.SERVICE_ADMIN_TOKEN)) {
       // Multi-tenant service-admin path. The closed cloud dashboard uses this
       // to call the API on behalf of a logged-in user; the X-Owner-Id header
       // tells route handlers which tenant's rows to scope to.
@@ -72,7 +72,7 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
       return;
     }
 
-    if (process.env.API_SECRET && token === process.env.API_SECRET) {
+    if (secretsMatch(token, process.env.API_SECRET)) {
       // Legacy shared-secret fallback. Deprecated — issue per-agent tokens instead.
       return;
     }

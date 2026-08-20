@@ -79,7 +79,7 @@ export class CliApiClient {
     return this.requestRaw<void>("DELETE", `/tokens/${tokenId}`);
   }
 
-  async createInvite(repoId: string, body: { suggestedName?: string; suggestedSpecialization?: string; ttlSeconds?: number }) {
+  async createInvite(repoId: string, body: { suggestedName?: string; suggestedSpecialization?: string; ttlSeconds?: number; role?: "orchestrator" | "worker" }) {
     const res = await this.requestRaw<{
       data: { id: string; expiresAt: string; suggestedName?: string | null; suggestedSpecialization?: string | null };
       code: string;

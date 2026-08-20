@@ -34,6 +34,15 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getTaskComments: vi.fn().mockResolvedValue({ threadId: "thread_1", comments: [] }),
     addTaskComment: vi.fn().mockResolvedValue({ id: "msg_1", type: "status" }),
     reportFeedback: vi.fn().mockResolvedValue({ taskId: "task_fb_1", title: "Feedback: …", repoId: "repo_relai" }),
+    publishArtifact: vi.fn().mockResolvedValue({ artifact: { id: "art_1", name: "instructions" }, version: { version: 3 } }),
+    getArtifact: vi.fn().mockResolvedValue({
+      artifact: { name: "instructions", description: null, ownerAgentId: "agent_other" },
+      version: { version: 3, body: "the document body", contentType: "text/markdown", createdAt: "2026-08-20T00:00:00.000Z" },
+    }),
+    listArtifacts: vi.fn().mockResolvedValue([
+      { name: "instructions", description: "MCP instruction surface", currentVersion: 3 },
+      { name: "notes", description: null, currentVersion: 1 },
+    ]),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -45,9 +54,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 18 tools", () => {
+  it("returns all 21 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(21);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -657,5 +666,63 @@ describe("buildOperatorTools (owner mode)", () => {
     const result = await getHandler(tools, "add_task_comment")({ taskId: "task_1", body: "approved" });
     expect(addTaskComment).toHaveBeenCalledWith("task_1", { body: "approved", type: "reply" });
     expect(result.content[0].text).toContain("msg_op_1");
+  });
+});
+
+describe("artifact tools", () => {
+  it("publish_artifact injects the repo and reports the version it created", async () => {
+    const client = mockClient();
+    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "publish_artifact");
+
+    const res = await handler({ name: "instructions", body: "text" });
+
+    expect(client.publishArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: REPO_ID, name: "instructions", body: "text" }),
+    );
+    expect(res.content[0].type).toBe("text");
+    expect(res.content[0].text).toContain("version 3");
+  });
+
+  it("get_artifact returns the body in MCP content form", async () => {
+    const client = mockClient();
+    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "get_artifact");
+
+    const res = await handler({ name: "instructions" });
+
+    expect(client.getArtifact).toHaveBeenCalledWith(REPO_ID, "instructions", undefined);
+    // The SDK does not wrap plain returns: a handler that forgot this shape
+    // appears to succeed and delivers nothing to the model.
+    expect(res).toHaveProperty("content");
+    expect(res.content[0].type).toBe("text");
+    expect(res.content[0].text).toContain("the document body");
+    expect(res.content[0].text).toContain("version 3");
+  });
+
+  it("get_artifact passes a pinned version through", async () => {
+    const client = mockClient();
+    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "get_artifact");
+
+    await handler({ name: "instructions", version: 1 });
+
+    expect(client.getArtifact).toHaveBeenCalledWith(REPO_ID, "instructions", 1);
+  });
+
+  it("list_artifacts renders names with current versions", async () => {
+    const handler = getHandler(buildTools(mockClient(), AGENT_ID, REPO_ID), "list_artifacts");
+
+    const res = await handler({});
+
+    expect(res.content[0].text).toContain("instructions (v3)");
+    expect(res.content[0].text).toContain("MCP instruction surface");
+    expect(res.content[0].text).toContain("notes (v1)");
+  });
+
+  it("list_artifacts says so plainly when there are none", async () => {
+    const client = mockClient({ listArtifacts: vi.fn().mockResolvedValue([]) } as never);
+    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_artifacts");
+
+    const res = await handler({});
+
+    expect(res.content[0].text).toContain("No artifacts");
   });
 });

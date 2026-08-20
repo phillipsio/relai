@@ -8,7 +8,7 @@ Render's free tier was chosen over Fly because it doesn't require a card up fron
 
 - Render account with GitHub connected (grant access to `phillipsio/relai` and `phillipsio/relai-cloud`).
 - Resend account with a verified sending domain (free tier: 100/day). Without `RESEND_API_KEY` the cloud will log magic-link URLs to stdout, which works for testing but not for real users.
-- A local clone of both repos with `DATABASE_URL` set in environment when running `db:push`.
+- A local clone of both repos with `DATABASE_URL` set in environment when running `db:migrate`.
 
 ## 1. Provision the database + OSS API
 
@@ -24,15 +24,15 @@ Apply the blueprint. Render will:
 3. Generate `API_SECRET` (a random value — copy it from the env vars panel before leaving the page; you'll paste it as `SERVICE_ADMIN_TOKEN` in the cloud service).
 4. Build the Docker image and start the service.
 
-The first deploy will fail liveness because the schema isn't pushed yet. That's expected — handle it next.
+The first deploy will fail liveness because the schema isn't applied yet. That's expected — handle it next.
 
-## 2. Push the OSS schema
+## 2. Apply the OSS schema
 
 From the Render Postgres page, copy the **External Database URL**. Then locally:
 
 ```bash
-cd ~/PhpstormProjects/relai
-DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:push
+cd ~/github/relai
+DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:migrate
 ```
 
 Restart `relai-api` in the Render UI (or wait for the next health-check cycle). The API should come up clean now.
@@ -64,7 +64,7 @@ The blueprint also sets:
 Apply, wait for the build, then push the cloud schema:
 
 ```bash
-cd ~/PhpstormProjects/relai-cloud
+cd ~/github/relai-cloud
 DATABASE_URL='<external-url>' pnpm db:push
 ```
 
@@ -84,15 +84,15 @@ The cloud's `drizzle.config.ts` filters to `cloud_*` tables, so this only adds t
 
 ## Schema migrations after the first deploy
 
-Render's free plan doesn't run a pre-deploy command. For any additive schema change:
+Render's free plan doesn't run a pre-deploy command, so migrations are applied by hand. For any schema change:
 
 ```bash
 # OSS schema
-cd ~/PhpstormProjects/relai
-DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:push
+cd ~/github/relai
+DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:migrate
 
 # Cloud schema
-cd ~/PhpstormProjects/relai-cloud
+cd ~/github/relai-cloud
 DATABASE_URL='<external-url>' pnpm db:push
 ```
 

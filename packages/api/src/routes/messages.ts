@@ -16,7 +16,9 @@ async function assertThreadAccess(request: import("fastify").FastifyRequest, db:
 }
 
 const createSchema = z.object({
-  fromAgent: z.string(),
+  // Ignored for agent callers (the token is the identity) and required only on
+  // the deprecated shared-secret path, which has no caller identity to derive.
+  fromAgent: z.string().optional(),
   toAgent:   z.string().optional(),
   type:      z.enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"]),
   body:      z.string().min(1),
@@ -36,16 +38,38 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const scope = await assertThreadAccess(request, db, request.params.id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
 
-    // Owner-authenticated callers (service-admin + X-Owner-Id, no agent identity)
-    // post as "human". This is the sender watchBlockedTasks keys on to resume a
-    // blocked task, and it avoids trusting a client-supplied sender on the owner
-    // path. Agent and legacy callers keep the body's fromAgent unchanged.
-    const fromAgent = request.ownerId && !request.agent ? "human" : body.data.fromAgent;
+    // Refused rather than silently corrected, so a spoof attempt surfaces
+    // instead of looking to the caller like a successful post.
+    let fromAgent: string;
+    let authorKind: "agent" | "human";
+    if (request.agent) {
+      if (body.data.fromAgent && body.data.fromAgent !== request.agent.id) {
+        return reply.status(403).send({
+          error: { code: "forbidden", message: "fromAgent must match the authenticated agent" },
+        });
+      }
+      fromAgent  = request.agent.id;
+      authorKind = "agent";
+    } else if (request.ownerId) {
+      fromAgent  = "human";
+      authorKind = "human";
+    } else {
+      // Deprecated shared-secret path. It already grants unfiltered access, so
+      // naming a sender is not an escalation, and the seed scripts depend on it.
+      if (!body.data.fromAgent) {
+        return reply.status(400).send({
+          error: { code: "validation_error", message: "fromAgent is required on the shared-secret path" },
+        });
+      }
+      fromAgent  = body.data.fromAgent;
+      authorKind = fromAgent === "human" ? "human" : "agent";
+    }
 
     const [message] = await db.insert(messages).values({
       id:        newId("msg"),
       threadId:  request.params.id,
       fromAgent,
+      authorKind,
       toAgent:   body.data.toAgent,
       type:      body.data.type,
       body:      body.data.body,
@@ -121,6 +145,12 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     async (request, reply) => {
       const { agentId } = request.body as { agentId: string };
       if (!agentId) return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
+      // Marking someone else's messages read suppresses their inbox, so a
+      // per-agent caller may only name itself. Admin/owner callers (CLI,
+      // dashboard) still pass an explicit id.
+      if (request.agent && agentId !== request.agent.id) {
+        return reply.status(403).send({ error: { code: "forbidden", message: "Cannot mark messages read for another agent" } });
+      }
 
       const scope = await assertThreadAccess(request, db, request.params.id);
       if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
@@ -138,6 +168,9 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const { agentId, repoId } = request.query;
     if (!agentId)   return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
     if (!repoId) return reply.status(400).send({ error: { code: "validation_error", message: "repoId required" } });
+    if (request.agent && agentId !== request.agent.id) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "Cannot read another agent's unread feed" } });
+    }
 
     const access = await assertRepoAccess(request, db, repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });

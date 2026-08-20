@@ -21,7 +21,7 @@ const SPECIALIZATION_CHOICES = [
   { value: "custom",       name: "custom        — define your own" },
 ];
 
-export async function repoInviteCommand(opts: { name?: string; specialization?: string; ttl?: string }) {
+export async function repoInviteCommand(opts: { name?: string; specialization?: string; ttl?: string; role?: string }) {
   const config = requireConfig();
   const client = new CliApiClient(config);
 
@@ -37,6 +37,7 @@ export async function repoInviteCommand(opts: { name?: string; specialization?: 
       suggestedName: opts.name,
       suggestedSpecialization: opts.specialization,
       ttlSeconds,
+      role: opts.role === "orchestrator" ? "orchestrator" : undefined,
     });
     s.succeed(chalk.green("Invite created"));
 
@@ -114,7 +115,6 @@ export async function loginCommand(opts: {
       message: "Specialization",
       choices: SPECIALIZATION_CHOICES,
     });
-    const role = specialization === "orchestrator" ? "orchestrator" : "worker";
     const specForApi = specialization === "custom" ? undefined : specialization;
 
     const s = ora("Accepting invite…").start();
@@ -122,7 +122,6 @@ export async function loginCommand(opts: {
       const result = await client.acceptInvite({
         code: opts.invite!,
         name,
-        role,
         specialization: specForApi,
         workerType: "human",
       });

@@ -1,11 +1,8 @@
-// Classify a worker session's failure text as fatal vs transient.
-//
-// Fatal = a credential/credit problem that re-spawning a fresh session within
-// seconds will NOT resolve (it just burns a tight loop). The worker should back
-// off hard and let a human fix the underlying issue. Transient errors (rate
-// limits, overload, network blips) are expected to clear on their own, so the
-// normal poll cadence is fine.
-const FATAL_PATTERNS: RegExp[] = [
+// Three classes because they need different remedies: only "credentials" is
+// fixed by waiting. See AGENTS.md → Worker session-failure classification.
+export type SessionFailure = "credentials" | "overflow" | "transient";
+
+const CREDENTIAL_PATTERNS: RegExp[] = [
   /credit balance is too low/i,
   /insufficient[ _-]?credits?/i,
   /invalid[ _-]?(api[ _-]?key|x-api-key|bearer token)/i,
@@ -15,7 +12,18 @@ const FATAL_PATTERNS: RegExp[] = [
   /please run\b[^\n]*\/login/i,
 ];
 
-export function isFatalError(text: string): boolean {
-  if (!text) return false;
-  return FATAL_PATTERNS.some((re) => re.test(text));
+const OVERFLOW_PATTERNS: RegExp[] = [
+  /prompt is too long/i,
+  /input is too long for requested model/i,
+  /input length and .{0,40}exceed/i,
+  /\bcontext_window_exceeded\b/i,
+  /request too large/i,
+];
+
+export function classifySessionError(text: string): SessionFailure {
+  if (!text) return "transient";
+  // Credentials outrank overflow: a bad credential breaks every task.
+  if (CREDENTIAL_PATTERNS.some((re) => re.test(text))) return "credentials";
+  if (OVERFLOW_PATTERNS.some((re) => re.test(text))) return "overflow";
+  return "transient";
 }

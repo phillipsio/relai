@@ -229,24 +229,36 @@ describe("ownership: subscriptions cross-tenant", () => {
   });
 
   it("service-admin /subscriptions list is scoped to its tenant's agents", async () => {
+    // Real threads, one per tenant: POST /subscriptions resolves the target to
+    // check it does not cross repos, so a synthetic marker id now 404s.
+    const mkThread = async (repoId: string, title: string) => {
+      const t = await app.inject({
+        method: "POST", url: "/threads", headers: adminHeaders(),
+        body: JSON.stringify({ repoId, title }),
+      });
+      return t.json().data.id as string;
+    };
+    const threadAId = await mkThread(projectAId, "tenant A marker");
+    const threadBId = await mkThread(projectBId, "tenant B marker");
+
     const subA = await app.inject({
       method: "POST", url: "/subscriptions",
       headers: adminHeaders(),
-      body: JSON.stringify({ agentId: agentAId, targetType: "thread", targetId: "thread_A_marker" }),
+      body: JSON.stringify({ agentId: agentAId, targetType: "thread", targetId: threadAId }),
     });
     expect(subA.statusCode).toBe(201);
     const subB = await app.inject({
       method: "POST", url: "/subscriptions",
       headers: adminHeaders(),
-      body: JSON.stringify({ agentId: agentBId, targetType: "thread", targetId: "thread_B_marker" }),
+      body: JSON.stringify({ agentId: agentBId, targetType: "thread", targetId: threadBId }),
     });
     expect(subB.statusCode).toBe(201);
 
     const list = await app.inject({ method: "GET", url: "/subscriptions", headers: serviceHeaders(userA) });
     expect(list.statusCode).toBe(200);
     const targetIds = list.json().data.map((s: { targetId: string }) => s.targetId);
-    expect(targetIds).toContain("thread_A_marker");
-    expect(targetIds).not.toContain("thread_B_marker");
+    expect(targetIds).toContain(threadAId);
+    expect(targetIds).not.toContain(threadBId);
   });
 });
 

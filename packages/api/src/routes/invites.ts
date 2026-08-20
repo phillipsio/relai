@@ -13,12 +13,19 @@ const createSchema = z.object({
   suggestedName: z.string().min(1).optional(),
   suggestedSpecialization: z.string().min(1).optional(),
   ttlSeconds: z.number().int().positive().optional(),
+  // Pinned onto the invite row. Defaults to worker so an unqualified invite can
+  // never hand out the privileged role.
+  role: z.enum(["orchestrator", "worker"]).optional(),
 });
 
 const acceptSchema = z.object({
   code:           z.string().min(1),
   name:           z.string().min(1),
-  role:           z.enum(["orchestrator", "worker"]).default("worker"),
+  // Advisory only: the granted role comes from the invite. Kept so existing
+  // clients keep working, and cross-checked below so a mismatch is refused
+  // rather than silently downgraded. Must NOT default, or omitting it would
+  // conflict with an orchestrator invite.
+  role:           z.enum(["orchestrator", "worker"]).optional(),
   specialization: z.string().min(1).optional(),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
   domains:        z.array(z.string()).default([]),
@@ -34,6 +41,15 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     const body = createSchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    // Minting a privileged invite is itself privileged, or the accepter gate is
+    // just moved one hop rather than closed.
+    const role = body.data.role ?? "worker";
+    if (role === "orchestrator" && request.agent && request.agent.role !== "orchestrator") {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only orchestrator agents may issue an orchestrator invite." },
+      });
+    }
+
     const code = generateInviteCode();
     const ttl  = body.data.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     const [row] = await db.insert(invites).values({
@@ -41,6 +57,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       repoId: project.id,
       codeHash:  hashSecret(code),
       createdBy: request.agent?.id ?? null,
+      role,
       suggestedName:           body.data.suggestedName           ?? null,
       suggestedSpecialization: body.data.suggestedSpecialization ?? null,
       expiresAt: new Date(Date.now() + ttl * 1000),
@@ -83,11 +100,19 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     if (invite.expiresAt.getTime() < Date.now())
                               return reply.status(400).send({ error: { code: "invalid_invite", message: "Invite expired" } });
 
+    // The invite grants the role. A body value that disagrees is refused rather
+    // than downgraded, so an escalation attempt surfaces.
+    if (body.data.role && body.data.role !== invite.role) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "This invite does not grant that role" },
+      });
+    }
+
     const [agent] = await db.insert(agents).values({
       id:             newId("agent"),
       repoId:      invite.repoId,
       name:           body.data.name,
-      role:           body.data.role,
+      role:           invite.role,
       specialization: body.data.specialization ?? invite.suggestedSpecialization ?? null,
       domains:        body.data.domains,
       workerType:     body.data.workerType ?? null,

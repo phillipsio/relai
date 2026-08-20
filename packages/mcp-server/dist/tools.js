@@ -8,6 +8,66 @@ const zod_1 = require("zod");
 function buildTools(client, agentId, repoId) {
     return [
         {
+            name: "publish_artifact",
+            description: "Publish a named document other agents can pull — a spec, an instruction block, a generated " +
+                "report, anything you would otherwise paste into a chat. Publishing the same name again appends " +
+                "a new version rather than overwriting, and consumers ask for 'the current version' instead of " +
+                "tracking which paste was newest. Deliberately cheap: one call, no ceremony, so shipping a " +
+                "half-finished revision is fine and expected. Only you can publish further versions of a name " +
+                "you created. Use visibility 'private' for a draft nobody should pull yet.",
+            inputSchema: zod_1.z.object({
+                name: zod_1.z.string().min(1).describe("Stable identifier, unique in this project. Reuse it to publish a new version."),
+                body: zod_1.z.string().min(1).describe("The document itself."),
+                description: zod_1.z.string().optional().describe("One line on what this is, shown when listing."),
+                contentType: zod_1.z.string().optional().describe("Defaults to text/markdown."),
+                visibility: zod_1.z.enum(["repo", "private"]).optional().describe("'repo' (default) is readable by every agent here; 'private' only by you."),
+                taskId: zod_1.z.string().optional().describe("Task this came out of, kept as provenance."),
+                metadata: zod_1.z.record(zod_1.z.unknown()).optional().describe("Optional structured data to attach."),
+            }),
+            handler: async (input) => {
+                const result = await client.publishArtifact({ repoId, ...input });
+                return {
+                    content: [{
+                            type: "text",
+                            text: `Published "${result.artifact.name}" version ${result.version.version}.`,
+                        }],
+                };
+            },
+        },
+        {
+            name: "get_artifact",
+            description: "Pull a published document by name. Returns the current version unless you ask for a specific " +
+                "one, so you never have to work out which is newest. Pulling records that you have seen that " +
+                "version: if a newer one lands later, session_start lists it under staleArtifacts, which is how " +
+                "you find out without the publisher telling you. Re-pull to clear it.",
+            inputSchema: zod_1.z.object({
+                name: zod_1.z.string().min(1).describe("The artifact's name."),
+                version: zod_1.z.number().int().positive().optional().describe("Omit for the current version."),
+            }),
+            handler: async (input) => {
+                const { artifact, version } = await client.getArtifact(repoId, input.name, input.version);
+                return {
+                    content: [{
+                            type: "text",
+                            text: `${artifact.name} (version ${version.version}, ${version.contentType})\n\n${version.body}`,
+                        }],
+                };
+            },
+        },
+        {
+            name: "list_artifacts",
+            description: "List the published documents in this project with their current version numbers. Use it to " +
+                "discover what is available before pulling one. Other agents' private drafts are not shown.",
+            inputSchema: zod_1.z.object({}),
+            handler: async () => {
+                const rows = await client.listArtifacts(repoId);
+                const text = rows.length === 0
+                    ? "No artifacts published in this project yet."
+                    : rows.map((a) => `${a.name} (v${a.currentVersion})${a.description ? ` — ${a.description}` : ""}`).join("\n");
+                return { content: [{ type: "text", text }] };
+            },
+        },
+        {
             name: "create_task",
             description: "Create a new task in this project — use this to turn a plan into actionable work (e.g. an " +
                 "architect/planner breaking a design into tasks for workers). You are recorded as the task's " +

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const agentRoleEnum = pgEnum("agent_role", ["orchestrator", "worker"]);
 
@@ -16,6 +16,10 @@ export const taskPriorityEnum = pgEnum("task_priority", ["low", "normal", "high"
 export const messageTypeEnum = pgEnum("message_type", [
   "status", "handoff", "finding", "decision", "question", "escalation", "reply",
 ]);
+
+// Route-derived from the authenticated caller, never from the request body.
+// The blocked-task watcher keys on this, not on free-text `fromAgent`.
+export const messageAuthorKindEnum = pgEnum("message_author_kind", ["agent", "human"]);
 
 export const routingMethodEnum = pgEnum("routing_method", ["rules", "claude"]);
 
@@ -106,6 +110,9 @@ export const invites = pgTable("invites", {
   createdBy:              text("created_by").references(() => agents.id),
   suggestedName:          text("suggested_name"),
   suggestedSpecialization: text("suggested_specialization"),
+  // Pinned by whoever creates the invite; the accepter cannot choose its own
+  // role. Only an orchestrator/owner may mint an invite carrying "orchestrator".
+  role:                   agentRoleEnum("role").notNull().default("worker"),
   expiresAt:              timestamp("expires_at",  { withTimezone: true }).notNull(),
   acceptedAt:             timestamp("accepted_at", { withTimezone: true }),
   acceptedAgentId:        text("accepted_agent_id").references(() => agents.id),
@@ -139,13 +146,68 @@ export const messages = pgTable("messages", {
   id:        text("id").primaryKey(),
   threadId:  text("thread_id").references(() => threads.id).notNull(),
   fromAgent: text("from_agent").notNull(),
+  // Defaults to "agent" so backfilling old rows is one UPDATE for the human ones.
+  authorKind: messageAuthorKindEnum("author_kind").notNull().default("agent"),
   toAgent:   text("to_agent"),
   type:      messageTypeEnum("type").notNull(),
   body:      text("body").notNull(),
   metadata:  jsonb("metadata").default({}).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   readBy:    text("read_by").array().notNull().default([]),
-});
+}, (t) => ({
+  thread: index("messages_thread_idx").on(t.threadId, t.createdAt),
+}));
+
+// ── Artifacts ─────────────────────────────────────────────────────────────────
+
+// Defaults to `repo`: every other entity in a repo is already readable by every
+// agent in it, and an artifact whose point is to be pulled by a colleague is
+// useless hidden. `private` exists for drafts.
+export const artifactVisibilityEnum = pgEnum("artifact_visibility", ["repo", "private"]);
+
+export const artifacts = pgTable("artifacts", {
+  id:           text("id").primaryKey(),
+  repoId:       text("repo_id").references(() => repos.id, { onDelete: "cascade" }).notNull(),
+  // Nullable so the deprecated admin/owner path can publish without an agent
+  // identity. Only the owner (or that path) may publish a new version.
+  ownerAgentId: text("owner_agent_id").references(() => agents.id),
+  name:         text("name").notNull(),
+  description:  text("description"),
+  visibility:   artifactVisibilityEnum("visibility").notNull().default("repo"),
+  createdAt:    timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  repoName: uniqueIndex("artifacts_repo_name_unique").on(t.repoId, t.name),
+}));
+
+export const artifactVersions = pgTable("artifact_versions", {
+  id:                 text("id").primaryKey(),
+  artifactId:         text("artifact_id").references(() => artifacts.id, { onDelete: "cascade" }).notNull(),
+  version:            integer("version").notNull(),
+  body:               text("body").notNull(),
+  contentType:        text("content_type").notNull().default("text/markdown"),
+  publishedByAgentId: text("published_by_agent_id").references(() => agents.id),
+  // Provenance back to the work that produced this. No FK, same reasoning as
+  // tasks.threadId: it would be circular and is not always a task.
+  taskId:             text("task_id"),
+  metadata:           jsonb("metadata").default({}).notNull(),
+  createdAt:          timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  // Two concurrent publishes both compute max+1, so this is what makes the
+  // version sequence actually a sequence.
+  artifactVersion: uniqueIndex("artifact_versions_artifact_version_unique").on(t.artifactId, t.version),
+}));
+
+// What each agent last pulled. Staleness is state, not a stream: five publishes
+// in an hour leave one stale flag rather than five notifications to coalesce.
+export const artifactReads = pgTable("artifact_reads", {
+  id:         text("id").primaryKey(),
+  artifactId: text("artifact_id").references(() => artifacts.id, { onDelete: "cascade" }).notNull(),
+  agentId:    text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  version:    integer("version").notNull(),
+  readAt:     timestamp("read_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  agentArtifact: uniqueIndex("artifact_reads_agent_artifact_unique").on(t.artifactId, t.agentId),
+}));
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
@@ -199,6 +261,10 @@ export const tasks = pgTable("tasks", {
   // Set by the scheduler when a task has been `in_progress` longer than the
   // stall threshold without any update. Cleared on any subsequent PUT /tasks/:id.
   stalledAt:   timestamp("stalled_at", { withTimezone: true }),
+  // Stamped on each transition into `blocked`. The resume watcher compares a
+  // human reply against this rather than createdAt, or any message already on
+  // the thread would resume the task the instant it blocked.
+  blockedAt:   timestamp("blocked_at", { withTimezone: true }),
   // Set when a terminal-state task is archived out of the default live views
   // (session_start, GET /tasks) to keep startup payloads small. Orthogonal to
   // `status` — a task is `completed`/`cancelled` and *later* archived. History
@@ -210,7 +276,12 @@ export const tasks = pgTable("tasks", {
   blockedBy:   text("blocked_by").array().notNull().default([]),
   createdAt:   timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // The routing and verify schedulers scan by repo and status on every tick.
+  repoStatus: index("tasks_repo_status_idx").on(t.repoId, t.status),
+  // GET /tasks?assignedTo= and every worker's own queue.
+  assignee:   index("tasks_assigned_idx").on(t.assignedTo),
+}));
 
 // ── Subscriptions ─────────────────────────────────────────────────────────────
 
@@ -222,7 +293,13 @@ export const subscriptions = pgTable("subscriptions", {
   targetType: subscriptionTargetTypeEnum("target_type").notNull(),
   targetId:   text("target_id").notNull(),
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // Both callers dedupe with a select-then-insert, which two concurrent
+  // subscribes can interleave. This makes the idempotency actual.
+  agentTarget: uniqueIndex("subscriptions_agent_target_unique").on(t.agentId, t.targetType, t.targetId),
+  // resolveSubscribers() matches on exactly this pair, on every publish.
+  target:      index("subscriptions_target_idx").on(t.targetType, t.targetId),
+}));
 
 // ── Notification channels ─────────────────────────────────────────────────────
 
@@ -281,11 +358,16 @@ export const events = pgTable("events", {
   kind:       text("kind").notNull(),
   targetType: text("target_type").notNull(),  // "thread" | "task" | "agent"
   targetId:   text("target_id").notNull(),
+  // Who caused the event. Null for scheduler/system-originated ones. No FK: an
+  // actor may be an agent id, a usr_ owner id, or "human" on the admin path.
+  actorId:    text("actor_id"),
   // Mirrors AppEvent.alsoNotify — secondary subjects matched during fan-out.
   alsoNotify: jsonb("also_notify").notNull().default([]),
   payload:    jsonb("payload").notNull().default({}),
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  repoRecent: index("events_repo_created_idx").on(t.repoId, t.createdAt),
+}));
 
 export const routingLog = pgTable("routing_log", {
   id:         text("id").primaryKey(),

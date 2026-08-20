@@ -11,9 +11,12 @@ pnpm install
 # Start Postgres (port 5433 — avoids conflict with other local DBs on 5432)
 docker compose up -d
 
-# Push Drizzle schema to the database (run once after clone, and after schema changes)
+# Apply migrations (run once after clone, and after any schema change)
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @getrelai/db db:push
+  pnpm --filter @getrelai/db db:migrate
+
+# After editing shared/db/src/schema.ts, generate a migration and commit it
+pnpm --filter @getrelai/db db:generate
 
 # Seed a fresh database (creates repo + orchestrator agent, patches .env)
 # API must be running first
@@ -32,7 +35,7 @@ pnpm test                             # all packages
 pnpm --filter @getrelai/api test
 pnpm --filter @getrelai/mcp-server test
 
-# Typecheck all packages
+# Typecheck all packages (11 projects — every workspace package has a typecheck script)
 pnpm typecheck
 
 # Build all packages
@@ -41,7 +44,11 @@ pnpm build
 
 drizzle-kit reads `DATABASE_URL` from the environment — there is no automatic `.env` loading for it. Pass it explicitly or `export` it first.
 
-**Schema renames bypass `db:push`.** drizzle-kit's `push` is interactive and prompts on column renames (e.g. `routing_mode → default_assignee`), which makes it unscriptable. For a rename, run the `ALTER TABLE … RENAME COLUMN …` directly via `docker exec relai-postgres-1 psql -U relai -d relai -c "..."` and let `db:push` reconcile the rest on the next run.
+**Schema changes go through migrations, not `push`.** Edit `shared/db/src/schema.ts`, run `db:generate` to emit a versioned file under `shared/db/drizzle/`, review that SQL as part of the diff, and apply it with `db:migrate`. Commit the generated file and `drizzle/meta/`.
+
+`db:push` is retained only as a local escape hatch and should not be used to apply anything. It is interactive: it prompts on renames, and in practice it also **hangs** on additive changes such as a new enum type plus a column (hit twice on 2026-08-20 while landing `messages.author_kind` and `invites.role`), which makes it unusable non-interactively and therefore unusable in any deploy step.
+
+Migrations are applied per database, so run `db:migrate` against **both** `relai` and `relai_test`. The history was baselined on 2026-08-20: `drizzle/0000_initial_baseline.sql` describes the whole schema as it stood, and was verified by building a scratch database from it and diffing against the live one (identical across all 129 OSS columns; the `cloud_*` tables belong to the closed dashboard's own drizzle config and are deliberately absent). Existing databases were marked as having applied it rather than running it.
 
 ## Architecture
 
@@ -57,23 +64,29 @@ packages/
   web/            React + Vite + TanStack Query dashboard (Issues + Epics surface)
   mcp-server/     MCP server — the integration point for any MCP-compatible agent
   claude-worker/  Headless Claude Code worker loop
+  event-worker/   SSE-driven worker loop (what @getrelai/agent runs)
   copilot-worker/ Copilot agent worker loop
   cli/            Commander.js CLI — the `relai` binary
 ```
 
 ### Data model (shared/db)
 
-Twelve tables: `repos`, `agents`, `tokens`, `invites`, `threads`, `messages`, `tasks`, `subscriptions`, `notification_channels`, `verification_log`, `events`, `routing_log`. All IDs are prefixed strings (`repo_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`, `tok_`, `inv_`, `sub_`, `evt_`, `verif_`). Enums are Postgres-native (`pgEnum`).
+**Index convention.** Add an index when a query runs on every request or every scheduler tick, and a `uniqueIndex` when a route's idempotency currently rests on a select-then-insert (which two concurrent callers can interleave). Both are cheap to add while tables are small and awkward later, because drizzle applies each migration inside a transaction and `CREATE INDEX CONCURRENTLY` cannot run in one. Foreign keys do **not** create indexes in Postgres, so a hot lookup by FK still needs one declared. Current set: `subscriptions(agentId,targetType,targetId)` unique plus `(targetType,targetId)` for the per-publish fan-out, `messages(threadId,createdAt)`, `tasks(repoId,status)` and `tasks(assignedTo)` for the scheduler scans, `events(repoId,createdAt)` for `/session/start`. `tokens.tokenHash` and `invites.codeHash` were already unique, which covers the auth hot path.
+
+Sixteen tables: `repos`, `agents`, `tokens`, `invites`, `threads`, `messages`, `tasks`, `subscriptions`, `notification_channels`, `verification_log`, `events`, `routing_log`. All IDs are prefixed strings (`repo_`, `agent_`, `thread_`, `msg_`, `task_`, `route_`, `tok_`, `inv_`, `sub_`, `evt_`, `verif_`). Enums are Postgres-native (`pgEnum`).
 
 - `repos` has `defaultAssignee` (agent ID, the literal `"@auto"`, or null) — applied when a task is created without an explicit assignee. `repoUrl` is restricted to `https://`/`ssh://` and settable only by orchestrators (or the deprecated admin/owner path) — it feeds `git ls-remote` for the `git_pushed` verifyKind, so an unrestricted value or worker-settable field would be an SSRF vector against the API host's outbound git.
 - `agents` has `specialization`, `tier` (operator-defined seniority for escalation routing — 1=clear-brief, 2=takes-escalations, null=untiered; orthogonal to model), `workerType` (`claude` | `copilot` | `cursor` | `windsurf` | `gemini` | `gpt` | `mcp` | `human`), `repoPath`
 - `tokens` is the per-agent bearer-credential store: hashed token, `lastUsedAt`, `revokedAt`. Issued at agent registration and via `POST /agents/:id/tokens`
-- `invites` is the repo-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization
+- `invites` is the repo-join channel: hashed code, `expiresAt`, `acceptedAt`, optional suggested name/specialization, and **`role`, pinned by whoever creates the invite**. The accepter cannot choose its own role: `POST /auth/accept-invite` grants `invite.role` and 403s if the body names a different one. Minting an `orchestrator` invite itself requires an orchestrator (or the admin/owner path), and `POST /agents` is likewise orchestrator/owner-only, since registering an agent mints a credential and names its role. Together these close a path where a worker token could hand itself an orchestrator token and thereby author a `shell` verify predicate, which executes in the API process.
 - `threads` has `type` (null = operational, `"plan"` = collaborative planning, surfaced as an **Epic** in the UI), `status` (`"open"` | `"concluded"`), `summary`, and `taskId` (back-link when the thread is an Issue's comment surface; null for Epics/standalone). The unified Epic → Issue UI presents `tasks` as Issues and `type="plan"` threads as Epics (see `docs/threading-model.md`); a task's discussion lives on its linked thread, exposed via `/tasks/:id/comments`. `archivedAt` (nullable) hides a concluded thread from default views without deleting it (see `PUT /threads/:id/archive`).
 - `tasks` has `domains`, `specialization`, `assignedTo`, `autoAssign` (true when the effective assignee is `"@auto"`), `metadata` (jsonb), and an optional verification predicate. **Propose-vs-commit:** committing work (giving it an owner + entering the lifecycle) is an orchestrator act. When a non-orchestrator agent calls `POST /tasks`, the task lands in status `"proposed"` (inert — the routing and verify schedulers skip it), with any requested assignee stashed as a non-binding hint in `metadata.proposal.suggestedAssignee` and the repo's orchestrators auto-subscribed + notified via `task.proposed`. An orchestrator (or the deprecated admin-secret path) commits it via `POST /tasks/:id/commit` (assign + optional ratified edits → `assigned`/`pending`, emits `task.committed`) or rejects it (→ `cancelled`, emits `task.proposal_rejected`). Orchestrator/admin creates are committed immediately, preserving prior behavior. Five verify kinds: `verifyKind = "shell"` (uses `verifyCommand` + optional `verifyCwd` + optional `verifyTimeoutMs` bounded `[1_000, 600_000]`, default 60s — legacy rows with null `verifyKind` and `verifyCommand` set are treated as shell), `verifyKind = "file_exists"` (uses `verifyPath` resolved against `verifyCwd`; no shell exec), `verifyKind = "thread_concluded"` (uses `verifyThreadId`; passes when the referenced thread's status is `"concluded"`; no shell exec), `verifyKind = "reviewer_agent"` (uses `verifyReviewerId`; passes when the named agent posts an approve decision via `POST /tasks/:id/review`, fails on reject; the scheduler skips the row until a decision lands), and `verifyKind = "git_pushed"` (reuses `verifyPath` as the branch name and `verifyCwd` as the local repo; passes when that branch exists on the `origin` remote via `git ls-remote`, catching the "marked done while the branch is unpushed" gap — no shell exec, but does make a network call to the remote). **Authoring a shell predicate requires `request.agent.role === "orchestrator"` or the deprecated admin-secret path** — workers and other roles get 403. The structured kinds are unrestricted. When any predicate is set, `PUT /tasks/:id { status: "completed" }` rewrites the transition to `pending_verification`; the API scheduler runs the predicate (shell kind: 8KB stdout/stderr cap; written to `verification_log` for all kinds). Exit `0` promotes to `completed` and emits `task.verified`; anything else returns the task to `assigned` with `metadata.lastVerification` populated and emits `task.verification_failed`. For `reviewer_agent`, entering `pending_verification` also emits `task.review_requested` (notifying the reviewer + auto-subscribing them); the review endpoint emits `task.review_submitted` when the reviewer decides. Stuck claims older than 5 min are reaped as crashed runs. The predicate is **editable post-creation via `PUT /tasks/:id`** (e.g. re-point `verifyReviewerId`, swap kind): the update validates the merged (existing+patch) config and re-applies the shell-author gate + reviewer-existence check. Tasks also carry `epicId` (parent Epic — a `"plan"` thread; formalizes the old informal `metadata.planThreadId`) and `threadId` (the Issue's comment thread, created lazily on first `/tasks/:id/comments` access). `archivedAt` (nullable) hides a terminal task from default views without deleting it (see `PUT /tasks/:id/archive`).
+- `messages` carries `authorKind` (`agent` | `human`), **derived by the route from the authenticated caller and never read from the request body**. The blocked-task watcher resumes on `authorKind === "human"`, not on `fromAgent`, which is free text. An agent token naming a different sender gets 403; the deprecated shared-secret path still passes `fromAgent` through, since it already has unfiltered access and the seed scripts rely on it. Do not reintroduce authority checks against `fromAgent`.
+- **`tasks.metadata` is merged on `PUT /tasks/:id`, not replaced, and a set of server-owned keys is always taken from the existing row**: `review`, `commit`, `proposal`, `lastVerification`, `humanReply`, `humanRepliedAt`, `proposedOverdueNotifiedAt`, `reviewOverdueNotifiedAt`, `verifyRetryCount`. Those are written by dedicated routes or by the schedulers and then trusted, so a client value for one is dropped rather than rejected (echoing the whole blob back on a read-modify-write is a legitimate existing pattern). `blockedThreadId`/`blockedReason` are deliberately NOT protected, because `prompt.ts` instructs workers to set them when escalating. Relatedly, `runReviewerAgentVerification` compares the recorded `review.reviewerId` against the task's `verifyReviewerId` and fails on a mismatch: `POST /tasks/:id/review` is 403-gated but is not the only writer of that field, so the check has to live at the point of trust. **Do not add a security-relevant key to `metadata` without adding it to that list.**
 - `subscriptions` records which agents want event notifications for a given thread/task/agent target
-- `notification_channels` is a webhook/Slack delivery target scoped to **either** an agent **or** an owner (exactly one of `agentId`/`ownerId` is set; both nullable, enforced in the route). Agent channels fire on the agent's event subscriptions (every subscribed event). Owner channels fire only on **attention-transition** events (`task.proposed`, `task.blocked`, `task.pending_verification`) across all the owner's repos, resolved via `event.repoId → repos.ownerId` independent of subscriptions — the built-in "something needs you" push that replaces polling `list_attention`. HMAC signing, retry/backoff, and the 5-strike circuit breaker are shared across both scopes (`lib/notifications.ts`). Owner channels are created by an owner-mode caller with no `agentId` (or the admin path with an explicit `ownerId`).
-- `events` is the persisted mirror of the in-process bus; written on every `publish()` so `/session/start` can show what an agent missed. SSE stays live; this table is history.
+- `notification_channels` is a webhook/Slack delivery target scoped to **either** an agent **or** an owner (exactly one of `agentId`/`ownerId` is set; both nullable, enforced in the route). Agent channels fire on the agent's event subscriptions (every subscribed event). Owner channels fire only on **attention-transition** events (`task.proposed`, `task.blocked`, `task.pending_verification`, `task.proposed_overdue`, `task.review_overdue`) across all the owner's repos, resolved via `event.repoId → repos.ownerId` independent of subscriptions — the built-in "something needs you" push that replaces polling `list_attention`. HMAC signing, retry/backoff, and the 5-strike circuit breaker are shared across both scopes (`lib/notifications.ts`). Owner channels are created by an owner-mode caller with no `agentId` (or the admin path with an explicit `ownerId`).
+- `artifacts` / `artifact_versions` / `artifact_reads` are the publish-and-pull surface (`art_`, `av_`, `ard_`). An artifact is a named document, unique per repo; publishing the same name appends a version rather than overwriting, and consumers ask for **the current version** instead of tracking which paste was newest. `uniqueIndex(artifactId, version)` is what makes the sequence real against two concurrent `max+1` publishes. **Staleness is recorded state, not a stream**: `artifact_reads` stores the highest version each agent has pulled (monotonic, so a deliberate older-version lookup does not report the agent stale on something it had already read), and `/session/start` derives `staleArtifacts` from it, so a publisher shipping five versions in an hour leaves one entry rather than five notifications to coalesce. Only the owner (or the admin path) may publish a further version. `visibility` defaults to `repo` because every other entity in a repo is already readable by every agent in it; `private` is for drafts. Bodies are capped at 256 KiB — text, not blob storage.
+- `events` is the persisted mirror of the in-process bus; written on every `publish()` so `/session/start` can show what an agent missed. SSE stays live; this table is history. `actorId` records who caused the event (null for scheduler/system-originated ones) and has no FK, since an actor may be an agent id, a `usr_` owner id, or `"human"` on the admin path. It doubles as the SSE self-echo suppressor, so an agent is not woken by its own change.
 
 ### Auth (packages/api/src/plugins/auth.ts)
 
@@ -113,10 +126,10 @@ Fastify v4 with Zod validation throughout.
 **Threads & messages**
 - `POST /threads`, `GET /threads?repoId=&type=&archived=`, `DELETE /threads/:id`, `PUT /threads/:id/conclude`, `PUT /threads/:id/archive` (archive a `concluded` thread — plan OR operational — out of default lists + `session_start`; 409 if not concluded; idempotent; `archived=true` to include)
 - `POST /threads/:id/messages`, `GET /threads/:id/messages`, `PUT /threads/:id/messages/read`
-- `GET /messages/unread?agentId=&repoId=` — both params required
+- `GET /messages/unread?agentId=&repoId=` — both params required. A per-agent caller may only name **itself**, on this route and on `PUT /threads/:id/messages/read`; marking another agent's messages read suppresses their inbox. Admin/owner callers still pass an explicit id, which the CLI and dashboard rely on.
 
 **Subscriptions & events**
-- `POST /subscriptions`, `GET /subscriptions?agentId=`, `DELETE /subscriptions/:id`
+- `POST /subscriptions`, `GET /subscriptions?agentId=`, `DELETE /subscriptions/:id`. **A subscription created through this route may not cross repos**: the target is resolved and its repo must match the subscribing agent's, and an unresolvable target is a 404. This matters because delivery (`resolveSubscribers`/`deliverableTo`) matches on `targetType`+`targetId` alone with no repo check, so a cross-repo row is a standing leak and the SSE payload carries the whole task record. `ensureSubscription()` is the deliberate exception, called server-side with ids the server chose (see `POST /relai-feedback`, which subscribes a reporter to the task it filed).
 - `GET /events` — Server-Sent Events stream filtered to the caller's subscriptions; auto-subscribes the caller on message/task creation
 
 Every published event is also persisted to the `events` table on write, so `/session/start` can return what an agent missed since their last read. SSE remains the live channel; the table is history.
@@ -136,7 +149,7 @@ Runs inside the API process — no separate daemon needed. On startup and every 
 2. Per task: tries **Rules** routing (`rules.ts`) — domain match, specialization match, load balancing. Candidates are pre-filtered to "online" agents (`lastSeenAt` within 10 min); see the auth section for what bumps that field.
 3. Falls back to **Claude routing** only when rules can't resolve. Requires `ANTHROPIC_API_KEY`; defaults to `claude-haiku-4-5-20251001` (override via `ROUTING_MODEL`).
 
-The blocked-task watcher detects human replies on threads referenced by `task.metadata.blockedThreadId` and resumes those tasks back to `assigned`. The proposed-task watcher emits a one-time `task.proposed_overdue` (notifying the repo's orchestrators) when a worker's `proposed` task waits past `PROPOSED_OVERDUE_MS` without being committed, so proposals don't stall silently when no orchestrator is acting.
+The blocked-task watcher detects human replies on threads referenced by `task.metadata.blockedThreadId` and resumes those tasks back to `assigned`. A reply only counts if its `authorKind` is `human` **and** it postdates `tasks.blockedAt`, which is stamped on every transition into `blocked` (including a re-block). Comparing against `createdAt` instead, as it once did, meant any message already on the thread resumed the task the instant it blocked. A watchable row with no `blockedAt` is skipped and warned about rather than resumed, so the watcher fails closed. The proposed-task watcher emits a one-time `task.proposed_overdue` (notifying the repo's orchestrators) when a worker's `proposed` task waits past `PROPOSED_OVERDUE_MS` without being committed, so proposals don't stall silently when no orchestrator is acting.
 
 **Message loop (opt-in):** when `ENABLE_MESSAGE_ROUTING=true`, the same scheduler runs `message-loop.ts` per repo per tick. For each repo's `role="orchestrator"` agent, it processes the agent's repo-wide unread feed:
 - `status`/`reply` — mark read, no other action
@@ -206,9 +219,23 @@ Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the repo 
 
 **Repo path**: Relai stores `repoPath` on the agent record and shows it in setup instructions, but cannot enforce it for interactive sessions. Always start your agent session from the correct directory — the agent will work in whatever directory it was launched from.
 
+### Worker session-failure classification (packages/claude-worker/src/errors.ts)
+
+`classifySessionError()` sorts a failed `claude --print` session into three classes, because they need different remedies:
+
+- **`credentials`** (bad key/token, exhausted credits) — no session can succeed until a human fixes the account, so the poll loop backs off exponentially up to `maxBackoffMs` and warns loudly.
+- **`overflow`** (context window exceeded: `prompt is too long`, `input is too long for requested model`, `context_window_exceeded`, `request too large`) — **backing off is wrong here, because waiting does not make the task smaller.** The worker instead moves its `in_progress` tasks to `blocked` via `blockOverflowedTasks()` (`block-task.ts`), recording `metadata.blockedReason` plus a capped `metadata.overflow.detail`. A blocked task stops matching both the poll loop and the event-worker's `hasWork` gate, which is what actually ends the respawn loop; an orchestrator or human then splits it. Deliberately sets no `blockedThreadId`, so the API's resume watcher will not auto-revive it. Since workers share one subscription budget, leaving this misclassified let a single oversized task burn fleet-wide tokens on a guaranteed-failing retry.
+- **`transient`** (rate limit, overload, network blip) — clears on its own; normal cadence.
+
+Both entrypoints classify: `claude-worker`'s poll loop (which falls back to backoff when an overflow left no task to blame, e.g. the unread backlog itself was too large) and `event-worker`'s catch block.
+
 ## Testing
 
+CI (`.github/workflows/ci.yml`) runs `pnpm typecheck` and `pnpm test` on every push to `main` and on every pull request, against a `postgres:16` service. It creates `relai_test` and applies migrations before the suite, and sets `TEST_DATABASE_URL` (port 5432 in CI, where nothing else competes for it, rather than the 5433 used locally). Before CI existed the only gate was a machine-local pre-push hook that any `SKIP_PR_REVIEW=1` bypassed.
+
 Tests use vitest. Test files live alongside source as `*.test.ts`.
+
+**The `packages/api` suite runs against a dedicated `relai_test` database** (same Postgres container/port 5433, same `relai`/`relai` role — no new user needed), never the dev DB. `packages/api/vitest.config.ts` sets `test.env.DATABASE_URL` to `relai_test`, which overrides every test file's own `DATABASE_URL ?? "...relai"` fallback, and a `globalSetup` (`packages/api/src/test/global-setup.ts`) truncates every table before each run. This makes DB hygiene structural rather than per-test discipline: a test that forgets cleanup can only pollute state within its own run, and it can never touch what the local dashboard shows. (This repo hit the discipline-based failure mode twice — 2026-05-06 and 2026-06-26 — before this fix landed.) One-time setup, and again after any schema change: see "Dev setup" below. Schema changes must be applied to **both** `relai` and `relai_test` via `db:migrate`.
 
 Currently tested:
 - `packages/api/src/routes/api.test.ts` — full route coverage with `app.inject()` against a real Postgres
@@ -226,9 +253,12 @@ Currently tested:
 - `packages/api/src/lib/verify-reviewer-agent.test.ts` — reviewer_agent predicate (approve, reject)
 - `packages/api/src/lib/router/rules.test.ts` — rules-based routing logic
 - `packages/api/src/lib/router/message-loop.test.ts` — handoff/finding/decision/question/escalation handling in the API's in-process loop
+- `packages/claude-worker/src/errors.test.ts` — session-failure classification (credentials vs overflow vs transient)
+- `packages/claude-worker/src/block-task.test.ts` — overflow task-blocking (metadata merge, in_progress-only scope, never throws)
+- `packages/event-worker/src/worker.test.ts` — SSE loop, has-work gate, and overflow → block wiring
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~339 tests across the workspace (api alone: ~201). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~493 tests across the workspace (api alone: ~201). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 
@@ -267,7 +297,11 @@ cp .env.example .env
 pnpm install
 docker compose up -d
 DATABASE_URL=postgresql://relai:relai@localhost:5433/relai \
-  pnpm --filter @getrelai/db db:push
+  pnpm --filter @getrelai/db db:migrate
+# One-time: dedicated test DB so `pnpm test` can never touch the dev DB above.
+docker exec relai-postgres-1 psql -U relai -d relai -c "CREATE DATABASE relai_test"
+DATABASE_URL=postgresql://relai:relai@localhost:5433/relai_test \
+  pnpm --filter @getrelai/db db:migrate
 pnpm --filter @getrelai/api dev        # terminal 1 — must be running before seed
 # In a second terminal:
 API_SECRET=<your-secret> tsx scripts/seed.ts my-repo my-agent orchestrator
@@ -293,9 +327,13 @@ Workflow:
 
 ## Deploy
 
-The repo ships a production `Dockerfile` + `fly.toml` targeting Fly.io. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). Schema migrations run automatically via the `[deploy] release_command` in `fly.toml` (`pnpm --filter @getrelai/db db:push`); column renames must still be applied manually via raw SQL first. See `docs/deploy-fly.md` for the full walkthrough.
+The repo ships a production `Dockerfile` + `render.yaml` targeting Render. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). See `docs/deploy-render.md`.
 
-`/health` is auth-gated, so the Fly health probe is a TCP check today. The web dashboard isn't deployed by this config — host it separately or skip for CLI/MCP-only setups.
+**Nothing applies the schema on deploy.** Render's free plan has no pre-deploy command, so migrations are applied by hand against the database's external URL: `DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:migrate`. Do this before the first deploy (or the API boots against an empty database) and after any schema change.
+
+The Fly config was removed on 2026-08-20. It was never deployed, and its `[deploy] release_command` ran `db:push` **from the deployed image**, so rolling back to an older image would have diffed newer tables as deletions and dropped them with their data. If Fly is revisited, the release command must run `db:migrate`, never `push`.
+
+`/health` is auth-gated, so a health probe needs either a token or an unauthenticated `/livez` route. The web dashboard isn't deployed by this config — host it separately or skip for CLI/MCP-only setups.
 
 ## Critical rules
 
@@ -303,7 +341,7 @@ The repo ships a production `Dockerfile` + `fly.toml` targeting Fly.io. The imag
 - **Port 5433 for Postgres** — docker-compose maps `5433:5432` to avoid conflicting with other local databases.
 - **Port 3010 for API** — avoids common dev server port conflicts.
 - **drizzle-kit does not auto-load `.env`** — always pass `DATABASE_URL` explicitly.
-- **drizzle-kit `push` prompts on renames** — apply `ALTER TABLE … RENAME COLUMN` directly via `docker exec` instead.
+- **Schema changes go through `db:generate` + `db:migrate`** — `push` is interactive, hangs on additive changes, and must never be used in a deploy step.
 - **`tsx watch --env-file` flag order** — `tsx watch --env-file=../../.env src/index.ts` (watch before flag). Reversing causes tsx to treat `watch` as the script path.
 - **Routing is sequential, not parallel** — tasks are routed one at a time within a cycle to avoid racing on agent availability.
 - **MCP tool handlers must return MCP content format** — see MCP server section above.

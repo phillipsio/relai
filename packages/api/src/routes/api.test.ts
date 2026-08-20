@@ -20,6 +20,12 @@ let agentId: string;
 let taskId: string;
 let threadId: string;
 
+// Tests further down create additional repos beyond the anchor (e.g. to
+// exercise repoUrl validation or defaultAssignee inheritance). Every such
+// repo id must be pushed here so afterAll can clean it up — otherwise it
+// leaks into the dev DB shown at localhost:5173/repos on every test run.
+const extraRepoIds: string[] = [];
+
 beforeAll(async () => {
   app = buildServer({ logger: false });
   await app.ready();
@@ -35,6 +41,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  for (const id of extraRepoIds) {
+    await app.inject({ method: "DELETE", url: `/repos/${id}`, headers: AUTH });
+  }
   if (repoId) {
     await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: AUTH });
   }
@@ -122,6 +131,7 @@ describe("POST /repos", () => {
         body: JSON.stringify({ name: "good-url-repo", repoUrl: good }),
       });
       expect(res.statusCode).toBe(201);
+      extraRepoIds.push(res.json().data.id);
     }
   });
 
@@ -153,6 +163,7 @@ describe("POST /repos", () => {
       body: JSON.stringify({ name: "orch-can", repoUrl: "https://example.com/x.git" }),
     });
     expect(allowed.statusCode).toBe(201);
+    extraRepoIds.push(allowed.json().data.id);
   });
 });
 
@@ -390,6 +401,7 @@ describe("POST /tasks", () => {
     });
     expect(proj.statusCode).toBe(201);
     const autoRepoId = proj.json().data.id;
+    extraRepoIds.push(autoRepoId);
 
     const res = await app.inject({
       method: "POST", url: "/tasks",
@@ -1023,6 +1035,7 @@ describe("PUT /tasks/:id", () => {
       body: JSON.stringify({ name: "__test__ other-rev" }),
     });
     const otherRepoId = otherProj.json().data.id;
+    extraRepoIds.push(otherRepoId);
     const stranger = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },

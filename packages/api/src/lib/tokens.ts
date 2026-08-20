@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 const TOKEN_PREFIX = "aio_";
 const INVITE_PREFIX = "inv_";
@@ -20,4 +20,16 @@ export const hashToken = hashSecret;
 
 export function looksLikeAgentToken(value: string): boolean {
   return value.startsWith(TOKEN_PREFIX);
+}
+
+// Compare a caller-supplied secret against a configured one without leaking a
+// match position through timing. Hashing first gives both sides a fixed 32-byte
+// length, so timingSafeEqual cannot throw on a size mismatch and the comparison
+// reveals nothing about the expected secret's length either.
+export function secretsMatch(provided: string, expected: string | undefined): boolean {
+  if (!expected) return false;
+  return timingSafeEqual(
+    createHash("sha256").update(provided).digest(),
+    createHash("sha256").update(expected).digest(),
+  );
 }

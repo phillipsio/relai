@@ -164,3 +164,22 @@ describe("auth: token rotate + revoke", () => {
     expect(res.statusCode).toBe(200);
   });
 });
+
+describe("shared-secret comparison", () => {
+  it("accepts the configured secret and rejects a wrong one", async () => {
+    const ok = await app.inject({ method: "GET", url: "/health", headers: { Authorization: `Bearer ${SECRET}` } });
+    expect(ok.statusCode).toBe(200);
+
+    const bad = await app.inject({ method: "GET", url: "/health", headers: { Authorization: "Bearer not-the-secret" } });
+    expect(bad.statusCode).toBe(401);
+  });
+
+  // A naive timingSafeEqual throws on differing buffer lengths, which would turn
+  // a wrong password into a 500. Hashing both sides first is what avoids that.
+  it("rejects secrets of the wrong length cleanly rather than erroring", async () => {
+    for (const attempt of ["x", "", SECRET + "extra", "z".repeat(500)]) {
+      const res = await app.inject({ method: "GET", url: "/health", headers: { Authorization: `Bearer ${attempt}` } });
+      expect(res.statusCode).toBe(401);
+    }
+  });
+});

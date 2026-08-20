@@ -1,5 +1,5 @@
 import { EventSource } from "eventsource";
-import { runClaudeSession, heartbeat, assertRepoOrExit } from "@getrelai/claude-worker";
+import { runClaudeSession, heartbeat, assertRepoOrExit, classifySessionError, blockOverflowedTasks } from "@getrelai/claude-worker";
 import { createRunQueue } from "./queue.js";
 import type { EventWorkerConfig } from "./config.js";
 
@@ -62,6 +62,7 @@ const EVENT_KINDS = [
   "task.review_overdue",
   "thread.created",
   "thread.concluded",
+  "artifact.published",
 ] as const;
 
 // SSE-driven run loop, factored out so other packages (e.g. @getrelai/agent's
@@ -98,7 +99,26 @@ export async function runEventWorker(config: EventWorkerConfig): Promise<never> 
       console.log("[event-worker] Event received — running session...");
       await runClaudeSession(config);
     } catch (err) {
-      console.error("[event-worker] Session error:", err instanceof Error ? err.message : String(err));
+      const text = err instanceof Error ? err.message : String(err);
+      const failure = classifySessionError(text);
+
+      // No backoff to apply (event-driven), but the task must still leave the
+      // queue or every later event respawns the same doomed session.
+      if (failure === "overflow") {
+        const blocked = await blockOverflowedTasks(config, text, "[event-worker]");
+        console.error(
+          blocked.length > 0
+            ? `[event-worker] Session ran out of context — blocked ${blocked.join(", ")} pending a split.\n  ${text}`
+            : `[event-worker] Session ran out of context but no task was in flight to block.\n  ${text}`,
+        );
+      } else if (failure === "credentials") {
+        console.error(
+          `[event-worker] FATAL error (likely exhausted credits or bad credentials) — ` +
+          `fix it; the worker keeps listening and will recover on the next event.\n  ${text}`,
+        );
+      } else {
+        console.error("[event-worker] Session error:", text);
+      }
     }
   });
 

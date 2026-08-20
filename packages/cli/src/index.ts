@@ -222,6 +222,7 @@ repo
   .description("Create an invite code for another agent to join this repo")
   .option("-n, --name <name>", "Suggested agent name (the new agent can override)")
   .option("-s, --specialization <s>", "Suggested specialization")
+  .option("--role <role>", "Role this invite grants: orchestrator | worker (default worker)")
   .option("--ttl <seconds>", "Expiry in seconds (default: 7 days)")
   .action(repoInviteCommand);
 

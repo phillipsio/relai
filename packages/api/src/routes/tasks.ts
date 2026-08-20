@@ -142,6 +142,22 @@ const updateSchema = z.object({
   verifyTimeoutMs:  z.number().int().min(1_000).max(600_000).optional(),
 });
 
+// Written by dedicated routes or by the schedulers, and trusted afterwards, so a
+// client must not be able to set them through the generic metadata field.
+// `blockedThreadId`/`blockedReason` are deliberately absent: prompt.ts instructs
+// workers to set those when they escalate.
+const SERVER_OWNED_METADATA_KEYS = [
+  "review",
+  "commit",
+  "proposal",
+  "lastVerification",
+  "humanReply",
+  "humanRepliedAt",
+  "proposedOverdueNotifiedAt",
+  "reviewOverdueNotifiedAt",
+  "verifyRetryCount",
+] as const;
+
 export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.post("/tasks", async (request, reply) => {
     const body = createSchema.safeParse(request.body);
@@ -416,6 +432,27 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // verifying / completed), rewrite the transition to pending_verification.
     // The scheduler will run the predicate on the next tick.
     const updates: Record<string, unknown> = { ...body.data };
+
+    // Stamped on every transition into `blocked`, including a re-block, so the
+    // answer to an earlier question cannot resume a later blocking.
+    if (updates.status === "blocked") updates.blockedAt = new Date();
+
+    // metadata is a single jsonb column, so a client PUT would otherwise replace
+    // the whole thing. Merge instead, and take every server-owned key from the
+    // existing row: those are written by dedicated routes and schedulers and then
+    // trusted, so a client value for one of them is either an echo of a
+    // read-modify-write (common, harmless) or an attempt to forge it. Dropped
+    // rather than rejected, because echoing the whole blob back is an existing
+    // and legitimate pattern.
+    if (updates.metadata !== undefined) {
+      const existing = (scope.task.metadata ?? {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...existing, ...(updates.metadata as Record<string, unknown>) };
+      for (const key of SERVER_OWNED_METADATA_KEYS) {
+        if (key in existing) merged[key] = existing[key];
+        else delete merged[key];
+      }
+      updates.metadata = merged;
+    }
     let reviewerToNotify: string | null = null;
     if (updates.status === "completed") {
       const [existing] = await db
@@ -798,6 +835,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       id:        newId("msg"),
       threadId:  thread.id,
       fromAgent,
+      authorKind: request.agent ? "agent" : "human",
       type:      body.data.type ?? "status",
       body:      body.data.body,
     }).returning();

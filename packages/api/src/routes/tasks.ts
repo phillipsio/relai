@@ -11,12 +11,27 @@ import type { TaskStatus } from "@getrelai/types";
 
 // Lookup a task and verify the caller may access its project. Returns 404 to
 // avoid leaking task existence across tenants.
-async function loadTaskScoped(request: import("fastify").FastifyRequest, db: Db, taskId: string) {
+async function loadTaskScoped(
+  request: import("fastify").FastifyRequest,
+  db: Db,
+  taskId: string,
+  opts: { allowAuthor?: boolean } = {},
+) {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) return { ok: false as const, status: 404 as const };
   const access = await assertRepoAccess(request, db, task.repoId);
-  if (!access.ok) return { ok: false as const, status: 404 as const };
-  return { ok: true as const, task };
+  if (access.ok) return { ok: true as const, task };
+
+  // An agent may read and annotate a task it filed itself, even in another repo.
+  // POST /relai-feedback is the only way to create one, and it already subscribes
+  // the reporter to that task's events — which carry the whole row — so refusing
+  // the REST read protected nothing and only made filing write-only: you could
+  // report a problem and then never read or correct what you reported.
+  // Read-and-comment only; the mutating routes deliberately do not pass this.
+  if (opts.allowAuthor && request.agent && task.createdBy === request.agent.id) {
+    return { ok: true as const, task };
+  }
+  return { ok: false as const, status: 404 as const };
 }
 
 // Verify-predicate consistency: each kind requires its own field, and fields
@@ -356,7 +371,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
   );
 
   fastify.get<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
-    const result = await loadTaskScoped(request, db, request.params.id);
+    const result = await loadTaskScoped(request, db, request.params.id, { allowAuthor: true });
     if (!result.ok) return reply.status(result.status).send({ error: { code: "not_found", message: "Task not found" } });
     return { data: result.task };
   });
@@ -808,7 +823,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
   // Reads/posts comments against the task's lazily-created comment thread, so the
   // web Issue detail doesn't have to manage thread creation itself.
   fastify.get<{ Params: { id: string } }>("/tasks/:id/comments", async (request, reply) => {
-    const scope = await loadTaskScoped(request, db, request.params.id);
+    const scope = await loadTaskScoped(request, db, request.params.id, { allowAuthor: true });
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
     const thread = await ensureTaskThread(db, scope.task);
     const rows = await db.select().from(messages).where(eq(messages.threadId, thread.id)).orderBy(asc(messages.createdAt));
@@ -824,7 +839,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const body = commentSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    const scope = await loadTaskScoped(request, db, request.params.id);
+    const scope = await loadTaskScoped(request, db, request.params.id, { allowAuthor: true });
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
     const thread = await ensureTaskThread(db, scope.task);
 

@@ -145,6 +145,12 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     async (request, reply) => {
       const { agentId } = request.body as { agentId: string };
       if (!agentId) return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
+      // Marking someone else's messages read suppresses their inbox, so a
+      // per-agent caller may only name itself. Admin/owner callers (CLI,
+      // dashboard) still pass an explicit id.
+      if (request.agent && agentId !== request.agent.id) {
+        return reply.status(403).send({ error: { code: "forbidden", message: "Cannot mark messages read for another agent" } });
+      }
 
       const scope = await assertThreadAccess(request, db, request.params.id);
       if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
@@ -162,6 +168,9 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const { agentId, repoId } = request.query;
     if (!agentId)   return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
     if (!repoId) return reply.status(400).send({ error: { code: "validation_error", message: "repoId required" } });
+    if (request.agent && agentId !== request.agent.id) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "Cannot read another agent's unread feed" } });
+    }
 
     const access = await assertRepoAccess(request, db, repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });

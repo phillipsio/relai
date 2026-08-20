@@ -123,10 +123,10 @@ Fastify v4 with Zod validation throughout.
 **Threads & messages**
 - `POST /threads`, `GET /threads?repoId=&type=&archived=`, `DELETE /threads/:id`, `PUT /threads/:id/conclude`, `PUT /threads/:id/archive` (archive a `concluded` thread — plan OR operational — out of default lists + `session_start`; 409 if not concluded; idempotent; `archived=true` to include)
 - `POST /threads/:id/messages`, `GET /threads/:id/messages`, `PUT /threads/:id/messages/read`
-- `GET /messages/unread?agentId=&repoId=` — both params required
+- `GET /messages/unread?agentId=&repoId=` — both params required. A per-agent caller may only name **itself**, on this route and on `PUT /threads/:id/messages/read`; marking another agent's messages read suppresses their inbox. Admin/owner callers still pass an explicit id, which the CLI and dashboard rely on.
 
 **Subscriptions & events**
-- `POST /subscriptions`, `GET /subscriptions?agentId=`, `DELETE /subscriptions/:id`
+- `POST /subscriptions`, `GET /subscriptions?agentId=`, `DELETE /subscriptions/:id`. **A subscription created through this route may not cross repos**: the target is resolved and its repo must match the subscribing agent's, and an unresolvable target is a 404. This matters because delivery (`resolveSubscribers`/`deliverableTo`) matches on `targetType`+`targetId` alone with no repo check, so a cross-repo row is a standing leak and the SSE payload carries the whole task record. `ensureSubscription()` is the deliberate exception, called server-side with ids the server chose (see `POST /relai-feedback`, which subscribes a reporter to the task it filed).
 - `GET /events` — Server-Sent Events stream filtered to the caller's subscriptions; auto-subscribes the caller on message/task creation
 
 Every published event is also persisted to the `events` table on write, so `/session/start` can return what an agent missed since their last read. SSE remains the live channel; the table is history.

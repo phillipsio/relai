@@ -133,6 +133,10 @@ interface CreateTaskArgs {
   specialization?: string | null;
   assignedTo?:    string | null;
   metadata?:      Record<string, unknown>;
+  status?:        "pending" | "assigned" | "blocked";
+  // Required when status is "blocked": the watcher skips an unstamped row
+  // rather than guessing which replies predate the block.
+  blockedAt?:     Date;
 }
 
 async function createTask(db: Db, args: CreateTaskArgs) {
@@ -146,13 +150,16 @@ async function createTask(db: Db, args: CreateTaskArgs) {
     domains:        args.domains ?? [],
     specialization: args.specialization ?? null,
     assignedTo:     args.assignedTo ?? null,
-    status:         args.assignedTo ? "assigned" : "pending",
+    status:         args.status ?? (args.assignedTo ? "assigned" : "pending"),
     metadata:       args.metadata ?? {},
+    blockedAt:      args.blockedAt ?? null,
   }).returning();
 
+  // task.blocked is an owner-attention kind and task.created is not, so the
+  // event is what decides whether this reaches a human.
   await publish(db, {
     id:         newId("evt"),
-    kind:       "task.created",
+    kind:       task.status === "blocked" ? "task.blocked" : "task.created",
     repoId:  task.repoId,
     targetType: "task",
     targetId:   task.id,
@@ -289,13 +296,40 @@ export async function handleMessage(
       if (seniors.length === 0) seniors = online.filter((a) => a.specialization === "architect");
 
       if (seniors.length === 0) {
+        // Reply first: it lands on the same thread, and blockedAt must postdate
+        // it or watchBlockedTasks reads this very message as the answer.
         await sendMessage(deps.db, {
           threadId:  msg.threadId,
           fromAgent: orchestrator.id,
           toAgent:   msg.fromAgent,
           type:      "reply",
-          body:      "Escalation received. No senior agent is currently available — surfaced to human operator.",
+          body:
+            "Escalation received. No senior agent is available, so this is parked for the human " +
+            "operator. Do not keep waiting on a senior; you will be resumed when a human answers " +
+            "on this thread.",
         });
+
+        // assignedTo FKs agents.id, so only a real agent id can own the resume.
+        const owner = msg.fromAgent.startsWith("agent_") ? msg.fromAgent : null;
+        const parked = await createTask(deps.db, {
+          repoId,
+          createdBy:   orchestrator.id,
+          title:       `Escalation from ${msg.fromAgent} needs a human`,
+          description: msg.body,
+          priority:    "high",
+          assignedTo:  owner,
+          status:      "blocked",
+          blockedAt:   new Date(),
+          metadata: {
+            blockedThreadId:     msg.threadId,
+            blockedReason:       "escalation with no senior agent available",
+            escalatedFrom:       msg.fromAgent,
+            escalationMessageId: msg.id,
+            originalMetadata:    msg.metadata,
+          },
+        });
+        if (owner) await ensureSubscription(deps.db, owner, "task", parked.id);
+        console.warn(`[message-loop] Escalation → no senior; parked ${parked.id} as blocked for a human`);
         break;
       }
 

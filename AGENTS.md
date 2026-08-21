@@ -157,7 +157,7 @@ The blocked-task watcher detects human replies on threads referenced by `task.me
 
 **Message loop (opt-in):** when `ENABLE_MESSAGE_ROUTING=true`, the same scheduler runs `message-loop.ts` per repo per tick. For each repo's `role="orchestrator"` agent, it processes the agent's repo-wide unread feed:
 - `status`/`reply` — mark read, no other action
-- `escalation` — find an online tier-2 senior (or `architect` specialization fallback), create a `high`-priority task assigned directly to them, post a reply on the originating thread
+- `escalation` — find an online tier-2 senior (or `architect` specialization fallback), create a `high`-priority task assigned directly to them, post a reply on the originating thread. **With no senior available it parks a `blocked` task for the human** rather than only saying it did: `metadata.blockedThreadId` points at the escalation thread, `blockedAt` is stamped (the watcher skips unstamped rows), it is assigned back to the escalating agent so a human answer resumes *their* work, and it publishes `task.blocked`, which is the owner-attention kind that reaches a notification channel and `list_attention`. The reply is posted **before** `blockedAt` is stamped, deliberately: it lands on the same thread, and `watchBlockedTasks` would otherwise read the orchestrator's own reply as the answer and resume the task on the next tick. Until 2026-08-21 this branch posted "surfaced to human operator" and returned, creating nothing, and since no agent had `tier`/`architect` set it was the *only* branch that ever ran.
 - `decision` — broadcast to every online worker on the same thread
 - `handoff`/`question`/`finding` — call Claude with the `route_message` tool to choose between `create_task` / `forward` / `broadcast` / `reply` / `log_only` and execute
 
@@ -270,7 +270,7 @@ Currently tested:
 - `packages/event-worker/src/worker.test.ts` — SSE loop, has-work gate, and overflow → block wiring
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~672 tests across the workspace (api alone: ~447). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~675 tests across the workspace (api alone: ~450). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 

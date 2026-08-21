@@ -9,7 +9,9 @@ import {
   agents as agentsTable,
   messages as messagesTable,
   tasks as tasksTable,
+  events as eventsTable,
 } from "@getrelai/db";
+import { watchBlockedTasks } from "./scheduler.js";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
 const SECRET = "test-secret-message-loop";
@@ -230,22 +232,74 @@ describe("handleMessage — escalation", () => {
     expect(newTasks[0].assignedTo).toBe(arch);
   });
 
-  it("surfaces to human when no senior agent is available", async () => {
-    const junior = await newAgent({ name: "junior", role: "worker", tier: 1 });
+  // The old behaviour posted "surfaced to human operator" and returned, creating
+  // nothing. The reply was the only artefact, so the escalation died on the
+  // thread having told the asker a human had been informed.
+  it("parks a blocked task for the human instead of only claiming to", async () => {
+    await newAgent({ name: "junior", role: "worker", tier: 1 });
+    const sender = await newAgent({ name: "sender", role: "worker" });
+    const msg    = await newMessage({ type: "escalation", fromAgent: sender, body: "Need a call on the auth model" });
+
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
+
+    const rows = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
+    expect(rows).toHaveLength(1);
+    const task = rows[0];
+    const meta = task.metadata as Record<string, unknown>;
+
+    expect(task.status).toBe("blocked");
+    expect(task.priority).toBe("high");
+    expect(task.assignedTo).toBe(sender);          // resume returns the work to whoever escalated
+    expect(meta.blockedThreadId).toBe(threadId);   // the thread a human replies on
+    expect(meta.escalatedFrom).toBe(sender);
+    expect(meta.blockedReason).toBeTruthy();
+    expect(task.blockedAt).toBeTruthy();           // unstamped rows are skipped by the watcher
+    expect(task.description).toContain("Need a call on the auth model");
+  });
+
+  it("emits task.blocked, which is what reaches an owner notification channel", async () => {
+    await newAgent({ name: "junior", role: "worker", tier: 1 });
     const sender = await newAgent({ name: "sender", role: "worker" });
     const msg    = await newMessage({ type: "escalation", fromAgent: sender });
 
     await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
-    const newTasks = await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId));
-    expect(newTasks).toHaveLength(0);
-    expect(junior).toBeTruthy(); // referenced so lint doesn't strip
+    const kinds = (await db.select().from(eventsTable).where(eq(eventsTable.repoId, repoId))).map((e) => e.kind);
+    expect(kinds).toContain("task.blocked");
+  });
+
+  // The orchestrator's own reply lands on the same thread. blockedAt has to be
+  // stamped after it, or watchBlockedTasks reads that reply as the answer and
+  // resumes the task on the very next tick.
+  it("cannot be resumed by its own reply", async () => {
+    await newAgent({ name: "junior", role: "worker", tier: 1 });
+    const sender = await newAgent({ name: "sender", role: "worker" });
+    const msg    = await newMessage({ type: "escalation", fromAgent: sender, toAgent: orchestratorId });
+
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
+
+    const before = (await db.select().from(tasksTable).where(eq(tasksTable.repoId, repoId)))[0];
+    const reply = (await listMessages()).find((m) => m.fromAgent === orchestratorId && m.type === "reply")!;
+    expect(new Date(reply.createdAt).getTime()).toBeLessThanOrEqual(new Date(before.blockedAt!).getTime());
+
+    await watchBlockedTasks(db, repoId);
+
+    const after = (await db.select().from(tasksTable).where(eq(tasksTable.id, before.id)))[0];
+    expect(after.status).toBe("blocked");
+  });
+
+  it("still tells the escalating agent, and marks the message read", async () => {
+    await newAgent({ name: "junior", role: "worker", tier: 1 });
+    const sender = await newAgent({ name: "sender", role: "worker" });
+    const msg    = await newMessage({ type: "escalation", fromAgent: sender });
+
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
 
     const reply = (await listMessages()).find((m) => m.fromAgent === orchestratorId && m.type === "reply");
-    expect(reply).toBeTruthy();
+    expect(reply!.toAgent).toBe(sender);
     expect(reply!.body).toMatch(/no senior agent/i);
-    const reloaded = await reloadMessage(msg.id);
-    expect(reloaded.readBy).toContain(orchestratorId);
+    expect(reply!.body).toMatch(/human/i);
+    expect((await reloadMessage(msg.id)).readBy).toContain(orchestratorId);
   });
 });
 

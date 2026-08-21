@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createMcpServer } from "./create-server.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ApiClient } from "./api-client.js";
 import { buildTools, buildOperatorTools } from "./tools.js";
@@ -69,10 +69,7 @@ const apiClient = new ApiClient({
   ownerId: OWNER_MODE ? OWNER_ID : undefined,
 });
 
-const server = new McpServer({
-  name: OWNER_MODE ? "relai-operator" : "relai",
-  version: pkg.version,
-});
+const server = createMcpServer(OWNER_MODE ? "relai-operator" : "relai", pkg.version);
 
 // Register tools for the active mode.
 const tools = OWNER_MODE
@@ -102,8 +99,11 @@ if (OWNER_MODE) {
       for (const data of notices) {
         await server.server.sendLoggingMessage({ level: "warning", data });
       }
-    } catch {
-      // Non-fatal. `seen` is left as-is so a blip does not replay the backlog.
+    } catch (err) {
+      // Logged, not swallowed: a silent catch here is what hid the missing
+      // logging capability. `seen` is left as-is so a blip does not replay the
+      // backlog as new transitions.
+      console.error("[relai-mcp] attention poll failed:", err instanceof Error ? err.message : err);
     }
   }
 
@@ -152,8 +152,8 @@ async function pollInbox() {
         data: `💬 New ${(msg as any).type} message from ${(msg as any).fromAgent} in thread ${(msg as any).threadId} — call get_unread_messages to read`,
       });
     }
-  } catch {
-    // Non-fatal — API may be temporarily unreachable
+  } catch (err) {
+    console.error("[relai-mcp] inbox poll failed:", err instanceof Error ? err.message : err);
   }
 }
 

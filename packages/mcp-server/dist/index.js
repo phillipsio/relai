@@ -7,7 +7,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const node_fs_1 = require("node:fs");
 const node_path_1 = require("node:path");
-const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
+const create_server_js_1 = require("./create-server.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const api_client_js_1 = require("./api-client.js");
 const tools_js_1 = require("./tools.js");
@@ -53,10 +53,7 @@ const apiClient = new api_client_js_1.ApiClient({
     secret: OWNER_MODE ? API_OWNER_TOKEN : API_SECRET,
     ownerId: OWNER_MODE ? OWNER_ID : undefined,
 });
-const server = new mcp_js_1.McpServer({
-    name: OWNER_MODE ? "relai-operator" : "relai",
-    version: pkg.version,
-});
+const server = (0, create_server_js_1.createMcpServer)(OWNER_MODE ? "relai-operator" : "relai", pkg.version);
 // Register tools for the active mode.
 const tools = OWNER_MODE
     ? (0, tools_js_1.buildOperatorTools)(apiClient, OWNER_ID)
@@ -83,8 +80,11 @@ if (OWNER_MODE) {
                 await server.server.sendLoggingMessage({ level: "warning", data });
             }
         }
-        catch {
-            // Non-fatal. `seen` is left as-is so a blip does not replay the backlog.
+        catch (err) {
+            // Logged, not swallowed: a silent catch here is what hid the missing
+            // logging capability. `seen` is left as-is so a blip does not replay the
+            // backlog as new transitions.
+            console.error("[relai-mcp] attention poll failed:", err instanceof Error ? err.message : err);
         }
     }
     void pollAttention();
@@ -127,8 +127,8 @@ if (!OWNER_MODE) {
                 });
             }
         }
-        catch {
-            // Non-fatal — API may be temporarily unreachable
+        catch (err) {
+            console.error("[relai-mcp] inbox poll failed:", err instanceof Error ? err.message : err);
         }
     }
     // Seed seen sets on startup so we only notify about truly new items

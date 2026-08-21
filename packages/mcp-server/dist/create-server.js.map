@@ -1,0 +1,1 @@
+{"version":3,"file":"create-server.js","sourceRoot":"","sources":["../src/create-server.ts"],"names":[],"mappings":";;AAKA,0CAEC;AAPD,oEAAoE;AAEpE,4EAA4E;AAC5E,+EAA+E;AAC/E,6EAA6E;AAC7E,SAAgB,eAAe,CAAC,IAAY,EAAE,OAAe;IAC3D,OAAO,IAAI,kBAAS,CAAC,EAAE,IAAI,EAAE,OAAO,EAAE,EAAE,EAAE,YAAY,EAAE,EAAE,OAAO,EAAE,EAAE,EAAE,EAAE,CAAC,CAAC;AAC7E,CAAC"}

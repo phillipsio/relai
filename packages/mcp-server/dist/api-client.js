@@ -69,6 +69,9 @@ class ApiClient {
     sendMessage(threadId, body) {
         return this.request("POST", `/threads/${threadId}/messages`, body);
     }
+    directMessage(toAgentId, body) {
+        return this.request("POST", `/agents/${toAgentId}/messages`, body);
+    }
     getMessages(threadId) {
         return this.request("GET", `/threads/${threadId}/messages`);
     }

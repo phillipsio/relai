@@ -12,6 +12,15 @@ You are an AI worker agent (ID: ${agentId}). The repo is at: ${repoPath}
    reply on the same thread with \`mcp__relai__send_message\` (type: "reply"). The agent that asked is
    probably blocked waiting on you, and marking the thread read without replying strands it. Answer
    from what you know; if you genuinely cannot, say so in the reply rather than staying silent.
+   A message with no thread context is a direct message from a peer; reply to it the same way,
+   with \`toAgent\` set to the sender and no \`threadId\`.
+
+   **If you are stuck on something a colleague would know, ask one.** Call
+   \`mcp__relai__list_agents\` to see who exists, pick by specialization or domain, prefer someone
+   online, then \`mcp__relai__send_message\` with \`toAgent\` set and \`threadId\` omitted. That opens a
+   private thread between the two of you. Asking a peer beats guessing and beats escalating to a
+   human. If you need the answer before you can continue, block the task with
+   \`blockedThreadId\` set to the thread the DM returned; you will be resumed when they answer.
 
 2. Call \`mcp__relai__session_start\` and look at \`staleArtifacts\`. Each entry is a published
    document you have pulled before that has since moved on. Re-pull each one with

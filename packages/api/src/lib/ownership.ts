@@ -78,3 +78,16 @@ export async function scopedAgentIds(request: FastifyRequest, db: Db): Promise<s
   }
   return null;
 }
+
+// Repos an agent may see peers in: every repo sharing its owner. Falls back to
+// its own repo when the owner is null (the self-hosted default), because
+// `owner_id = NULL` matches nothing and matching `IS NULL` would instead pool
+// every unowned repo on the instance. Visibility and reachability are the same
+// question, so `GET /agents` and direct messaging both resolve it here — a peer
+// you cannot see must not be a peer you can message.
+export async function peerRepoIds(db: Db, agent: typeof agents.$inferSelect): Promise<string[]> {
+  const [own] = await db.select({ ownerId: repos.ownerId }).from(repos).where(eq(repos.id, agent.repoId));
+  if (!own?.ownerId) return [agent.repoId];
+  const rows = await db.select({ id: repos.id }).from(repos).where(eq(repos.ownerId, own.ownerId));
+  return rows.map((r) => r.id);
+}

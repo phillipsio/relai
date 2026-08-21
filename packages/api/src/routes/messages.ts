@@ -1,15 +1,24 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, sql, asc } from "drizzle-orm";
-import { messages, threads, tasks } from "@getrelai/db";
+import { messages, threads, tasks, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertRepoAccess } from "../lib/ownership.js";
+import { assertRepoAccess, peerRepoIds } from "../lib/ownership.js";
+import { ensureDmThread, isDmParticipant, dmThreadFilter } from "../lib/dm.js";
 import type { Db } from "@getrelai/db";
 
 async function assertThreadAccess(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
   const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
   if (!thread) return { ok: false as const, status: 404 as const };
+  // A DM lives in the sender's repo but is not repo-readable: only the two
+  // participants get in, so a repo-mate cannot open someone else's conversation.
+  // Owner/admin callers still reach it through the repo check below, which is
+  // the operator oversight path.
+  if (thread.type === "dm" && request.agent) {
+    if (!isDmParticipant(thread, request.agent.id)) return { ok: false as const, status: 404 as const };
+    return { ok: true as const, thread };
+  }
   const access = await assertRepoAccess(request, db, thread.repoId);
   if (!access.ok) return { ok: false as const, status: 404 as const };
   return { ok: true as const, thread };
@@ -164,6 +173,62 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     }
   );
 
+  const dmSchema = z.object({
+    type:     z.enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"]).default("question"),
+    body:     z.string().min(1),
+    metadata: z.record(z.unknown()).default({}),
+  });
+
+  // Address a peer directly, without having to find or create a thread first.
+  // Restricted to per-agent callers: the pair key needs two agent identities,
+  // and the owner path already has `reply_human` for talking to a thread.
+  fastify.post<{ Params: { id: string } }>("/agents/:id/messages", async (request, reply) => {
+    const body = dmSchema.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const sender = request.agent;
+    if (!sender) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "Direct messages require a per-agent token" } });
+    }
+    if (request.params.id === sender.id) {
+      return reply.status(400).send({ error: { code: "validation_error", message: "Cannot direct-message yourself" } });
+    }
+
+    const [recipient] = await db.select().from(agents).where(eq(agents.id, request.params.id));
+    const reachable = recipient && (await peerRepoIds(db, sender)).includes(recipient.repoId);
+    if (!reachable) return reply.status(404).send({ error: { code: "not_found", message: "Agent not found" } });
+
+    const thread = await ensureDmThread(db, sender.id, recipient.id, sender.repoId);
+
+    const [message] = await db.insert(messages).values({
+      id:         newId("msg"),
+      threadId:   thread.id,
+      fromAgent:  sender.id,
+      authorKind: "agent",
+      toAgent:    recipient.id,
+      type:       body.data.type,
+      body:       body.data.body,
+      metadata:   body.data.metadata,
+    }).returning();
+
+    await ensureSubscription(db, sender.id, "thread", thread.id);
+    await ensureSubscription(db, recipient.id, "thread", thread.id);
+
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "message.posted",
+      repoId:     thread.repoId,
+      targetType: "thread",
+      targetId:   thread.id,
+      alsoNotify: [{ targetType: "agent", targetId: recipient.id }],
+      actorId:    sender.id,
+      payload:    { message },
+      createdAt:  message.createdAt.toISOString(),
+    });
+
+    return reply.status(201).send({ data: { threadId: thread.id, message } });
+  });
+
   fastify.get<{ Querystring: { agentId: string; repoId: string } }>("/messages/unread", async (request, reply) => {
     const { agentId, repoId } = request.query;
     if (!agentId)   return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
@@ -180,7 +245,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       .from(messages)
       .innerJoin(threads, eq(messages.threadId, threads.id))
       .where(
-        sql`${threads.repoId} = ${repoId} AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`,
+        sql`(${threads.repoId} = ${repoId} OR ${dmThreadFilter(agentId)}) AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`,
       );
 
     return { data: rows.map((r) => r.messages) };

@@ -133,12 +133,18 @@ export const threads = pgTable("threads", {
   // and standalone threads). No hard FK — circular with tasks.threadId, same as
   // verifyThreadId. The Issue↔Comments link for the unified UI.
   taskId:    text("task_id"),
+  // Sorted "agentA:agentB" pair key for a direct message thread (type="dm").
+  // Null on every other thread. The unique index is what makes get-or-create
+  // actually resolve to one thread when both peers message at once.
+  dmKey:     text("dm_key"),
   // Set when a concluded thread is archived out of the default live views
   // (session_start, GET /threads). Orthogonal to `status` — a thread is
   // `concluded` and *later* archived. History stays queryable via includeArchived=true.
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  dmPair: uniqueIndex("threads_dm_key_unique").on(t.dmKey),
+}));
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 

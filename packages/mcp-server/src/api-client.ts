@@ -146,6 +146,14 @@ export class ApiClient {
     return this.request<unknown>("POST", `/threads/${threadId}/messages`, body);
   }
 
+  directMessage(toAgentId: string, body: {
+    type: string;
+    body: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.request<{ threadId: string; message: unknown }>("POST", `/agents/${toAgentId}/messages`, body);
+  }
+
   getMessages(threadId: string) {
     return this.request<unknown[]>("GET", `/threads/${threadId}/messages`);
   }

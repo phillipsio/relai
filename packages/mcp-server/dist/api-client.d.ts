@@ -107,6 +107,14 @@ export declare class ApiClient {
         body: string;
         metadata?: Record<string, unknown>;
     }): Promise<unknown>;
+    directMessage(toAgentId: string, body: {
+        type: string;
+        body: string;
+        metadata?: Record<string, unknown>;
+    }): Promise<{
+        threadId: string;
+        message: unknown;
+    }>;
     getMessages(threadId: string): Promise<unknown[]>;
     getUnread(agentId: string, repoId: string): Promise<unknown[]>;
     markRead(threadId: string, agentId: string): Promise<unknown>;

@@ -193,7 +193,7 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
-        threadId: z.ZodString;
+        threadId: z.ZodOptional<z.ZodString>;
         type: z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>;
         body: z.ZodString;
         toAgent: z.ZodOptional<z.ZodString>;
@@ -201,18 +201,18 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     }, "strip", z.ZodTypeAny, {
         type: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply";
         body: string;
-        threadId: string;
         metadata?: Record<string, unknown> | undefined;
+        threadId?: string | undefined;
         toAgent?: string | undefined;
     }, {
         type: "status" | "handoff" | "finding" | "decision" | "question" | "escalation" | "reply";
         body: string;
-        threadId: string;
         metadata?: Record<string, unknown> | undefined;
+        threadId?: string | undefined;
         toAgent?: string | undefined;
     }>;
     handler: (input: {
-        threadId: string;
+        threadId?: string;
         type: string;
         body: string;
         toAgent?: string;

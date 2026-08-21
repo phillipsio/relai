@@ -39,6 +39,7 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
       artifact: { name: "instructions", description: null, ownerAgentId: "agent_other" },
       version: { version: 3, body: "the document body", contentType: "text/markdown", createdAt: "2026-08-20T00:00:00.000Z" },
     }),
+    directMessage: vi.fn().mockResolvedValue({ threadId: "thread_dm", message: { id: "msg_1" } }),
     listArtifacts: vi.fn().mockResolvedValue([
       { name: "instructions", description: "MCP instruction surface", currentVersion: 3 },
       { name: "notes", description: null, currentVersion: 1 },
@@ -847,5 +848,46 @@ describe("list_agents (agent toolset)", () => {
     const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_agents");
 
     expect((await handler({})).content[0].text).toContain("No agents");
+  });
+});
+
+describe("send_message without a thread", () => {
+  it("direct-messages the named agent instead of posting to a thread", async () => {
+    const directMessage = vi.fn().mockResolvedValue({ threadId: "thread_dm", message: { id: "msg_1" } });
+    const sendMessage = vi.fn();
+    const tools = buildTools(mockClient({ directMessage, sendMessage } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+
+    const res = await getHandler(tools, "send_message")({ toAgent: "agent_peer", type: "question", body: "free to pair?" });
+
+    expect(directMessage).toHaveBeenCalledWith("agent_peer", {
+      type: "question", body: "free to pair?", metadata: undefined,
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(res.content[0].text).toContain("thread_dm");
+  });
+
+  it("still posts to the thread when one is given", async () => {
+    const directMessage = vi.fn();
+    const sendMessage = vi.fn().mockResolvedValue({ id: "msg_1" });
+    const tools = buildTools(mockClient({ directMessage, sendMessage } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+
+    await getHandler(tools, "send_message")({ threadId: "thread_x", toAgent: "agent_peer", type: "reply", body: "here" });
+
+    expect(sendMessage).toHaveBeenCalled();
+    expect(directMessage).not.toHaveBeenCalled();
+  });
+
+  // Neither field means there is no addressee at all, and guessing one would
+  // post into the wrong conversation.
+  it("asks for one of the two rather than guessing", async () => {
+    const directMessage = vi.fn();
+    const sendMessage = vi.fn();
+    const tools = buildTools(mockClient({ directMessage, sendMessage } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+
+    const res = await getHandler(tools, "send_message")({ type: "question", body: "anyone?" });
+
+    expect(res.content[0].text).toMatch(/threadId.*toAgent/);
+    expect(directMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

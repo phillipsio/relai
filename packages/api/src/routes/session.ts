@@ -6,6 +6,7 @@ import {
   type Db,
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
+import { dmThreadFilter } from "../lib/dm.js";
 
 // How many recent events the snapshot carries. Kept small (and each event
 // trimmed to a one-line summary, below) because this is the dominant
@@ -79,7 +80,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       .select({ messages })
       .from(messages)
       .innerJoin(threads, eq(messages.threadId, threads.id))
-      .where(sql`${threads.repoId} = ${repoId} AND NOT (${messages.readBy} @> ARRAY[${agent.id}]::text[])`);
+      .where(sql`(${threads.repoId} = ${repoId} OR ${dmThreadFilter(agent.id)}) AND NOT (${messages.readBy} @> ARRAY[${agent.id}]::text[])`);
     const unreadMessages = unreadRows.map((r) => r.messages);
 
     // Open threads I'm subscribed to in this project.

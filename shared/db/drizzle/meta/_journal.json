@@ -36,6 +36,13 @@
       "when": 1787252944435,
       "tag": "0004_add_artifacts",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787273758119,
+      "tag": "0005_jazzy_miek",
+      "breakpoints": true
     }
   ]
 }

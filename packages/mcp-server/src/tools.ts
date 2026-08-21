@@ -267,9 +267,18 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         "Be specific in the body — the receiver has no other context. " +
         "IMPORTANT: if you were asked something via a relai message or task (toAgent=you, or a task " +
         "assigned to you), your answer belongs here, posted on that same threadId — not just written " +
-        "in your own session output. The requester only sees what you post through send_message.",
+        "in your own session output. The requester only sees what you post through send_message. " +
+        "To start a conversation with a peer you have no thread with, give toAgent and omit threadId: " +
+        "that opens (or reuses) a private direct thread between the two of you. Find the agent with " +
+        "list_agents. A direct thread is readable only by its two participants.",
       inputSchema: z.object({
-        threadId: z.string().describe("The thread to post to. Use list_threads to find or create one."),
+        threadId: z
+          .string()
+          .optional()
+          .describe(
+            "The thread to post to. Use list_threads to find or create one. Omit it (with toAgent set) " +
+            "to direct-message that agent — no thread needed.",
+          ),
         type: z
           .enum(["status", "handoff", "finding", "decision", "question", "escalation", "reply"])
           .describe("Message type — see tool description for when to use each."),
@@ -277,19 +286,38 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         toAgent: z
           .string()
           .optional()
-          .describe("Agent ID to address directly. Omit to send to the orchestrator."),
+          .describe(
+            "Agent ID to address directly. Omit to send to the orchestrator. Required when threadId " +
+            "is omitted.",
+          ),
         metadata: z
           .record(z.unknown())
           .optional()
           .describe("Structured data: affected files, task IDs, decisions, etc."),
       }),
       handler: async (input: {
-        threadId: string;
+        threadId?: string;
         type: string;
         body: string;
         toAgent?: string;
         metadata?: Record<string, unknown>;
       }) => {
+        if (!input.threadId) {
+          if (!input.toAgent) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: "Give either threadId (to post on a thread) or toAgent (to direct-message an agent).",
+              }],
+            };
+          }
+          const dm = await client.directMessage(input.toAgent, {
+            type: input.type,
+            body: input.body,
+            metadata: input.metadata,
+          });
+          return { content: [{ type: "text" as const, text: JSON.stringify(dm, null, 2) }] };
+        }
         const message = await client.sendMessage(input.threadId, {
           fromAgent: agentId,
           toAgent: input.toAgent,

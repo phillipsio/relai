@@ -145,7 +145,7 @@ export declare class ApiClient {
         title: string;
         type?: string;
     }): Promise<unknown>;
-    listThreads(repoId: string, type?: string): Promise<unknown[]>;
+    listThreads(repoId?: string, type?: string): Promise<unknown[]>;
     concludePlan(threadId: string, summary?: string): Promise<unknown>;
     archiveTask(taskId: string): Promise<unknown>;
     archiveThread(threadId: string): Promise<unknown>;

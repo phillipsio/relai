@@ -53,12 +53,18 @@ function isOnline(lastSeenAt: Date | string): boolean {
 
 // ── Helpers that mirror what the routes do, scoped to message-loop's needs ───
 
-async function markThreadRead(db: Db, threadId: string, agentId: string): Promise<void> {
+// One message, not the whole thread: thread-marking let handling any message
+// silence every other unread one on it, classifier-needing ones included.
+async function markMessageRead(db: Db, messageId: string, agentId: string): Promise<void> {
   await db
     .update(messagesTable)
     .set({ readBy: sql`array_append(read_by, ${agentId})` })
-    .where(eq(messagesTable.threadId, threadId));
+    .where(eq(messagesTable.id, messageId));
 }
+
+// One warning per message per process. Unroutable messages stay unread on
+// purpose, so without this the loop re-warns about the same one every tick.
+const warnedUnroutable = new Set<string>();
 
 async function getOnlineWorkers(db: Db, repoId: string): Promise<Agent[]> {
   const all = await db
@@ -281,6 +287,10 @@ export async function handleMessage(
   if (msg.toAgent && msg.toAgent !== orchestrator.id) return;
   if (msg.fromAgent === orchestrator.id) return;
 
+  // Set false by any branch that could not act, so the message survives for a
+  // later tick (or a human) instead of being consumed unhandled.
+  let handled = true;
+
   switch (msg.type) {
     case "status":
     case "reply":
@@ -390,7 +400,11 @@ export async function handleMessage(
     case "question":
     case "finding": {
       if (!deps.anthropic) {
-        console.warn(`[message-loop] ${msg.type} message ${msg.id} needs Claude routing but ANTHROPIC_API_KEY not set — skipped`);
+        if (!warnedUnroutable.has(msg.id)) {
+          warnedUnroutable.add(msg.id);
+          console.warn(`[message-loop] ${msg.type} message ${msg.id} needs Claude routing but ANTHROPIC_API_KEY is not set; left unread`);
+        }
+        handled = false;
         break;
       }
       try {
@@ -399,12 +413,13 @@ export async function handleMessage(
         await executeClaudeAction(deps, repoId, orchestrator, msg, action);
       } catch (err) {
         console.error(`[message-loop] Claude routing failed for ${msg.type} message ${msg.id}:`, err);
+        handled = false;
       }
       break;
     }
   }
 
-  await markThreadRead(deps.db, msg.threadId, orchestrator.id);
+  if (handled) await markMessageRead(deps.db, msg.id, orchestrator.id);
 }
 
 // ── Per-project cycle ────────────────────────────────────────────────────────

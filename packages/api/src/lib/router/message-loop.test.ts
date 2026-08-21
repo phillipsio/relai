@@ -467,3 +467,38 @@ describe("runMessageLoopCycle", () => {
   });
 });
 
+// A branch that cannot act must not consume the message. Before this, the loop
+// marked the whole thread read after every message it looked at, so a finding
+// it could not classify was swallowed, and so were that thread's other unread
+// messages.
+describe("the loop only consumes what it actually handled", () => {
+  it("leaves a message unread when it has no classifier to route it", async () => {
+    const sender = await newAgent({ name: "sender", role: "worker" });
+    const msg    = await newMessage({ type: "finding", fromAgent: sender, body: "the migration is missing an index" });
+
+    // anthropic: null is the real production state when ANTHROPIC_API_KEY is unset.
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
+
+    expect((await reloadMessage(msg.id)).readBy).not.toContain(orchestratorId);
+  });
+
+  it("marks only the message it handled, not the rest of the thread", async () => {
+    const sender = await newAgent({ name: "sender", role: "worker" });
+    const handled = await newMessage({ type: "status",  fromAgent: sender, body: "progress update" });
+    const skipped = await newMessage({ type: "finding", fromAgent: sender, body: "needs a human eye" });
+
+    await runMessageLoopCycle({ db, anthropic: null, model: "test" }, repoId);
+
+    expect((await reloadMessage(handled.id)).readBy).toContain(orchestratorId);
+    expect((await reloadMessage(skipped.id)).readBy).not.toContain(orchestratorId);
+  });
+
+  it("still consumes a message it did handle", async () => {
+    const sender = await newAgent({ name: "sender", role: "worker" });
+    const msg    = await newMessage({ type: "reply", fromAgent: sender, body: "ack" });
+
+    await handleMessage({ db, anthropic: null, model: "test" }, repoId, await getOrchestrator(), msg);
+
+    expect((await reloadMessage(msg.id)).readBy).toContain(orchestratorId);
+  });
+});

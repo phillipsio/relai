@@ -902,6 +902,55 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
     },
 
     {
+      name: "list_threads",
+      description:
+        "List conversation threads across your repos (or one repo with repoId). Returns id, title, " +
+        "repoId, type, status and messageCount. Use it to find a threadId you were not handed: " +
+        "list_attention only gives you the threads attached to blocked tasks. Direct-message threads " +
+        "between two agents are private and never listed.",
+      inputSchema: z.object({
+        repoId: z.string().optional().describe("Limit to one repo. Omit for all your repos."),
+        type: z.string().optional().describe("Filter by type, e.g. 'plan' for Epics. Omit for all."),
+      }),
+      handler: async (input: { repoId?: string; type?: string }) => {
+        const threads = await client.listThreads(input.repoId, input.type);
+        return {
+          content: [{
+            type: "text" as const,
+            text: (threads as unknown[]).length === 0
+              ? "No threads."
+              : JSON.stringify({ threads }, null, 2),
+          }],
+        };
+      },
+    },
+
+    {
+      name: "get_thread_messages",
+      description:
+        "Read a thread's messages, newest-last. Call this before reply_human on a blocked task: the " +
+        "worker's actual question usually lives in the thread, not in the task description, so " +
+        "answering from the task alone is answering blind. Reading does not mark anything read.",
+      inputSchema: z.object({
+        threadId: z.string().describe("Thread to read. From list_attention (metadata.blockedThreadId), list_threads, or get_task."),
+        limit: z.number().optional().describe("How many of the most recent messages to return (default 20)."),
+      }),
+      handler: async (input: { threadId: string; limit?: number }) => {
+        const limit = input.limit ?? 20;
+        const all = (await client.getMessages(input.threadId)) as Array<Record<string, unknown>>;
+        const messages = all.slice(-limit);
+        const payload: Record<string, unknown> = { threadId: input.threadId, total: all.length, messages };
+        if (messages.length < all.length) {
+          payload.notShown = `showing the ${messages.length} most recent of ${all.length}. Raise limit to read further back.`;
+        }
+        // This session holds a cross-repo credential, so agent text it reads has
+        // more to gain by steering it, not less.
+        if (messages.length > 0) payload.peerBoundary = PEER_BOUNDARY;
+        return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
+      },
+    },
+
+    {
       name: "reply_human",
       description:
         "Post a reply to a thread AS THE HUMAN owner. This is how you unblock a stalled task: reply on " +

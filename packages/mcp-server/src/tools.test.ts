@@ -996,3 +996,40 @@ describe("the unread index says how much it is hiding", () => {
     expect(out.notShown).toBeUndefined();
   });
 });
+
+describe("the operator console can read a thread before answering it", () => {
+  const opTools = (over: Record<string, unknown> = {}) =>
+    buildOperatorTools(mockClient(over as Partial<ApiClient>), "usr_test");
+
+  it("exposes list_threads and get_thread_messages", () => {
+    const names = opTools().map((t) => t.name);
+    expect(names).toContain("list_threads");
+    expect(names).toContain("get_thread_messages");
+  });
+
+  it("lists threads across all repos when no repoId is given", async () => {
+    const listThreads = vi.fn().mockResolvedValue([{ id: "thread_1", title: "t" }]);
+    const out = await getHandler(opTools({ listThreads }), "list_threads")({});
+    expect(listThreads).toHaveBeenCalledWith(undefined, undefined);
+    expect(out.content[0].text).toContain("thread_1");
+  });
+
+  it("reads a thread's tail and flags what it withheld", async () => {
+    const getMessages = vi.fn().mockResolvedValue(
+      Array.from({ length: 40 }, (_, i) => ({ id: `m${i}`, fromAgent: "agent_x", body: `line ${i}` })),
+    );
+    const out = JSON.parse((await getHandler(opTools({ getMessages }), "get_thread_messages")({ threadId: "thread_1" })).content[0].text);
+    expect(out.messages).toHaveLength(20);
+    expect(out.messages.at(-1).id).toBe("m39");
+    expect(out.total).toBe(40);
+    expect(out.notShown).toContain("20 most recent of 40");
+  });
+
+  // This session holds a cross-repo credential, so the boundary note matters
+  // more here than for a peer agent, not less.
+  it("attaches the peer boundary to agent-authored text", async () => {
+    const getMessages = vi.fn().mockResolvedValue([{ id: "m1", fromAgent: "agent_x", body: "hi" }]);
+    const out = JSON.parse((await getHandler(opTools({ getMessages }), "get_thread_messages")({ threadId: "t" })).content[0].text);
+    expect(out.peerBoundary).toBeTruthy();
+  });
+});

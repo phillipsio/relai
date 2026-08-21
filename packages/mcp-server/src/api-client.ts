@@ -211,11 +211,16 @@ export class ApiClient {
     return this.request<unknown>("POST", "/threads", body);
   }
 
-  listThreads(repoId: string, type?: string) {
-    const qs = new URLSearchParams({ repoId });
-    if (type) qs.set("type", type);
-    return this.request<unknown[]>("GET", `/threads?${qs}`);
+  // repoId optional: omitted, the API scopes to the caller's owned repos, which
+  // is what an operator with no single repo needs.
+  listThreads(repoId?: string, type?: string) {
+    const qs = new URLSearchParams();
+    if (repoId) qs.set("repoId", repoId);
+    if (type)   qs.set("type", type);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return this.request<unknown[]>("GET", `/threads${suffix}`);
   }
+
 
   concludePlan(threadId: string, summary?: string) {
     return this.request<unknown>("PUT", `/threads/${threadId}/conclude`, { summary });

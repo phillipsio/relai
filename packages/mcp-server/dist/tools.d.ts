@@ -666,6 +666,50 @@ export declare function buildOperatorTools(client: ApiClient, ownerId?: string):
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
+        repoId: z.ZodOptional<z.ZodString>;
+        type: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        repoId?: string | undefined;
+        type?: string | undefined;
+    }, {
+        repoId?: string | undefined;
+        type?: string | undefined;
+    }>;
+    handler: (input: {
+        repoId?: string;
+        type?: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        threadId: z.ZodString;
+        limit: z.ZodOptional<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        threadId: string;
+        limit?: number | undefined;
+    }, {
+        threadId: string;
+        limit?: number | undefined;
+    }>;
+    handler: (input: {
+        threadId: string;
+        limit?: number;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
         threadId: z.ZodString;
         body: z.ZodString;
         type: z.ZodOptional<z.ZodEnum<["status", "handoff", "finding", "decision", "question", "escalation", "reply"]>>;

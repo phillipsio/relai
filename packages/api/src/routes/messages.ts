@@ -4,23 +4,10 @@ import { eq, sql, asc } from "drizzle-orm";
 import { messages, threads, tasks, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertRepoAccess, peerRepoIds } from "../lib/ownership.js";
-import { ensureDmThread, isDmParticipant, dmThreadFilter } from "../lib/dm.js";
+import { assertRepoAccess, peerRepoIds, loadThreadScoped } from "../lib/ownership.js";
+import { ensureDmThread, dmThreadFilter } from "../lib/dm.js";
 import type { Db } from "@getrelai/db";
 
-async function assertThreadAccess(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
-  const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
-  if (!thread) return { ok: false as const, status: 404 as const };
-  // Participants only — the row's repo is not its access boundary, so a
-  // repo-mate cannot open it. Owner/admin still reach it via the repo check.
-  if (thread.type === "dm" && request.agent) {
-    if (!isDmParticipant(thread, request.agent.id)) return { ok: false as const, status: 404 as const };
-    return { ok: true as const, thread };
-  }
-  const access = await assertRepoAccess(request, db, thread.repoId);
-  if (!access.ok) return { ok: false as const, status: 404 as const };
-  return { ok: true as const, thread };
-}
 
 const createSchema = z.object({
   // Ignored for agent callers (the token is the identity) and required only on
@@ -42,7 +29,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const body = createSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
-    const scope = await assertThreadAccess(request, db, request.params.id);
+    const scope = await loadThreadScoped(request, db, request.params.id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
 
     // Refused rather than silently corrected, so a spoof attempt surfaces
@@ -141,7 +128,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
   });
 
   fastify.get<{ Params: { id: string } }>("/threads/:id/messages", async (request, reply) => {
-    const scope = await assertThreadAccess(request, db, request.params.id);
+    const scope = await loadThreadScoped(request, db, request.params.id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
     const rows = await db.select().from(messages).where(eq(messages.threadId, request.params.id)).orderBy(asc(messages.createdAt));
     return { data: rows };
@@ -159,7 +146,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         return reply.status(403).send({ error: { code: "forbidden", message: "Cannot mark messages read for another agent" } });
       }
 
-      const scope = await assertThreadAccess(request, db, request.params.id);
+      const scope = await loadThreadScoped(request, db, request.params.id);
       if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
 
       await db

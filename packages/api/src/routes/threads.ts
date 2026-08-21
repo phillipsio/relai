@@ -4,16 +4,9 @@ import { eq, sql, and, inArray, isNull } from "drizzle-orm";
 import { threads, messages, tasks, repos } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish } from "../lib/events.js";
-import { assertRepoAccess } from "../lib/ownership.js";
+import { assertRepoAccess, loadThreadScoped } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
-async function loadThreadScoped(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
-  const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
-  if (!thread) return { ok: false as const, status: 404 as const };
-  const access = await assertRepoAccess(request, db, thread.repoId);
-  if (!access.ok) return { ok: false as const, status: 404 as const };
-  return { ok: true as const, thread };
-}
 
 const createSchema = z.object({
   repoId: z.string(),
@@ -105,6 +98,14 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     const { id } = request.params;
     const scope = await loadThreadScoped(request, db, id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Thread not found" } });
+
+    // Deleting a DM would take the other participant's copy with it, and
+    // archive already means "make it go away". Operator paths keep it.
+    if (scope.thread.type === "dm" && request.agent) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "A direct message thread cannot be deleted. Conclude and archive it instead." },
+      });
+    }
 
     await db.delete(messages).where(eq(messages.threadId, id));
     await db.delete(threads).where(eq(threads.id, id));

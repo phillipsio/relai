@@ -1,6 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import { and, eq, type SQL } from "drizzle-orm";
-import { repos, agents, type Db } from "@getrelai/db";
+import { repos, agents, threads, type Db } from "@getrelai/db";
+import { isDmParticipant } from "./dm.js";
 
 // Tenancy enforcement for project-scoped routes. Three auth modes resolve to
 // three different access shapes:
@@ -86,4 +87,23 @@ export async function peerRepoIds(db: Db, agent: typeof agents.$inferSelect): Pr
   if (!own?.ownerId) return [agent.repoId];
   const rows = await db.select({ id: repos.id }).from(repos).where(eq(repos.ownerId, own.ownerId));
   return rows.map((r) => r.id);
+}
+
+// The one place thread access is decided. Two copies drifted once already.
+export async function loadThreadScoped(
+  request: FastifyRequest,
+  db: Db,
+  threadId: string,
+): Promise<{ ok: true; thread: typeof threads.$inferSelect } | { ok: false; status: 404 }> {
+  const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
+  if (!thread) return { ok: false, status: 404 };
+  // A DM lives in the sender's repo but is not repo-readable: participants only.
+  // Owner/admin still reach it via the repo check, as they do for reads.
+  if (thread.type === "dm" && request.agent) {
+    if (!isDmParticipant(thread, request.agent.id)) return { ok: false, status: 404 };
+    return { ok: true, thread };
+  }
+  const access = await assertRepoAccess(request, db, thread.repoId);
+  if (!access.ok) return { ok: false, status: 404 };
+  return { ok: true, thread };
 }

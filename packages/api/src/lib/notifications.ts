@@ -23,6 +23,10 @@ export const OWNER_ATTENTION_KINDS = new Set<EventKind>([
   "task.proposed_overdue",
   "task.review_overdue",
   "task.blocked_overdue",
+  // The only attention state nobody is waiting on: a stalled task sends no
+  // message and expects no reply, so without this it reaches nobody at all.
+  // Fired once per task, guarded by isNull(stalledAt) at the stamp site.
+  "task.stalled",
 ]);
 
 // Default delivery options. `retries: 2` = up to 3 attempts total.

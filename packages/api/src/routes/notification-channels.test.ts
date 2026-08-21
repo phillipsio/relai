@@ -574,7 +574,17 @@ describe("owner-scoped notification channels", () => {
       "task.proposed",
       "task.proposed_overdue",
       "task.review_overdue",
+      "task.stalled",
     ]);
+  });
+
+  // Stalled work is the one attention state that produces no message and no
+  // reply anyone is waiting on, so it is the one nothing was watching: 24 tasks
+  // sat in_progress on this instance from 8 July with stalledAt stamped and
+  // nobody told.
+  it("fires on task.stalled, because silence is the failure nothing else catches", async () => {
+    await deliver(db, attentionEvent(ownedRepoId, "task.stalled"), { retries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("fires on the overdue nudges, which is what a stalled proposal produces", async () => {

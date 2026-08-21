@@ -21,7 +21,9 @@ export default defineConfig({
     // means that fallback never fires, so tests can't touch the dev DB no
     // matter what a given test file does. globalSetup truncates relai_test
     // before this run starts, so leaked rows can't survive to the next run.
-    env: { DATABASE_URL: TEST_DATABASE_URL },
+    // Stamp on every authenticated request rather than once per interval, so a
+    // test asserting on lastSeenAt is not silently skipped by the throttle.
+    env: { DATABASE_URL: TEST_DATABASE_URL, AUTH_STAMP_INTERVAL_MS: "0" },
     globalSetup: "./src/test/global-setup.ts",
   },
 });

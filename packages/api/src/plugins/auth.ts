@@ -17,6 +17,9 @@ declare module "fastify" {
   }
 }
 
+// Per-process, so the stamp throttle below needs no extra read.
+const lastStamped = new Map<string, number>();
+
 const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.decorateRequest("agent", null);
   fastify.decorateRequest("ownerId", null);
@@ -47,13 +50,21 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
         return reply.status(401).send({ error: { code: "unauthorized", message: "Invalid or revoked token" } });
       }
       request.agent = row.agent;
-      // Fire-and-forget activity stamps; don't block the request. Bumping
-      // agents.lastSeenAt here (not just on /heartbeat) keeps the routing
-      // scheduler's "online" filter accurate for any agent driving the API
-      // — CLI, MCP, or HTTP — not only ones that send explicit heartbeats.
-      const now = new Date();
-      void db.update(tokens).set({ lastUsedAt: now }).where(eq(tokens.id, row.token.id));
-      void db.update(agents).set({ lastSeenAt: now }).where(eq(agents.id, row.agent.id));
+      // Any authenticated request marks the agent online, not just /heartbeat.
+      // Keep these awaited: un-awaited, they leak a pooled connection per call.
+      const now = Date.now();
+      const interval = Number(process.env.AUTH_STAMP_INTERVAL_MS ?? 60_000);
+      if (now - (lastStamped.get(row.agent.id) ?? 0) >= interval) {
+        lastStamped.set(row.agent.id, now);
+        const at = new Date(now);
+        try {
+          await db.update(tokens).set({ lastUsedAt: at }).where(eq(tokens.id, row.token.id));
+          await db.update(agents).set({ lastSeenAt: at }).where(eq(agents.id, row.agent.id));
+        } catch (err) {
+          lastStamped.delete(row.agent.id);
+          request.log.warn({ err }, "failed to stamp agent activity");
+        }
+      }
       return;
     }
 

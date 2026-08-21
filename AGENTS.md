@@ -92,7 +92,7 @@ Sixteen tables: `repos`, `agents`, `tokens`, `invites`, `threads`, `messages`, `
 
 Per-agent bearer tokens. Every route — including `GET /health` — runs through the auth plugin in `onRequest` before the handler. The plugin:
 
-1. Hashes the incoming `Authorization: Bearer <token>`, looks it up in `tokens`, and on hit attaches the resolved agent to `request.agent`. Fire-and-forget bumps both `tokens.lastUsedAt` and `agents.lastSeenAt` — the latter is what the routing scheduler's "online" filter (10-min window) reads, so any authenticated request keeps the agent visible to the router, not just explicit `/heartbeat` calls.
+1. Hashes the incoming `Authorization: Bearer <token>`, looks it up in `tokens`, and on hit attaches the resolved agent to `request.agent`. Bumps both `tokens.lastUsedAt` and `agents.lastSeenAt`; the latter is what the routing scheduler's "online" filter (10-min window) and the `list_agents` `online` flag both read, so any authenticated request keeps the agent visible, not just explicit `/heartbeat` calls. **The writes are awaited and throttled**, at most once per agent per `AUTH_STAMP_INTERVAL_MS` (default 60s), tracked in a per-process map. Both properties are load-bearing and were each a real bug: this was written as `void db.update(...)`, and a drizzle builder is a *lazy thenable*, so `void` discarded it and neither stamp was ever written (any agent driving the API purely over MCP/CLI read as offline). Forcing execution but leaving it un-awaited then leaked a pooled connection per request until Postgres refused new clients mid-test-suite. Awaiting bounds the concurrency and throttling keeps the cost off the hot path, since a 10-minute window does not need a write per call.
 2. Falls back to comparing against `API_SECRET` if no token matches. This path is **deprecated** — kept so the seed scripts and any pre-token clients keep working — and logs a one-time warning. Do not introduce new code that depends on the shared secret.
 3. Whitelists `POST /auth/accept-invite` (no token required; the invite code is the credential).
 
@@ -267,7 +267,7 @@ Currently tested:
 - `packages/event-worker/src/worker.test.ts` — SSE loop, has-work gate, and overflow → block wiring
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~645 tests across the workspace (api alone: ~426). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~648 tests across the workspace (api alone: ~429). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 
@@ -285,6 +285,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `BLOCKED_OVERDUE_MS` | `1800000` | How long a `blocked` task may wait for an answer before the watcher emits a one-time `task.blocked_overdue`. A task awaiting an agent is then released with `metadata.blockedTimeout`; one awaiting a human stays blocked and is only nudged. |
 | `PROPOSED_OVERDUE_MS` | `600000` | How long a worker's `proposed` task may sit awaiting an orchestrator's commit before the scheduler emits a one-time `task.proposed_overdue` event (notifies the repo's orchestrators). |
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
+| `AUTH_STAMP_INTERVAL_MS` | `60000` | Minimum gap between activity stamps (`agents.lastSeenAt`, `tokens.lastUsedAt`) for one agent. The API test suite sets `0` so a test asserting on a stamp is never skipped by the throttle. |
 | `SESSION_UNREAD_LIMIT` | `20` | Max unread messages in `/session/start` (newest first). `unreadCount` always reports the true total. |
 | `SESSION_TASK_LIMIT` | `10` | Max open tasks in `/session/start`; `taskCount` reports the true total. |
 | `SESSION_THREAD_LIMIT` | `25` | Max subscribed open threads in `/session/start`; `openThreadCount` reports the true total. |
@@ -363,4 +364,5 @@ The Fly config was removed on 2026-08-20. It was never deployed, and its `[deplo
 - **Routing is sequential, not parallel** — tasks are routed one at a time within a cycle to avoid racing on agent availability.
 - **MCP tool handlers must return MCP content format** — see MCP server section above.
 - **MCP SDK pinned at 1.6.0** — do not upgrade without testing tool visibility in Claude Code.
+- **Never discard a drizzle query builder with `void`** — builders are lazy thenables, so `void db.update(...)` builds the query and throws it away without executing. Use `await`. Un-awaited-but-forced (`.catch()` alone) is also wrong on a per-request path: it leaks a pooled connection per call and exhausts Postgres under concurrency. Both failure modes are silent.
 - **Scheduler disabled in tests** — `buildServer({ scheduler: false })` in test files to prevent background polling.

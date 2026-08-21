@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
 import type { FastifyInstance } from "fastify";
-import { createDb, users, repos } from "@getrelai/db";
+import { createDb, users, repos, subscriptions } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
@@ -167,6 +167,29 @@ describe("a cross-repo DM still lands in the recipient's inbox", () => {
     expect(sent.json().data.threadId).toBeTruthy();
   });
 
+  // The event row carries the SENDER's repoId, and recentEvents filters on the
+  // caller's, so a cross-repo DM was posted, delivered and unread-listed while
+  // being invisible in the one feed that says "here is what happened".
+  it("appears in the recipient's recentEvents, not only their unread list", async () => {
+    const sent = await dm(aliceTok, carol, "events-probe: the migration needs re-running");
+    const res = await app.inject({ method: "GET", url: `/session/start?repoId=${repoB}`, headers: as(carolTok) });
+
+    const forThread = res.json().data.recentEvents
+      .filter((e: { targetId: string }) => e.targetId === sent.json().data.threadId);
+    expect(forThread.length).toBeGreaterThan(0);
+    expect(forThread[0].summary).toContain("events-probe");
+  });
+
+  // Widening the repo filter must widen it only for DM participants.
+  it("does not put the DM in an uninvolved repo-mate's recentEvents", async () => {
+    const sent = await dm(aliceTok, carol, "events-privacy-probe: rotate the staging key");
+    const res = await app.inject({ method: "GET", url: `/session/start?repoId=${repoA}`, headers: as(bobTok) });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.recentEvents
+      .some((e: { targetId: string }) => e.targetId === sent.json().data.threadId)).toBe(false);
+  });
+
   it("appears in the recipient's session_start bundle", async () => {
     await dm(aliceTok, carol, "session-probe: are you free to pair?");
     const res = await app.inject({ method: "GET", url: `/session/start?repoId=${repoB}`, headers: as(carolTok) });
@@ -191,5 +214,36 @@ describe("a cross-repo DM still lands in the recipient's inbox", () => {
     });
     const bodies = res.json().data.map((m: { body: string }) => m.body);
     expect(bodies).not.toContain("internal-only chatter");
+  });
+});
+
+// The DM exception widens a tenancy filter, so the filter it widens needs a
+// test of its own. `resolveSubscribers` matches on target alone with no repo
+// check, which makes a stray cross-repo subscription row a standing leak; the
+// repo predicate in recentEvents is the layer that contains it.
+describe("the events feed stays repo-scoped for everything that is not a DM", () => {
+  it("hides another repo's thread events even from an agent subscribed to them", async () => {
+    const foreign = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ repoId: repoB, title: "repo B internal thread" }),
+    });
+    const foreignThread = foreign.json().data.id as string;
+
+    // Written directly: POST /subscriptions refuses to cross repos, which is
+    // exactly the guard we are assuming has failed.
+    await db.insert(subscriptions).values({
+      id: `sub_leak_${Date.now()}`, agentId: alice, targetType: "thread", targetId: foreignThread,
+    }).onConflictDoNothing();
+
+    await app.inject({
+      method: "POST", url: `/threads/${foreignThread}/messages`, headers: as(carolTok),
+      body: JSON.stringify({ type: "finding", body: "leak-probe: repo B internal finding" }),
+    });
+
+    const res = await app.inject({ method: "GET", url: `/session/start?repoId=${repoA}`, headers: as(aliceTok) });
+    expect(res.statusCode).toBe(200);
+    const events = res.json().data.recentEvents as Array<{ targetId: string; summary: string }>;
+    expect(events.some((e) => e.targetId === foreignThread)).toBe(false);
+    expect(events.some((e) => e.summary?.includes("leak-probe"))).toBe(false);
   });
 });

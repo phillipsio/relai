@@ -6,7 +6,7 @@ import {
   type Db,
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
-import { dmThreadFilter } from "../lib/dm.js";
+import { dmThreadFilter, dmEventFilter } from "../lib/dm.js";
 
 // How many recent events the snapshot carries. Kept small (and each event
 // trimmed to a one-line summary, below) because this is the dominant
@@ -192,7 +192,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       })
       .from(events)
       .where(sql`
-        ${events.repoId} = ${repoId}
+        (${events.repoId} = ${repoId} OR ${dmEventFilter(agent.id, events.targetType, events.targetId)})
         AND (
           EXISTS (
             SELECT 1 FROM ${subscriptions}

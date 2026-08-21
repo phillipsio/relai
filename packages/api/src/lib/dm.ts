@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL, type AnyColumn } from "drizzle-orm";
 import { threads, type Db } from "@getrelai/db";
 import { newId } from "./id.js";
 
@@ -42,4 +42,17 @@ export async function ensureDmThread(
 // inbox that is otherwise filtered to one repo.
 export function dmThreadFilter(agentId: string) {
   return sql`(${threads.type} = 'dm' AND ${threads.dmKey} IS NOT NULL AND ${agentId} = ANY(string_to_array(${threads.dmKey}, ':')))`;
+}
+
+// The events feed is repo-scoped, but a DM event carries the sender's repoId,
+// so the recipient's own repo filter hides it. OR this into that filter.
+export function dmEventFilter(agentId: string, targetType: SQL | AnyColumn, targetId: SQL | AnyColumn) {
+  return sql`EXISTS (
+    SELECT 1 FROM ${threads}
+    WHERE ${threads.id} = ${targetId}
+      AND ${targetType} = 'thread'
+      AND ${threads.type} = 'dm'
+      AND ${threads.dmKey} IS NOT NULL
+      AND ${agentId} = ANY(string_to_array(${threads.dmKey}, ':'))
+  )`;
 }

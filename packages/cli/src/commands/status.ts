@@ -10,10 +10,10 @@ export async function statusCommand() {
   const spinner = ora("Fetching project status...").start();
 
   try {
-    const [agents, tasks, unread] = await Promise.all([
+    const [agents, tasks, unreadTotal] = await Promise.all([
       client.getAgents(config.repoId),
       client.getTasks({ repoId: config.repoId }),
-      client.getUnread(config.agentId, config.repoId),
+      client.getUnreadTotal(config.agentId, config.repoId),
     ]);
     spinner.stop();
 
@@ -45,9 +45,9 @@ export async function statusCommand() {
       console.log(`  ${status.padEnd(14)} ${count}`);
     }
 
-    if (unread.length > 0) {
+    if (unreadTotal > 0) {
       console.log();
-      console.log(chalk.yellow(`  ${unread.length} unread message${unread.length === 1 ? "" : "s"} — run \`relai inbox\``));
+      console.log(chalk.yellow(`  ${unreadTotal} unread message${unreadTotal === 1 ? "" : "s"}: run \`relai inbox\``));
     }
   } catch (err) {
     spinner.fail(chalk.red("Failed to fetch status"));

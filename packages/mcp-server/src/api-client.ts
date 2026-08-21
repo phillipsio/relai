@@ -23,16 +23,27 @@ export class ApiClient {
     };
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // For routes with sibling fields next to `data` (e.g. the unread feed's
+  // `meta.total`, which says how much the cap hid).
+  private async requestEnvelope<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ data?: T; meta?: Record<string, unknown> }> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: this.headers,
       body: body ? JSON.stringify(body) : undefined,
     });
-    const json = await res.json() as { data?: T; error?: { code: string; message: string } };
+    const json = await res.json() as { data?: T; meta?: Record<string, unknown>; error?: { code: string; message: string } };
     if (!res.ok) {
       throw new Error(json.error?.message ?? `API error ${res.status}`);
     }
+    return json;
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const json = await this.requestEnvelope<T>(method, path, body);
     return json.data as T;
   }
 
@@ -158,8 +169,11 @@ export class ApiClient {
     return this.request<unknown[]>("GET", `/threads/${threadId}/messages`);
   }
 
+  // Envelope, not just rows: meta.total is how many unread exist versus how
+  // many the cap returned, and hiding that difference misleads the reader.
   getUnread(agentId: string, repoId: string) {
-    return this.request<unknown[]>("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}&repoId=${encodeURIComponent(repoId)}`);
+    const qs = `agentId=${encodeURIComponent(agentId)}&repoId=${encodeURIComponent(repoId)}`;
+    return this.requestEnvelope<unknown[]>("GET", `/messages/unread?${qs}`);
   }
 
   markRead(threadId: string, agentId: string) {

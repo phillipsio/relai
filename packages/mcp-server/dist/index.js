@@ -81,7 +81,7 @@ if (!OWNER_MODE) {
         try {
             const [tasks, messages] = await Promise.all([
                 apiClient.getTasks({ repoId: REPO_ID, assignedTo: AGENT_ID, status: "assigned" }),
-                apiClient.getUnread(AGENT_ID, REPO_ID),
+                apiClient.getUnread(AGENT_ID, REPO_ID).then((r) => r.data ?? []),
             ]);
             const newTasks = tasks.filter((t) => !seenTaskIds.has(t.id));
             const newMessages = messages.filter((m) => !seenMessageIds.has(m.id));
@@ -109,7 +109,7 @@ if (!OWNER_MODE) {
         .then((tasks) => tasks.forEach((t) => seenTaskIds.add(t.id)))
         .catch(() => { });
     apiClient.getUnread(AGENT_ID, REPO_ID)
-        .then((msgs) => msgs.forEach((m) => seenMessageIds.add(m.id)))
+        .then((r) => (r.data ?? []).forEach((m) => seenMessageIds.add(m.id)))
         .catch(() => { });
     setInterval(pollInbox, POLL_INTERVAL_MS);
 }

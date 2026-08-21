@@ -161,6 +161,16 @@ export class CliApiClient {
     return this.request<MessageRow[]>("GET", `/messages/unread?${qs}`);
   }
 
+  // The route caps its rows, so a count taken from getUnread().length
+  // under-reports a real backlog. meta.total is the honest number.
+  async getUnreadTotal(agentId: string, repoId: string): Promise<number> {
+    const qs = new URLSearchParams({ agentId, repoId });
+    const env = await this.requestRaw<{ data?: MessageRow[]; meta?: { total?: number } }>(
+      "GET", `/messages/unread?${qs}`,
+    );
+    return typeof env.meta?.total === "number" ? env.meta.total : (env.data?.length ?? 0);
+  }
+
   markRead(threadId: string, agentId: string) {
     return this.request<unknown>("PUT", `/threads/${threadId}/messages/read`, { agentId });
   }

@@ -102,7 +102,7 @@ async function pollInbox() {
   try {
     const [tasks, messages] = await Promise.all([
       apiClient.getTasks({ repoId: REPO_ID!, assignedTo: AGENT_ID!, status: "assigned" }),
-      apiClient.getUnread(AGENT_ID!, REPO_ID!),
+      apiClient.getUnread(AGENT_ID!, REPO_ID!).then((r) => r.data ?? []),
     ]);
 
     const newTasks = tasks.filter((t: any) => !seenTaskIds.has(t.id));
@@ -133,7 +133,7 @@ apiClient.getTasks({ repoId: REPO_ID!, assignedTo: AGENT_ID!, status: "assigned"
   .then((tasks: any[]) => tasks.forEach((t: any) => seenTaskIds.add(t.id)))
   .catch(() => {});
 apiClient.getUnread(AGENT_ID!, REPO_ID!)
-  .then((msgs: any[]) => msgs.forEach((m: any) => seenMessageIds.add(m.id)))
+  .then((r) => (r.data ?? []).forEach((m: any) => seenMessageIds.add(m.id)))
   .catch(() => {});
 
 setInterval(pollInbox, POLL_INTERVAL_MS);

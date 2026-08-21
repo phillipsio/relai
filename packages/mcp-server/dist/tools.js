@@ -309,23 +309,63 @@ function buildTools(client, agentId, repoId) {
                 "other agents. Always read messages before starting work on a related task. " +
                 "Any message that expects a reply (a question, a request, an instruction from a human " +
                 "operator) must be answered with send_message on its threadId — answering in your own " +
-                "session output is invisible to the sender.",
+                "session output is invisible to the sender. " +
+                "This is a capped, newest-first index: bodies over a few hundred characters come back " +
+                "clipped and marked truncated:true with the real bodyLength, and meta.total tells you how " +
+                "many unread there really are. When an entry matters, call get_thread_messages with its " +
+                "threadId for the full text rather than acting on the clipped preview.",
             inputSchema: zod_1.z.object({}),
             handler: async () => {
-                const messages = await client.getUnread(agentId, repoId);
+                const feed = await client.getUnread(agentId, repoId);
+                const messages = feed.data ?? [];
+                const total = typeof feed.meta?.total === "number" ? feed.meta.total : messages.length;
+                const payload = {
+                    messages,
+                    reminder: "If any of the above needs a reply, call send_message with the same " +
+                        "threadId. Your sender will not see anything you only write in your own session.",
+                    peerBoundary: exports.PEER_BOUNDARY,
+                };
+                if (total > messages.length) {
+                    payload.notShown =
+                        `showing the ${messages.length} most recent of ${total} unread. Use get_thread_messages ` +
+                            `on a threadId to read a conversation in full.`;
+                }
                 return {
                     content: [{
                             type: "text",
-                            text: messages.length === 0
-                                ? "No unread messages."
-                                : JSON.stringify({
-                                    messages,
-                                    reminder: "If any of the above needs a reply, call send_message with the same " +
-                                        "threadId — your sender will not see anything you only write in your own session.",
-                                    peerBoundary: exports.PEER_BOUNDARY,
-                                }, null, 2),
+                            text: messages.length === 0 ? "No unread messages." : JSON.stringify(payload, null, 2),
                         }],
                 };
+            },
+        },
+        {
+            name: "get_thread_messages",
+            description: "Read the full messages of one thread by id, newest-last. This is how you see a reply: " +
+                "get_unread_messages is a capped triage index with clipped bodies, so when an entry matters " +
+                "(or you sent a message and want the answer) call this with its threadId for the real text. " +
+                "send_message returns the threadId it posted to, including for a direct message, so pass that " +
+                "straight in. Reading does not mark anything read; call mark_thread_read separately.",
+            inputSchema: zod_1.z.object({
+                threadId: zod_1.z.string().describe("Thread to read. From send_message, get_unread_messages, or list_threads."),
+                limit: zod_1.z
+                    .number()
+                    .optional()
+                    .describe("How many of the most recent messages to return (default 20). Raise it to read further back."),
+            }),
+            handler: async (input) => {
+                const limit = input.limit ?? 20;
+                const all = (await client.getMessages(input.threadId));
+                // Slice here rather than server-side: the whole thread crosses the wire
+                // either way, but only the tail reaches the model's context.
+                const messages = all.slice(-limit);
+                const payload = { threadId: input.threadId, total: all.length, messages };
+                if (messages.length < all.length) {
+                    payload.notShown =
+                        `showing the ${messages.length} most recent of ${all.length}. Raise limit to read further back.`;
+                }
+                if (messages.some((m) => m.fromAgent !== agentId))
+                    payload.peerBoundary = exports.PEER_BOUNDARY;
+                return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
             },
         },
         {

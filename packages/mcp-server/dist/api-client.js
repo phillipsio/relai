@@ -14,7 +14,9 @@ class ApiClient {
             ...(config.ownerId ? { "X-Owner-Id": config.ownerId } : {}),
         };
     }
-    async request(method, path, body) {
+    // For routes with sibling fields next to `data` (e.g. the unread feed's
+    // `meta.total`, which says how much the cap hid).
+    async requestEnvelope(method, path, body) {
         const res = await fetch(`${this.baseUrl}${path}`, {
             method,
             headers: this.headers,
@@ -24,6 +26,10 @@ class ApiClient {
         if (!res.ok) {
             throw new Error(json.error?.message ?? `API error ${res.status}`);
         }
+        return json;
+    }
+    async request(method, path, body) {
+        const json = await this.requestEnvelope(method, path, body);
         return json.data;
     }
     // Repos
@@ -75,8 +81,11 @@ class ApiClient {
     getMessages(threadId) {
         return this.request("GET", `/threads/${threadId}/messages`);
     }
+    // Envelope, not just rows: meta.total is how many unread exist versus how
+    // many the cap returned, and hiding that difference misleads the reader.
     getUnread(agentId, repoId) {
-        return this.request("GET", `/messages/unread?agentId=${encodeURIComponent(agentId)}&repoId=${encodeURIComponent(repoId)}`);
+        const qs = `agentId=${encodeURIComponent(agentId)}&repoId=${encodeURIComponent(repoId)}`;
+        return this.requestEnvelope("GET", `/messages/unread?${qs}`);
     }
     markRead(threadId, agentId) {
         return this.request("PUT", `/threads/${threadId}/messages/read`, { agentId });

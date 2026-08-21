@@ -7,6 +7,7 @@ import {
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
 import { dmThreadFilter, dmEventFilter } from "../lib/dm.js";
+import { clip, clipMetadata } from "../lib/payload.js";
 
 // How many recent events the snapshot carries. Kept small (and each event
 // trimmed to a one-line summary, below) because this is the dominant
@@ -23,20 +24,6 @@ const TASK_DESC_CHARS  = Number(process.env.SESSION_TASK_DESC_CHARS ?? 500);
 const TASK_META_CHARS  = Number(process.env.SESSION_TASK_META_CHARS ?? 800);
 const MSG_META_CHARS   = Number(process.env.SESSION_MSG_META_CHARS ?? 300);
 
-// Truncation is always declared. An agent that cannot tell a clipped body from
-// a whole one will quote the clipped one as if it were complete.
-function clip(text: string, limit: number): { text: string; truncated: boolean } {
-  if (text.length <= limit) return { text, truncated: false };
-  return { text: text.slice(0, limit) + "…", truncated: true };
-}
-
-// Small metadata passes through untouched. That is the common case, and a
-// follow-up call to recover `{ branchName, roundNumber }` would be absurd.
-function clipMetadata(metadata: unknown, limit = TASK_META_CHARS): unknown {
-  if (!metadata || typeof metadata !== "object") return metadata;
-  if (JSON.stringify(metadata).length <= limit) return metadata;
-  return { _truncated: true, keys: Object.keys(metadata as Record<string, unknown>) };
-}
 
 // Collapse an event's full payload (task bodies, multi-paragraph review notes,
 // message bodies) into a one-line summary so recentEvents stays a cheap "what
@@ -111,7 +98,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
       return {
         ...t,
         description:    desc.text,
-        metadata:       clipMetadata(t.metadata),
+        metadata:       clipMetadata(t.metadata, TASK_META_CHARS),
         humanLabel:     humanizeTaskStatus(t),
         ...(desc.truncated ? { truncated: true, descriptionLength: t.description.length } : {}),
       };

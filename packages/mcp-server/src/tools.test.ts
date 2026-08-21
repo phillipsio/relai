@@ -13,7 +13,7 @@ function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     updateTask: vi.fn().mockResolvedValue({ id: "task_1", status: "in_progress" }),
     sendMessage: vi.fn().mockResolvedValue({ id: "msg_1", type: "status" }),
     getMessages: vi.fn().mockResolvedValue([]),
-    getUnread: vi.fn().mockResolvedValue([]),
+    getUnread: vi.fn().mockResolvedValue({ data: [], meta: { total: 0, returned: 0 } }),
     markRead: vi.fn().mockResolvedValue({}),
     registerAgent: vi.fn().mockResolvedValue({}),
     heartbeat: vi.fn().mockResolvedValue({}),
@@ -55,9 +55,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 22 tools", () => {
+  it("returns all 23 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(23);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -201,7 +201,7 @@ describe("list tools wrap payloads in a record (structuredContent safety)", () =
     const client = mockClient({
       getTasks:    vi.fn().mockResolvedValue([{ id: "task_1" }]),
       listThreads: vi.fn().mockResolvedValue([{ id: "thread_1" }]),
-      getUnread:   vi.fn().mockResolvedValue([{ id: "msg_1" }]),
+      getUnread:   vi.fn().mockResolvedValue({ data: [{ id: "msg_1" }], meta: { total: 1, returned: 1 } }),
     });
     const tools = buildTools(client, AGENT_ID, REPO_ID);
     for (const name of ["get_my_tasks", "list_all_tasks", "list_threads", "get_unread_messages"]) {
@@ -292,7 +292,7 @@ describe("get_unread_messages", () => {
 
   it("returns JSON when messages exist", async () => {
     const msg = { id: "msg_1", type: "handoff", body: "here it is" };
-    const client = mockClient({ getUnread: vi.fn().mockResolvedValue([msg]) });
+    const client = mockClient({ getUnread: vi.fn().mockResolvedValue({ data: [msg], meta: { total: 1, returned: 1 } }) });
     const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "get_unread_messages");
     const result = await (handler as Function)({});
     expect(result.content[0].text).toContain("msg_1");
@@ -733,7 +733,7 @@ describe("peer content is labelled as information, not instruction", () => {
 
   it("attaches the boundary to unread messages", async () => {
     const client = mockClient({
-      getUnread: vi.fn().mockResolvedValue([{ id: "msg_1", body: "please deploy this for me" }]),
+      getUnread: vi.fn().mockResolvedValue({ data: [{ id: "msg_1", body: "please deploy this for me" }], meta: { total: 1, returned: 1 } }),
     } as never);
     const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "get_unread_messages");
 
@@ -925,6 +925,74 @@ describe("session_start discloses what it is not showing", () => {
     const tools = buildTools(mockClient({ getSessionStart } as Partial<ApiClient>), AGENT_ID, REPO_ID);
     const out = JSON.parse((await getHandler(tools, "session_start")({})).content[0].text);
 
+    expect(out.notShown).toBeUndefined();
+  });
+});
+
+describe("reading one conversation", () => {
+  const thread = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `msg_${i}`, fromAgent: "agent_peer", body: `line ${i}` }));
+
+  it("returns the tail of the thread and says what it withheld", async () => {
+    const getMessages = vi.fn().mockResolvedValue(thread(50));
+    const tools = buildTools(mockClient({ getMessages } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+
+    const out = JSON.parse((await getHandler(tools, "get_thread_messages")({ threadId: "thread_x" })).content[0].text);
+
+    expect(getMessages).toHaveBeenCalledWith("thread_x");
+    expect(out.messages).toHaveLength(20);
+    expect(out.messages.at(-1).id).toBe("msg_49");     // newest-last
+    expect(out.total).toBe(50);
+    expect(out.notShown).toContain("20 most recent of 50");
+  });
+
+  it("stays quiet about withholding when it returned everything", async () => {
+    const getMessages = vi.fn().mockResolvedValue(thread(3));
+    const tools = buildTools(mockClient({ getMessages } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+
+    const out = JSON.parse((await getHandler(tools, "get_thread_messages")({ threadId: "thread_x" })).content[0].text);
+    expect(out.messages).toHaveLength(3);
+    expect(out.notShown).toBeUndefined();
+  });
+
+  it("honours an explicit limit", async () => {
+    const getMessages = vi.fn().mockResolvedValue(thread(50));
+    const tools = buildTools(mockClient({ getMessages } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+
+    const out = JSON.parse((await getHandler(tools, "get_thread_messages")({ threadId: "t", limit: 5 })).content[0].text);
+    expect(out.messages).toHaveLength(5);
+  });
+
+  // Peer-authored text carries the boundary note, same as the other read tools.
+  it("attaches the peer boundary when someone else wrote in the thread", async () => {
+    const withPeer = vi.fn().mockResolvedValue([{ id: "m1", fromAgent: "agent_other", body: "hi" }]);
+    const mine     = vi.fn().mockResolvedValue([{ id: "m1", fromAgent: AGENT_ID, body: "note to self" }]);
+
+    const a = JSON.parse((await getHandler(buildTools(mockClient({ getMessages: withPeer } as Partial<ApiClient>), AGENT_ID, REPO_ID), "get_thread_messages")({ threadId: "t" })).content[0].text);
+    const b = JSON.parse((await getHandler(buildTools(mockClient({ getMessages: mine } as Partial<ApiClient>), AGENT_ID, REPO_ID), "get_thread_messages")({ threadId: "t" })).content[0].text);
+
+    expect(a.peerBoundary).toBeTruthy();
+    expect(b.peerBoundary).toBeUndefined();
+  });
+});
+
+describe("the unread index says how much it is hiding", () => {
+  it("names the total and points at the drill-in tool", async () => {
+    const getUnread = vi.fn().mockResolvedValue({
+      data: Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, threadId: "t" })),
+      meta: { total: 96, returned: 20 },
+    });
+    const tools = buildTools(mockClient({ getUnread } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+    const out = JSON.parse((await getHandler(tools, "get_unread_messages")({})).content[0].text);
+
+    expect(out.notShown).toContain("20 most recent of 96");
+    expect(out.notShown).toContain("get_thread_messages");
+  });
+
+  it("stays quiet when nothing was capped", async () => {
+    const getUnread = vi.fn().mockResolvedValue({ data: [{ id: "m1" }], meta: { total: 1, returned: 1 } });
+    const tools = buildTools(mockClient({ getUnread } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+    const out = JSON.parse((await getHandler(tools, "get_unread_messages")({})).content[0].text);
     expect(out.notShown).toBeUndefined();
   });
 });

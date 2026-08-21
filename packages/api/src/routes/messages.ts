@@ -1,13 +1,20 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, sql, asc } from "drizzle-orm";
+import { eq, sql, asc, desc, count } from "drizzle-orm";
 import { messages, threads, tasks, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import { assertRepoAccess, peerRepoIds, loadThreadScoped } from "../lib/ownership.js";
 import { ensureDmThread, dmThreadFilter } from "../lib/dm.js";
+import { clip, clipMetadata } from "../lib/payload.js";
 import type { Db } from "@getrelai/db";
 
+
+// A triage index, not the archive. The cap is safe only because every row
+// carries the threadId to drill in with via GET /threads/:id/messages.
+const UNREAD_LIMIT      = Number(process.env.UNREAD_LIMIT ?? 20);
+const UNREAD_BODY_CHARS = Number(process.env.UNREAD_BODY_CHARS ?? 600);
+const UNREAD_META_CHARS = Number(process.env.UNREAD_META_CHARS ?? 300);
 
 const createSchema = z.object({
   // Ignored for agent callers (the token is the identity) and required only on
@@ -223,14 +230,34 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const access = await assertRepoAccess(request, db, repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
+    const where = sql`(${threads.repoId} = ${repoId} OR ${dmThreadFilter(agentId)}) AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`;
+
+    const [{ value: total }] = await db
+      .select({ value: count() })
+      .from(messages)
+      .innerJoin(threads, eq(messages.threadId, threads.id))
+      .where(where);
+
+    // Ordered because it is capped, and newest-first because that is what the
+    // MCP inbox notifier and a triaging agent both want from a backlog.
     const rows = await db
       .select({ messages })
       .from(messages)
       .innerJoin(threads, eq(messages.threadId, threads.id))
-      .where(
-        sql`(${threads.repoId} = ${repoId} OR ${dmThreadFilter(agentId)}) AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`,
-      );
+      .where(where)
+      .orderBy(desc(messages.createdAt))
+      .limit(UNREAD_LIMIT);
 
-    return { data: rows.map((r) => r.messages) };
+    const data = rows.map(({ messages: m }) => {
+      const body = clip(m.body, UNREAD_BODY_CHARS);
+      return {
+        ...m,
+        body: body.text,
+        metadata: clipMetadata(m.metadata, UNREAD_META_CHARS),
+        ...(body.truncated ? { truncated: true, bodyLength: m.body.length } : {}),
+      };
+    });
+
+    return { data, meta: { total, returned: data.length } };
   });
 };

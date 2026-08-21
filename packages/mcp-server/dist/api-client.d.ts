@@ -7,6 +7,7 @@ export declare class ApiClient {
     private baseUrl;
     private headers;
     constructor(config: ApiClientConfig);
+    private requestEnvelope;
     private request;
     getRepo(id: string): Promise<{
         id: string;
@@ -116,7 +117,10 @@ export declare class ApiClient {
         message: unknown;
     }>;
     getMessages(threadId: string): Promise<unknown[]>;
-    getUnread(agentId: string, repoId: string): Promise<unknown[]>;
+    getUnread(agentId: string, repoId: string): Promise<{
+        data?: unknown[] | undefined;
+        meta?: Record<string, unknown>;
+    }>;
     markRead(threadId: string, agentId: string): Promise<unknown>;
     registerAgent(body: {
         repoId: string;

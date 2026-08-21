@@ -62,8 +62,7 @@ export const threadRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     if (type)      conditions.push(eq(threads.type, type));
     // Archived threads are hidden from the default live view; archived=true to include.
     if (archived !== "true") conditions.push(isNull(threads.archivedAt));
-    // DMs are private to their two participants, so they never belong in a
-    // repo-wide listing. Read one via GET /threads/:id/messages.
+    // Private to their two participants; never part of a repo-wide listing.
     conditions.push(isNull(threads.dmKey));
 
     if (request.agent) {

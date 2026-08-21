@@ -11,10 +11,8 @@ import type { Db } from "@getrelai/db";
 async function assertThreadAccess(request: import("fastify").FastifyRequest, db: Db, threadId: string) {
   const [thread] = await db.select().from(threads).where(eq(threads.id, threadId));
   if (!thread) return { ok: false as const, status: 404 as const };
-  // A DM lives in the sender's repo but is not repo-readable: only the two
-  // participants get in, so a repo-mate cannot open someone else's conversation.
-  // Owner/admin callers still reach it through the repo check below, which is
-  // the operator oversight path.
+  // Participants only — the row's repo is not its access boundary, so a
+  // repo-mate cannot open it. Owner/admin still reach it via the repo check.
   if (thread.type === "dm" && request.agent) {
     if (!isDmParticipant(thread, request.agent.id)) return { ok: false as const, status: 404 as const };
     return { ok: true as const, thread };
@@ -179,9 +177,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     metadata: z.record(z.unknown()).default({}),
   });
 
-  // Address a peer directly, without having to find or create a thread first.
-  // Restricted to per-agent callers: the pair key needs two agent identities,
-  // and the owner path already has `reply_human` for talking to a thread.
+  // Per-agent callers only: the pair key needs two agent identities.
   fastify.post<{ Params: { id: string } }>("/agents/:id/messages", async (request, reply) => {
     const body = dmSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });

@@ -2,8 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { threads, type Db } from "@getrelai/db";
 import { newId } from "./id.js";
 
-// An unordered pair: alice→bob and bob→alice must resolve to one conversation,
-// so the key is sorted before it is stored or looked up.
+// Unordered: alice→bob and bob→alice must resolve to one conversation.
 export function dmKeyFor(a: string, b: string): string {
   return [a, b].sort().join(":");
 }
@@ -13,9 +12,8 @@ export function isDmParticipant(thread: { type: string | null; dmKey: string | n
   return thread.dmKey.split(":").includes(agentId);
 }
 
-// The thread row needs a repo for its FK, and the sender's is the only one it
-// can be sure of. It is deliberately NOT the access boundary: `dmKey` is, which
-// is what lets the conversation cross repos and keeps a repo-mate out of it.
+// repoId satisfies the FK only. `dmKey` is the access boundary, which is what
+// lets a DM cross repos and keeps a repo-mate out of it.
 export async function ensureDmThread(
   db: Db,
   a: string,
@@ -40,9 +38,8 @@ export async function ensureDmThread(
   return winner;
 }
 
-// Messages in DM threads this agent is part of, wherever those threads live.
-// Callers AND this into a repo-scoped predicate with OR, so a cross-repo DM
-// reaches an inbox that is otherwise filtered to one repo.
+// OR this into a repo-scoped predicate so a cross-repo DM still reaches an
+// inbox that is otherwise filtered to one repo.
 export function dmThreadFilter(agentId: string) {
   return sql`(${threads.type} = 'dm' AND ${threads.dmKey} IS NOT NULL AND ${agentId} = ANY(string_to_array(${threads.dmKey}, ':')))`;
 }

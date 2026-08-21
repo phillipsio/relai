@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ApiClient } from "./api-client.js";
 import { buildTools, buildOperatorTools } from "./tools.js";
+import { diffAttention, type AttentionState, type WatchTask } from "./owner-watch.js";
 import { checkRepoMatch } from "@getrelai/git";
 
 // Report the package version (dist/index.js → ../package.json) so the MCP
@@ -80,6 +81,34 @@ const tools = OWNER_MODE
 
 for (const tool of tools) {
   server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);
+}
+
+// No agent identity here, so heartbeat does not apply but attention does:
+// without this the console saw only what the operator thought to ask for.
+if (OWNER_MODE) {
+  const OWNER_POLL_INTERVAL_MS = Number(process.env.OWNER_POLL_INTERVAL_MS ?? 60_000);
+  let seen: Map<string, AttentionState> | null = null;
+
+  async function pollAttention() {
+    try {
+      // Two calls because stalled work is still `in_progress`: its status looks
+      // healthy and only `stalledAt` gives it away.
+      const [attention, active] = await Promise.all([
+        apiClient.getTasks({ status: "blocked,pending_verification,proposed" }),
+        apiClient.getTasks({ status: "in_progress" }),
+      ]);
+      const { notices, next } = diffAttention(seen, [...attention, ...active] as WatchTask[]);
+      seen = next;
+      for (const data of notices) {
+        await server.server.sendLoggingMessage({ level: "warning", data });
+      }
+    } catch {
+      // Non-fatal. `seen` is left as-is so a blip does not replay the backlog.
+    }
+  }
+
+  void pollAttention();
+  setInterval(pollAttention, OWNER_POLL_INTERVAL_MS);
 }
 
 // Heartbeat + inbox polling are per-agent concerns — skipped in owner mode,

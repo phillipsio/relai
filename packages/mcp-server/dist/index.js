@@ -11,6 +11,7 @@ const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const api_client_js_1 = require("./api-client.js");
 const tools_js_1 = require("./tools.js");
+const owner_watch_js_1 = require("./owner-watch.js");
 const git_1 = require("@getrelai/git");
 // Report the package version (dist/index.js → ../package.json) so the MCP
 // handshake matches the published package.
@@ -62,6 +63,32 @@ const tools = OWNER_MODE
     : (0, tools_js_1.buildTools)(apiClient, AGENT_ID, REPO_ID);
 for (const tool of tools) {
     server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);
+}
+// No agent identity here, so heartbeat does not apply but attention does:
+// without this the console saw only what the operator thought to ask for.
+if (OWNER_MODE) {
+    const OWNER_POLL_INTERVAL_MS = Number(process.env.OWNER_POLL_INTERVAL_MS ?? 60_000);
+    let seen = null;
+    async function pollAttention() {
+        try {
+            // Two calls because stalled work is still `in_progress`: its status looks
+            // healthy and only `stalledAt` gives it away.
+            const [attention, active] = await Promise.all([
+                apiClient.getTasks({ status: "blocked,pending_verification,proposed" }),
+                apiClient.getTasks({ status: "in_progress" }),
+            ]);
+            const { notices, next } = (0, owner_watch_js_1.diffAttention)(seen, [...attention, ...active]);
+            seen = next;
+            for (const data of notices) {
+                await server.server.sendLoggingMessage({ level: "warning", data });
+            }
+        }
+        catch {
+            // Non-fatal. `seen` is left as-is so a blip does not replay the backlog.
+        }
+    }
+    void pollAttention();
+    setInterval(pollAttention, OWNER_POLL_INTERVAL_MS);
 }
 // Heartbeat + inbox polling are per-agent concerns — skipped in owner mode,
 // which has no single agent identity or project to poll.

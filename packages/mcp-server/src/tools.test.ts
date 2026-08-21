@@ -891,3 +891,40 @@ describe("send_message without a thread", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
+
+describe("session_start discloses what it is not showing", () => {
+  const bundle = (over: Record<string, unknown> = {}) => ({
+    agent: {}, repo: {},
+    tasks: [{ id: "task_1" }], taskCount: 1,
+    unreadMessages: [], unreadCount: 0,
+    openThreads: [], openThreadCount: 0,
+    ...over,
+  });
+
+  it("names each capped list, its true total, and the tool that has the rest", async () => {
+    const getSessionStart = vi.fn().mockResolvedValue(bundle({
+      unreadMessages: Array.from({ length: 20 }, (_, i) => ({ id: `msg_${i}` })),
+      unreadCount: 47,
+      tasks: Array.from({ length: 10 }, (_, i) => ({ id: `task_${i}` })),
+      taskCount: 31,
+    }));
+    const tools = buildTools(mockClient({ getSessionStart } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+    const out = JSON.parse((await getHandler(tools, "session_start")({})).content[0].text);
+
+    expect(out.notShown).toEqual(expect.arrayContaining([
+      expect.stringContaining("20 most recent of 47"),
+      expect.stringContaining("get_unread_messages"),
+      expect.stringContaining("10 most recent of 31"),
+      expect.stringContaining("get_my_tasks"),
+    ]));
+  });
+
+  // Saying "not shown" when everything was shown trains the reader to ignore it.
+  it("stays silent when nothing was capped", async () => {
+    const getSessionStart = vi.fn().mockResolvedValue(bundle());
+    const tools = buildTools(mockClient({ getSessionStart } as Partial<ApiClient>), AGENT_ID, REPO_ID);
+    const out = JSON.parse((await getHandler(tools, "session_start")({})).content[0].text);
+
+    expect(out.notShown).toBeUndefined();
+  });
+});

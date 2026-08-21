@@ -43,7 +43,7 @@ export async function startCommand() {
   }
 
   console.log();
-  console.log(chalk.bold(`Your tasks (${session.tasks.length})`));
+  console.log(chalk.bold(`Your tasks (${session.taskCount ?? session.tasks.length})`));
   if (session.tasks.length === 0) {
     console.log(chalk.dim("  none"));
   } else {
@@ -54,7 +54,7 @@ export async function startCommand() {
   }
 
   console.log();
-  console.log(chalk.bold(`Unread messages (${session.unreadMessages.length})`));
+  console.log(chalk.bold(`Unread messages (${session.unreadCount ?? session.unreadMessages.length})`));
   if (session.unreadMessages.length === 0) {
     console.log(chalk.dim("  none"));
   } else {
@@ -62,13 +62,14 @@ export async function startCommand() {
       const preview = m.body.replace(/\s+/g, " ").slice(0, 70);
       console.log(`  ${chalk.dim(m.type.padEnd(10))} ${preview}${m.body.length > 70 ? "…" : ""}`);
     }
-    if (session.unreadMessages.length > 5) {
-      console.log(chalk.dim(`  …and ${session.unreadMessages.length - 5} more — run \`relai inbox\``));
+    const totalUnread = session.unreadCount ?? session.unreadMessages.length;
+    if (totalUnread > 5) {
+      console.log(chalk.dim(`  …and ${totalUnread - 5} more — run \`relai inbox\``));
     }
   }
 
   console.log();
-  console.log(chalk.bold(`Open threads (${session.openThreads.length})`));
+  console.log(chalk.bold(`Open threads (${session.openThreadCount ?? session.openThreads.length})`));
   if (session.openThreads.length === 0) {
     console.log(chalk.dim("  none"));
   } else {

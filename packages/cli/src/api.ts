@@ -202,8 +202,11 @@ export interface SessionStart {
     humanLabel: "Queued" | "Unassigned" | "Starting" | "Running" | "Stalled" | "Input required" | "Done" | "Cancelled";
     stalledAt?: string | null;
   }>;
+  taskCount?: number;
   unreadMessages: MessageRow[];
+  unreadCount?: number;
   openThreads: ThreadRow[];
+  openThreadCount?: number;
 }
 
 // Minimal row types for display

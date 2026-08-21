@@ -136,7 +136,9 @@ Fastify v4 with Zod validation throughout.
 Every published event is also persisted to the `events` table on write, so `/session/start` can return what an agent missed since their last read. SSE remains the live channel; the table is history.
 
 **Session**
-- `GET /session/start?repoId=` — bundled snapshot for a fresh agent: agent + repo + my open tasks + unread messages + open subscribed threads + `recentEvents` (last 50 the agent is subscribed to or directly notified about, newest first). Requires a per-agent token; the deprecated `API_SECRET` fallback is rejected.
+- `GET /session/start?repoId=` — bundled snapshot for a fresh agent: agent + repo + my open tasks + unread messages + open subscribed threads + `recentEvents` + `staleArtifacts`. Requires a per-agent token; the deprecated `API_SECRET` fallback is rejected.
+
+  **It is an index, not an archive.** Every list is capped and ordered newest-first, and each is paired with a true total (`taskCount`, `unreadCount`, `openThreadCount`) so a cap is never silent. Long message bodies and task descriptions are clipped and marked `truncated: true` with the real `bodyLength`/`descriptionLength`. Oversized `metadata` on a task or message collapses to `{ _truncated: true, keys: [...] }`, while metadata under the threshold passes through untouched (the common case; a follow-up call to recover `{ branchName, roundNumber }` would be absurd). Full text comes from `get_unread_messages`, `get_my_tasks` and `GET /tasks/:id`, which the worker prompt calls anyway, and this bundle previously duplicated all of it in full. Measured on real data 2026-08-20: the worst agent went from 111,920 chars to 25,361, which is what made the call returnable inline again. The MCP tool adds a `notShown` array naming each capped list, its true total and the tool that has the rest. A cap an agent believes is complete is worse than a big payload, because it will act on a partial picture and never know to ask.
 
 **Other**
 - `POST /routing-log`, `GET /routing-log?taskId=&assignedTo=` (audit)
@@ -248,6 +250,7 @@ Currently tested:
 - `packages/api/src/routes/invites.test.ts` — invite create + accept + expiry
 - `packages/api/src/routes/events.test.ts` — SSE subscription fan-out + persisted-event side effects
 - `packages/api/src/routes/dm.test.ts` — thread-optional direct messages: lazy pair thread, unordered-pair reuse, owner-scoped reach, participant-only privacy, and cross-repo inbox delivery
+- `packages/api/src/routes/session-size.test.ts` — the orientation payload stays bounded: every list capped with a true total, newest-first ordering under the cap, bodies/descriptions/metadata clipped and declared, small rows untouched
 - `packages/api/src/routes/session.test.ts` — `/session/start` bundle (tasks, unread, threads, recentEvents)
 - `packages/api/src/routes/propose-commit.test.ts` — propose-vs-commit: worker creates land in `proposed`, orchestrator/admin commit directly, and `POST /tasks/:id/commit` (assign/@auto/default, ratified edits, reject, 403/409/404, verify re-validation)
 - `packages/api/src/routes/notification-channels.test.ts` — webhook fan-out, HMAC signing, retry/backoff, circuit breaker, and owner-scoped channel delivery (attention-transition gating + cross-repo owner resolution)
@@ -264,7 +267,7 @@ Currently tested:
 - `packages/event-worker/src/worker.test.ts` — SSE loop, has-work gate, and overflow → block wiring
 - `packages/mcp-server/src/tools.test.ts` — MCP tool handlers with mocked API client
 
-Total ~631 tests across the workspace (api alone: ~417). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
+Total ~645 tests across the workspace (api alone: ~426). When adding routes, update `api.test.ts`. When adding routing rules, update `rules.test.ts`. When adding or modifying MCP tools, update `tools.test.ts` — especially verify the content format and any default-value handling.
 
 ## Environment
 
@@ -282,6 +285,13 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `BLOCKED_OVERDUE_MS` | `1800000` | How long a `blocked` task may wait for an answer before the watcher emits a one-time `task.blocked_overdue`. A task awaiting an agent is then released with `metadata.blockedTimeout`; one awaiting a human stays blocked and is only nudged. |
 | `PROPOSED_OVERDUE_MS` | `600000` | How long a worker's `proposed` task may sit awaiting an orchestrator's commit before the scheduler emits a one-time `task.proposed_overdue` event (notifies the repo's orchestrators). |
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick (handoff/question/finding via Claude; escalation/decision via rules). Costs a Claude call per inbound handoff/question/finding. |
+| `SESSION_UNREAD_LIMIT` | `20` | Max unread messages in `/session/start` (newest first). `unreadCount` always reports the true total. |
+| `SESSION_TASK_LIMIT` | `10` | Max open tasks in `/session/start`; `taskCount` reports the true total. |
+| `SESSION_THREAD_LIMIT` | `25` | Max subscribed open threads in `/session/start`; `openThreadCount` reports the true total. |
+| `SESSION_BODY_CHARS` | `300` | Message bodies are clipped to this in `/session/start` and marked `truncated`. |
+| `SESSION_TASK_DESC_CHARS` | `500` | Task descriptions are clipped to this in `/session/start`. |
+| `SESSION_TASK_META_CHARS` | `800` | Task `metadata` above this collapses to its key list. |
+| `SESSION_MSG_META_CHARS` | `300` | Message `metadata` above this collapses to its key list. |
 | `SESSION_RECENT_EVENTS_LIMIT` | `20` | How many recent events `/session/start` returns. Each is trimmed to a one-line `summary` (full event payloads are not included) to keep the startup snapshot small; agents fetch detail by id when needed. |
 | `AGENT_ID` | — | Set after registering an agent |
 | `REPO_ID` | — | Set after creating a repo |

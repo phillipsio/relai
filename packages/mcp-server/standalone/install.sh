@@ -82,7 +82,8 @@ fi
 say ""
 say "Checking the server"
 
-livez=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$API_URL/livez" 2>/dev/null || echo 000)
+livez=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$API_URL/livez" 2>/dev/null)
+[ -z "$livez" ] && livez=000
 if [ "$livez" = "200" ]; then
   ok "reachable ($API_URL)"
 else
@@ -95,7 +96,8 @@ else
 fi
 
 if [ "$livez" = "200" ]; then
-  auth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "Authorization: Bearer $API_SECRET" "$API_URL/health" 2>/dev/null || echo 000)
+  auth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "Authorization: Bearer $API_SECRET" "$API_URL/health" 2>/dev/null)
+  [ -z "$auth" ] && auth=000
   case "$auth" in
     200) ok "token accepted" ;;
     401) bad "token rejected — ask the sender for a fresh one"; fail=1 ;;

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "relai": {
+      "command": "node",
+      "args": ["/Users/YOUR-USERNAME/relai-mcp/bin/server.cjs"],
+      "env": {
+        "API_URL": "PASTE_API_URL_HERE",
+        "AGENT_ID": "PASTE_AGENT_ID_HERE",
+        "REPO_ID": "PASTE_REPO_ID_HERE",
+        "API_SECRET": "PASTE_API_SECRET_HERE",
+        "RELAI_SKIP_REPO_CHECK": "1"
+      }
+    }
+  }
+}

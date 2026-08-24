@@ -10,13 +10,18 @@
 // states its own commit and build time.
 //
 //   node scripts/build-standalone-mcp.mjs [--out <dir>]
+//   node scripts/build-standalone-mcp.mjs --credentials <file> --name relai-for-matt
+//
+// With --credentials it bakes a credentials.env into the archive so install.sh can
+// run unattended. That archive then CONTAINS A LIVE TOKEN: hand it over privately
+// and revoke the token when the access ends.
 //
 // Requires a clean-enough tree that `git rev-parse HEAD` means something. Warns
 // (does not fail) when the working tree is dirty, since the whole point is to know
 // what a recipient is actually running.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, cpSync, writeFileSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, rmSync, cpSync, writeFileSync, readFileSync, statSync, chmodSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,10 +29,15 @@ const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const PKG = join(REPO, "packages/mcp-server");
 const ESBUILD = join(REPO, "node_modules/.pnpm/esbuild@0.28.1/node_modules/esbuild/bin/esbuild");
 
-const outArg = process.argv.indexOf("--out");
-const OUT = outArg !== -1 ? resolve(process.argv[outArg + 1]) : join(process.env.HOME, "Desktop");
-const STAGE = join(OUT, "relai-mcp");
-const ZIP = join(OUT, "relai-mcp.zip");
+const argAfter = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i !== -1 ? process.argv[i + 1] : null;
+};
+const OUT = argAfter("--out") ? resolve(argAfter("--out")) : join(process.env.HOME, "Desktop");
+const NAME = argAfter("--name") ?? "relai-mcp";
+const CREDS = argAfter("--credentials");
+const STAGE = join(OUT, NAME);
+const ZIP = join(OUT, `${NAME}.zip`);
 
 const git = (args) => execFileSync("git", args, { cwd: REPO, encoding: "utf8" }).trim();
 
@@ -57,6 +67,8 @@ execFileSync(ESBUILD, [
 cpSync(join(PKG, "standalone/README.md"), join(STAGE, "README.md"));
 cpSync(join(PKG, "standalone/claude_desktop_config.example.json"), join(STAGE, "claude_desktop_config.example.json"));
 cpSync(join(PKG, "standalone/mcp_json.example.json"), join(STAGE, "mcp_json.example.json"));
+cpSync(join(PKG, "standalone/install.sh"), join(STAGE, "install.sh"));
+chmodSync(join(STAGE, "install.sh"), 0o755);
 
 writeFileSync(join(STAGE, "package.json"), JSON.stringify({ name: "relai-mcp", version, private: true }, null, 2) + "\n");
 
@@ -74,10 +86,27 @@ writeFileSync(join(STAGE, "BUILD.txt"),
     ``,
   ].join("\n"));
 
+// Personalisation. The generic bundle stays credential-free in the repo; the token
+// only enters an archive built explicitly for one recipient.
+if (CREDS) {
+  const text = readFileSync(resolve(CREDS), "utf8");
+  const pick = (key) => {
+    const m = new RegExp(`^${key}\\s+(\\S+)`, "m").exec(text);
+    if (!m) throw new Error(`${key} not found in ${CREDS}`);
+    return m[1];
+  };
+  const vals = ["API_URL", "AGENT_ID", "REPO_ID", "API_SECRET"].map((k) => [k, pick(k)]);
+  writeFileSync(join(STAGE, "credentials.env"),
+    ["# Live credentials. Do not forward this archive.", ...vals.map(([k, v]) => `${k}="${v}"`), ""].join("\n"));
+  chmodSync(join(STAGE, "credentials.env"), 0o600);
+  console.log(`  baked credentials for ${vals.find(([k]) => k === "AGENT_ID")[1]}`);
+}
+
 rmSync(ZIP, { force: true });
-execFileSync("zip", ["-qr", ZIP, "relai-mcp"], { cwd: OUT, stdio: "inherit" });
+execFileSync("zip", ["-qr", ZIP, NAME], { cwd: OUT, stdio: "inherit" });
 
 const size = statSync(ZIP).size;
 console.log(`built ${ZIP}`);
 console.log(`  commit ${commit}${dirty ? " (dirty)" : ""}, mcp-server ${version}, ${(size / 1024).toFixed(0)} KiB`);
 console.log(`  staged folder left at ${STAGE} for inspection`);
+if (CREDS) console.log(`  NOTE: this archive contains a live token. Hand it over privately.`);

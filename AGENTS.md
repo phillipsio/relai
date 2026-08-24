@@ -235,6 +235,10 @@ Add the snippet from `relai init` (or `relai login`) to `.mcp.json` in the repo 
 
 **Repo path**: Relai stores `repoPath` on the agent record and shows it in setup instructions, but cannot enforce it for interactive sessions. Always start your agent session from the correct directory — the agent will work in whatever directory it was launched from.
 
+**Point this repo's own `.mcp.json` at local source, never `npx`.** Fixed 2026-07-08 (`task_9PCLEy3m8QspCf-NIVqq0`): the entry used `command: npx, args: ["@getrelai/mcp-server"]`, which is not in root `node_modules`, so npx fetched the stale published `0.2.0` from the registry. That is too slow to connect inside Claude Code's window, so a session launched from relai's own checkout got no live tools and no auto-heartbeat. Use `command: <abs>/packages/mcp-server/node_modules/.bin/tsx` with `args: [<abs>/packages/mcp-server/src/index.ts]`, as every other repo does. **If relai's MCP tools are missing from a relai-launched session, check this first**, then fall back to driving the API directly with the `.mcp.json` credentials.
+
+The env var names are `API_URL` and `API_SECRET` everywhere — in `.mcp.json`, worker env, docs, and source. The pre-release `ORCHESTRATOR_API_URL` / `ORCHESTRATOR_API_SECRET` names are still accepted as fallbacks by the MCP server and claude-worker, but no new code should use them.
+
 ### Worker session-failure classification (packages/claude-worker/src/errors.ts)
 
 `classifySessionError()` sorts a failed `claude --print` session into three classes, because they need different remedies:
@@ -290,7 +294,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `DATABASE_URL` | `postgresql://relai:relai@localhost:5433/relai` | |
 | `API_PORT` | `3010` | |
 | `API_SECRET` | — | Deprecated shared fallback; still used by seed scripts and pre-token clients. New work should use per-agent tokens issued by `POST /agents` / `POST /agents/:id/tokens`. |
-| `ANTHROPIC_API_KEY` | — | Enables Claude fallback routing; optional |
+| `ANTHROPIC_API_KEY` | — | Enables Claude fallback routing; optional. **Must be unset rather than empty.** An empty-string value in the shell makes a spawned Claude Code subprocess attempt API-key auth and fail with `Invalid API key`; unset it or open a fresh terminal. |
 | `ROUTING_MODEL` | `claude-haiku-4-5-20251001` | Model used for routing decisions |
 | `TASK_POLL_MS` | `15000` | Routing scheduler interval (ms) |
 | `REVIEW_OVERDUE_MS` | `600000` | How long a `reviewer_agent` task may sit in `pending_verification` awaiting a decision before the verify scheduler emits a one-time `task.review_overdue` event (notifies the reviewer + task subscribers). |
@@ -357,7 +361,19 @@ Workflow:
 2. If you do work on a branch, fast-forward or `--no-ff` merge into `main` locally, then `git push origin main`. No PR ceremony needed.
 3. The Claude Code auto-mode classifier may still flag direct-to-main pushes; if blocked, surface the block — the user has standing authorization and will approve.
 
+**Standing authorization, granted 2026-05-30.** For relai improvement work, merge each completed change to `main` and push **without re-confirming every time**. Do not ask per change. The preconditions are not optional: tests written first and green, plus a self-review of the diff before pushing. Still surface anything genuinely risky before it lands — schema migrations, and default-behaviour flips worth a heads-up. This authorization is specific to this repo; every other repo keeps the default per-push confirmation.
+
+The pre-push review hook is the global `~/.claude/hooks/pre-push-review.sh`, and its intentional bypass is `SKIP_PR_REVIEW=1` (or `--no-verify`). There is also a stale June-2026 project-local copy at `.claude/hooks/pre-push-review.sh` which the global one supersedes. Note that hooks load at session start, so editing one needs a session restart or a `/hooks` reload before it takes effect.
+
 `gh pr create` will not work against `phillipsio/*` repos because the local `gh` is bound to the work account (Enterprise Managed). Don't try.
+
+## Licensing and distribution
+
+**relai is proprietary** (decided 2026-06-10). The repo is private and is not open-source. The reasoning is that the operator ingress plus cross-repo "command a fleet of coding agents from one chat" capability is the leverage worth keeping.
+
+Repo-private alone is leaky, and the follow-through is **not finished**: `@getrelai/cli` and `@getrelai/mcp-server` were published publicly to npm (0.2.1 and 0.2.0), neither package.json sets `"private": true`, and the repo still has **no LICENSE file**, which leaves its terms ambiguous. Tracked on the relai board rather than here.
+
+Splitting outward-facing from in-repo work, because they need different authority: flipping GitHub visibility and running `npm deprecate` are Jim's to do (the local `gh` cannot touch `phillipsio`, and unpublishing is past its 72-hour window). Adding a `private: true` publish guard and a proprietary LICENSE are ordinary in-repo changes.
 
 ## Deploy
 

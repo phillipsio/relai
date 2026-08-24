@@ -10,6 +10,12 @@ stalled worker.
 This is not an autonomous meta-orchestrator. Phone-Claude is the brain; relai
 just lets one identity you command reach across repos.
 
+**The stated goal is visibility first, interaction second** (2026-06-26): see
+into every repo, then oversee and interact with the agents in them. That
+ordering is why the toolset grew `list_repos` / `list_agents` before the
+authoring tools, and it is the tie-breaker when deciding what to add next — a
+read that reveals fleet state outranks another way to write to it.
+
 ## How it works
 
 The operator surface is built almost entirely from machinery relai already has:

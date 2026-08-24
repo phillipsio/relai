@@ -574,6 +574,10 @@ describe("owner-scoped notification channels", () => {
       "task.proposed",
       "task.proposed_overdue",
       "task.review_overdue",
+      // Terminal counterpart to task.stalled: the work has used up its automatic
+      // re-queues and now needs a human to split, reassign or drop it.
+      // task.stall_released is deliberately absent — it is self-healing.
+      "task.stall_exhausted",
       "task.stalled",
     ]);
   });

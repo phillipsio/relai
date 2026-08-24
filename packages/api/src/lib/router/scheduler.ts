@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { eq, and, inArray, isNull, lt, or } from "drizzle-orm";
+import { eq, and, inArray, isNull, isNotNull, lt, or } from "drizzle-orm";
 import { agents, tasks, repos, routingLog, messages, verificationLog } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
@@ -234,6 +234,98 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
       targetId:   task.id,
       alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
       payload:    { task, awaitedAgent: answerer, waitedMs, released: releasing },
+      createdAt:  new Date().toISOString(),
+    });
+  }
+}
+
+// ── Stalled-task reaping ──────────────────────────────────────────────────────
+
+// On top of the stall threshold, so the real delay is stallThresholdMs + this.
+const STALLED_REAP_MS = Number(process.env.STALLED_REAP_MS ?? 3_600_000);
+
+// Re-queueing is a retry; unbounded, an un-completable task loops forever.
+const STALLED_MAX_RELEASES = Number(process.env.STALLED_MAX_RELEASES ?? 2);
+
+// Re-queues as pending, NOT assigned: assigned is still counted by load
+// balancing above, and detectStalls only scans in_progress, so an assigned row
+// with a dead worker becomes undetectable as well as unworked.
+export async function reapStalledTasks(db: Db, repoId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - STALLED_REAP_MS);
+
+  const reapable = await db
+    .select()
+    .from(tasks)
+    .where(and(
+      eq(tasks.repoId, repoId),
+      eq(tasks.status, "in_progress"),
+      isNotNull(tasks.stalledAt),
+      lt(tasks.stalledAt, cutoff),
+    ));
+
+  for (const task of reapable) {
+    const meta = (task.metadata ?? {}) as Record<string, unknown>;
+    const released = Number(meta.stallReleaseCount ?? 0);
+    const stalledFor = Date.now() - new Date(task.stalledAt!).getTime();
+
+    if (released >= STALLED_MAX_RELEASES) {
+      // No blockedThreadId on purpose: nothing is awaited, so watchBlockedTasks
+      // must not revive it. Same reasoning as blockOverflowedTasks.
+      console.warn(`[scheduler] stalled task ${task.id} exhausted ${released} release(s) — blocking for a human`);
+      await db.update(tasks)
+        .set({
+          status:    "blocked",
+          blockedAt: new Date(),
+          metadata:  {
+            ...meta,
+            blockedReason: `Stalled ${STALLED_MAX_RELEASES} time(s) after re-queueing; no worker completed it.`,
+            stallExhausted: { releases: released, at: new Date().toISOString() },
+          },
+        })
+        .where(eq(tasks.id, task.id));
+
+      await publish(db, {
+        id:         newId("evt"),
+        kind:       "task.stall_exhausted",
+        repoId:     task.repoId,
+        targetType: "task",
+        targetId:   task.id,
+        alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+        payload:    { task, releases: released, stalledForMs: stalledFor },
+        createdAt:  new Date().toISOString(),
+      });
+      continue;
+    }
+
+    console.warn(`[scheduler] re-queueing stalled task ${task.id} (release ${released + 1}) — was assigned to ${task.assignedTo ?? "nobody"}`);
+
+    await db.update(tasks)
+      .set({
+        status:      "pending",
+        autoAssign:  true,
+        assignedTo:  null,
+        // Cleared, or a re-queued task that stalls again is never re-detected.
+        stalledAt:   null,
+        metadata: {
+          ...meta,
+          stallReleaseCount: released + 1,
+          stallRelease: {
+            previousAssignee: task.assignedTo,
+            stalledForMs:     stalledFor,
+            at:               new Date().toISOString(),
+          },
+        },
+      })
+      .where(eq(tasks.id, task.id));
+
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "task.stall_released",
+      repoId:     task.repoId,
+      targetType: "task",
+      targetId:   task.id,
+      alsoNotify: task.assignedTo ? [{ targetType: "agent", targetId: task.assignedTo }] : [],
+      payload:    { task, previousAssignee: task.assignedTo, release: released + 1, stalledForMs: stalledFor },
       createdAt:  new Date().toISOString(),
     });
   }
@@ -648,6 +740,9 @@ async function runCycle(db: Db, repoId: string): Promise<void> {
     detectStalls(db, repoId).catch((err) =>
       console.error(`[scheduler] stall-detect error project=${repoId}:`, err)
     ),
+    reapStalledTasks(db, repoId).catch((err) =>
+      console.error(`[scheduler] stall-reap error project=${repoId}:`, err)
+    ),
     verifyPending(db, repoId).catch((err) =>
       console.error(`[scheduler] verify error project=${repoId}:`, err)
     ),
@@ -684,10 +779,12 @@ export function startRoutingScheduler(db: Db): void {
         .from(tasks)
         .where(eq(tasks.status, "blocked"));
 
+      // Any in_progress row, stamped or not: an isNull(stalledAt) filter here
+      // excluded exactly the repos reapStalledTasks exists for.
       const inProgress = await db
         .selectDistinct({ repoId: tasks.repoId })
         .from(tasks)
-        .where(and(eq(tasks.status, "in_progress"), isNull(tasks.stalledAt)));
+        .where(eq(tasks.status, "in_progress"));
 
       const verifying = await db
         .selectDistinct({ repoId: tasks.repoId })

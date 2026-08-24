@@ -27,6 +27,10 @@ export const OWNER_ATTENTION_KINDS = new Set<EventKind>([
   // message and expects no reply, so without this it reaches nobody at all.
   // Fired once per task, guarded by isNull(stalledAt) at the stamp site.
   "task.stalled",
+  // A stalled task that has used up its re-queues. Unlike task.stall_released,
+  // which is self-healing and needs nobody, this one is terminal until a human
+  // splits it, reassigns it, or drops it.
+  "task.stall_exhausted",
 ]);
 
 // Default delivery options. `retries: 2` = up to 3 attempts total.

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../../server.js";
-import { detectStalls, watchProposedTasks, watchBlockedTasks } from "./scheduler.js";
+import { detectStalls, watchProposedTasks, watchBlockedTasks, reapStalledTasks } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
 import { createDb, tasks, subscriptions } from "@getrelai/db";
 import { eq } from "drizzle-orm";
@@ -17,6 +17,10 @@ const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/
 let app: FastifyInstance;
 let repoId: string;
 let agentId: string;
+
+// One pool for the file: createDb opens 10 connections, and a call per helper
+// exhausted Postgres's 100 and broke *other* suites, far from the cause.
+const db = createDb(DB_URL);
 
 beforeAll(async () => {
   app = buildServer({ logger: false, scheduler: false });
@@ -53,7 +57,6 @@ async function makeInProgressTask(updatedAtMsAgo: number): Promise<string> {
   const taskId = create.json().data.id;
 
   // Back-date updatedAt so the task qualifies as stalled.
-  const db = createDb(DB_URL);
   await db.update(tasks)
     .set({ updatedAt: new Date(Date.now() - updatedAtMsAgo) })
     .where(eq(tasks.id, taskId));
@@ -65,7 +68,6 @@ describe("detectStalls", () => {
   it("flags an in_progress task whose updatedAt is older than the threshold", async () => {
     process.env.STALL_THRESHOLD_MS = "1000"; // 1s for the test (read lazily)
     const taskId = await makeInProgressTask(5_000);
-    const db = createDb(DB_URL);
 
     await detectStalls(db, repoId);
 
@@ -75,7 +77,6 @@ describe("detectStalls", () => {
 
   it("does not flag a task that was updated recently", async () => {
     const taskId = await makeInProgressTask(0); // just created, updatedAt = now
-    const db = createDb(DB_URL);
 
     await detectStalls(db, repoId);
 
@@ -85,7 +86,6 @@ describe("detectStalls", () => {
 
   it("does not flag a task that's already been flagged (idempotent)", async () => {
     const taskId = await makeInProgressTask(5_000);
-    const db = createDb(DB_URL);
 
     await detectStalls(db, repoId);
     const [first] = await db.select().from(tasks).where(eq(tasks.id, taskId));
@@ -105,8 +105,6 @@ describe("detectStalls", () => {
     const events: AppEvent[] = [];
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
-
-    const db = createDb(DB_URL);
     await detectStalls(db, repoId);
 
     bus.off("event", handler);
@@ -117,7 +115,6 @@ describe("detectStalls", () => {
 
   it("PUT /tasks/:id clears stalledAt when the task moves again", async () => {
     const taskId = await makeInProgressTask(5_000);
-    const db = createDb(DB_URL);
     await detectStalls(db, repoId);
 
     const [before] = await db.select().from(tasks).where(eq(tasks.id, taskId));
@@ -159,7 +156,6 @@ describe("watchProposedTasks", () => {
     });
     const taskId = create.json().data.id;
     expect(create.json().data.status).toBe("proposed");
-    const db = createDb(DB_URL);
     await db.update(tasks)
       .set({ createdAt: new Date(Date.now() - createdMsAgo) })
       .where(eq(tasks.id, taskId));
@@ -173,8 +169,6 @@ describe("watchProposedTasks", () => {
     const events: AppEvent[] = [];
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
-
-    const db = createDb(DB_URL);
     await watchProposedTasks(db, repoId);
 
     bus.off("event", handler);
@@ -189,7 +183,6 @@ describe("watchProposedTasks", () => {
   it("does not re-notify an already-notified proposal (idempotent)", async () => {
     process.env.PROPOSED_OVERDUE_MS = "1000";
     const taskId = await makeOverdueProposal(5_000);
-    const db = createDb(DB_URL);
 
     await watchProposedTasks(db, repoId);
 
@@ -209,7 +202,6 @@ describe("watchProposedTasks", () => {
     const events: AppEvent[] = [];
     const handler = (e: AppEvent) => events.push(e);
     bus.on("event", handler);
-    const db = createDb(DB_URL);
     await watchProposedTasks(db, repoId);
     bus.off("event", handler);
 
@@ -237,8 +229,6 @@ describe("watchBlockedTasks (operator unblock path)", () => {
       }),
     });
     const taskId = create.json().data.id;
-
-    const db = createDb(DB_URL);
     await db.update(tasks)
       .set({ status: "blocked", blockedAt: new Date(), metadata: { blockedThreadId: threadId } })
       .where(eq(tasks.id, taskId));
@@ -256,8 +246,6 @@ describe("watchBlockedTasks (operator unblock path)", () => {
       body: JSON.stringify({ fromAgent: "human", type: "reply", body: "use the staging DB" }),
     });
     expect(post.statusCode).toBe(201);
-
-    const db = createDb(DB_URL);
     await watchBlockedTasks(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
@@ -277,8 +265,6 @@ describe("watchBlockedTasks (operator unblock path)", () => {
       method: "POST", url: `/threads/${threadId}/messages`, headers: ADMIN,
       body: JSON.stringify({ fromAgent: agentId, type: "status", body: "still stuck" }),
     });
-
-    const db = createDb(DB_URL);
     await watchBlockedTasks(db, repoId);
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
@@ -294,12 +280,98 @@ describe("watchBlockedTasks (operator unblock path)", () => {
       }),
     });
     const taskId = create.json().data.id;
-    const db = createDb(DB_URL);
     await db.update(tasks).set({ status: "blocked", metadata: {} }).where(eq(tasks.id, taskId));
 
     await watchBlockedTasks(db, repoId); // must not throw
 
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect(row.status).toBe("blocked");
+  });
+});
+
+describe("reapStalledTasks", () => {
+  async function makeStalled(opts: { stalledMsAgo: number; releases?: number }): Promise<string> {
+    const taskId = await makeInProgressTask(60_000);
+    const meta: Record<string, unknown> = {};
+    if (opts.releases !== undefined) meta.stallReleaseCount = opts.releases;
+    await db.update(tasks)
+      .set({ stalledAt: new Date(Date.now() - opts.stalledMsAgo), metadata: meta })
+      .where(eq(tasks.id, taskId));
+    return taskId;
+  }
+
+  const row = async (id: string) => {
+    const [t] = await db.select().from(tasks).where(eq(tasks.id, id));
+    return t;
+  };
+
+  // `assigned` would stay counted by load balancing and, since stall detection
+  // only scans in_progress, become permanently undetectable.
+  it("re-queues a reapable stalled task as pending/@auto and clears the dead assignee", async () => {
+    const id = await makeStalled({ stalledMsAgo: 7_200_000 });
+    await reapStalledTasks(db, repoId);
+
+    const t = await row(id);
+    expect(t.status).toBe("pending");
+    expect(t.autoAssign).toBe(true);
+    expect(t.assignedTo).toBeNull();
+    expect(t.stalledAt).toBeNull();
+
+    const meta = t.metadata as Record<string, any>;
+    expect(meta.stallReleaseCount).toBe(1);
+    expect(meta.stallRelease.previousAssignee).toBe(agentId);
+  });
+
+  it("leaves a stalled task alone until the reap bound has elapsed", async () => {
+    const id = await makeStalled({ stalledMsAgo: 1_000 });
+    await reapStalledTasks(db, repoId);
+
+    const t = await row(id);
+    expect(t.status).toBe("in_progress");
+    expect(t.stalledAt).not.toBeNull();
+  });
+
+  it("does not touch an in_progress task that was never flagged as stalled", async () => {
+    const id = await makeInProgressTask(60_000);
+    await reapStalledTasks(db, repoId);
+    expect((await row(id)).status).toBe("in_progress");
+  });
+
+  // Unbounded, this is an infinite retry: re-queue, stall, re-queue.
+  it("blocks instead of re-queueing once the release bound is exhausted", async () => {
+    const id = await makeStalled({ stalledMsAgo: 7_200_000, releases: 2 });
+    await reapStalledTasks(db, repoId);
+
+    const t = await row(id);
+    expect(t.status).toBe("blocked");
+    expect(t.blockedAt).not.toBeNull();
+    const meta = t.metadata as Record<string, any>;
+    expect(meta.blockedReason).toMatch(/stall/i);
+    // No blockedThreadId: nothing is being awaited, so the resume watcher must
+    // not revive it. Same reasoning as the overflow handler.
+    expect(meta.blockedThreadId).toBeUndefined();
+  });
+
+  it("emits task.stall_released once per release, and task.stall_exhausted on the bound", async () => {
+    const seen: AppEvent[] = [];
+    const handler = (e: AppEvent) => seen.push(e);
+    await makeStalled({ stalledMsAgo: 7_200_000 });
+    await makeStalled({ stalledMsAgo: 7_200_000, releases: 2 });
+    bus.on("event", handler);
+    try { await reapStalledTasks(db, repoId); } finally { bus.off("event", handler); }
+
+    expect(seen.filter((e) => e.kind === "task.stall_released")).toHaveLength(1);
+    expect(seen.filter((e) => e.kind === "task.stall_exhausted")).toHaveLength(1);
+  });
+
+  it("is idempotent: a second pass re-queues nothing", async () => {
+    await makeStalled({ stalledMsAgo: 7_200_000 });
+    await reapStalledTasks(db, repoId);
+
+    const seen: AppEvent[] = [];
+    const handler = (e: AppEvent) => seen.push(e);
+    bus.on("event", handler);
+    try { await reapStalledTasks(db, repoId); } finally { bus.off("event", handler); }
+    expect(seen.filter((e) => e.kind.startsWith("task.stall_"))).toHaveLength(0);
   });
 });

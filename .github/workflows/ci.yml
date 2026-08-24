@@ -2,8 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # '**' rather than a prefix list: an unmatched branch would get no CI silently.
+    branches: ['**']
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:

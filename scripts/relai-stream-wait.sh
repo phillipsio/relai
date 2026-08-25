@@ -29,8 +29,36 @@ case "$AGENT_ID" in
     ;;
 esac
 
-curl -sS -o /dev/null \
-  -H "Authorization: Bearer $TOKEN" \
+# Lifecycle logging goes to a FILE, never stdout: the caller treats any stdout
+# from this script as the event that ends its wait.
+LOG="${RELAI_WATCH_LOG:-$HOME/Library/Logs/relai/watcher.log}"
+RUN="${RELAI_WATCH_RUN:-unknown}"
+STARTED=$(date +%s)
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+wlog() {
+  printf '%s run=%s pid=%s ppid=%s agent=%s up=%s %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN" "$$" "$PPID" "$AGENT_ID" \
+    "$(( $(date +%s) - STARTED ))" "$*" >> "$LOG" 2>/dev/null || true
+}
+
+# No trap meant a killed window leaked its fifo AND orphaned its curl, which kept
+# an SSE connection open and writing for up to --max-time after the script died.
+cleanup() {
+  [ -n "${curl_pid:-}" ] && kill "$curl_pid" 2>/dev/null
+  [ -n "${fifo:-}" ] && rm -f "$fifo"
+}
+on_signal() { wlog "window-end reason=signal sig=$1"; cleanup; exit 130; }
+trap 'on_signal TERM' TERM
+trap 'on_signal INT'  INT
+trap 'on_signal HUP'  HUP
+trap cleanup EXIT
+
+wlog "window-start max=${MAX_SECONDS}s"
+
+# -K from a process substitution: curl's own -H would put the token back into ps.
+authcfg() { printf 'header = "Authorization: Bearer %s"\n' "$TOKEN"; }
+
+curl -sS -o /dev/null -K <(authcfg) \
   -H "Content-Type: application/json" \
   -X POST "$API_URL/subscriptions" \
   -d "{\"agentId\":\"$AGENT_ID\",\"targetType\":\"agent\",\"targetId\":\"$AGENT_ID\"}" || true
@@ -42,14 +70,18 @@ curl -sS -o /dev/null \
 # and kill curl immediately.
 fifo="$(mktemp -u)"
 mkfifo "$fifo"
-curl -sN --max-time "$MAX_SECONDS" -H "Authorization: Bearer $TOKEN" "$API_URL/events" > "$fifo" &
+curl -sN --max-time "$MAX_SECONDS" -K <(authcfg) "$API_URL/events" > "$fifo" &
 curl_pid=$!
 
 while IFS= read -r line; do
   case "$line" in
-    "data: "*) printf '%s\n' "${line#data: }"; break ;;   # the full AppEvent JSON
+    "data: "*) got_event=1; printf '%s\n' "${line#data: }"; break ;;   # the full AppEvent JSON
   esac
 done < "$fifo"
 
-kill "$curl_pid" 2>/dev/null || true
-rm -f "$fifo"
+if [ -n "${got_event:-}" ]; then
+  wlog "window-end reason=event"
+else
+  wlog "window-end reason=timeout"
+fi
+cleanup

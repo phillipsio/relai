@@ -98,16 +98,55 @@ if [ -z "${API_SECRET:-}" ] || [ -z "${AGENT_ID:-}" ]; then
   exit 1
 fi
 
+# Tracking, so a watcher that dies is distinguishable from one with nothing to
+# say. Logs to a FILE, never stdout: stdout is the event handed back to the caller.
+RELAI_WATCH_LOG="${RELAI_WATCH_LOG:-$HOME/Library/Logs/relai/watcher.log}"
+RELAI_WATCH_RUN="${RELAI_WATCH_RUN:-$$-$(date +%s)}"
+export RELAI_WATCH_LOG RELAI_WATCH_RUN
+WATCH_STARTED=$(date +%s)
+mkdir -p "$(dirname "$RELAI_WATCH_LOG")" 2>/dev/null || true
+wlog() {
+  printf '%s run=%s pid=%s ppid=%s agent=%s up=%s %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RELAI_WATCH_RUN" "$$" "$PPID" "$AGENT_ID" \
+    "$(( $(date +%s) - WATCH_STARTED ))" "$*" >> "$RELAI_WATCH_LOG" 2>/dev/null || true
+}
+# up= at death is the whole point: a consistent value across kills means an
+# external timer, a scattered one means something in here.
+child=""
+on_signal() {
+  wlog "watcher-exit reason=signal sig=$1 child=${child:-none}"
+  [ -n "$child" ] && kill -TERM "$child" 2>/dev/null
+  exit 130
+}
+trap 'on_signal TERM' TERM
+trap 'on_signal INT'  INT
+trap 'on_signal HUP'  HUP
+
 window="${RELAI_WATCH_WINDOW:-590}"   # per-connection cap before a silent reconnect
 backoff="${RELAI_WATCH_BACKOFF:-2}"   # pause after a timeout/drop before reconnecting
 
 # Loop until a real event prints something; timeouts and drops just reconnect,
 # so the model is never woken by a heartbeat or an idle window.
+wlog "watcher-start api=$API_URL window=${window}s backoff=${backoff}s"
+
+windows=0
+outfile="$(mktemp)"
+trap 'rm -f "$outfile"' EXIT
 while true; do
-  out="$(RELAI_TOKEN="$API_SECRET" "$here/relai-stream-wait.sh" "$API_URL" "$AGENT_ID" "$window" 2>/dev/null)" || true
+  # Backgrounded + `wait` rather than $(...): a foreground child makes the signal
+  # traps above undeliverable until it finishes, which is how kills orphaned curl.
+  : > "$outfile"
+  RELAI_TOKEN="$API_SECRET" "$here/relai-stream-wait.sh" "$API_URL" "$AGENT_ID" "$window" >"$outfile" 2>/dev/null &
+  child=$!
+  wait "$child"; rc=$?
+  child=""
+  out="$(cat "$outfile")"
+  windows=$((windows + 1))
   if [ -n "$out" ]; then
+    wlog "watcher-exit reason=event windows=$windows"
     printf '%s\n' "$out"
     exit 0
   fi
+  wlog "window-reconnect n=$windows rc=$rc"
   sleep "$backoff"
 done

@@ -11,7 +11,8 @@ headless daemon with no interactive session, use the `event-worker` package inst
 ## Pieces (all live in the relai repo)
 
 - `scripts/relai-stream-wait.sh` — self-subscribes, then blocks on `GET /events`
-  for one connection window and prints the first real event.
+  for one connection window and prints the first real event. Takes the token from
+  `RELAI_TOKEN` in the environment, not argv, because `ps` exposes arguments.
 - `scripts/relai-watch.sh` — wake-loop wrapper: resolves config, reconnects across
   heartbeats/timeouts/drops, exits **only** on a genuine event. This is what the
   agent launches.
@@ -40,6 +41,12 @@ Add to its `.claude/settings.json`:
 That's it. On every session start the hook checks the repo has a `relai` server
 in its `.mcp.json`; if so it tells the agent to launch `relai-watch.sh` in the
 background and follow the wake loop.
+
+**The relai repo itself is a consumer and needs this too.** It was the last one
+wired up (2026-08-25), which meant relai's own orchestrator was the only agent in
+the fleet that never woke on an event, and it then inferred from its own silence
+that no agent did. The hook self-gates on `.mcp.json`, so committing it is safe
+even for a clone with no relai credentials.
 
 ### Token sourcing (plan Q3, resolved)
 

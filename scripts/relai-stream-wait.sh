@@ -10,13 +10,24 @@
 # themselves, so without this the stream never delivers new tasks assigned to
 # us — the exact events this is meant to catch. The route is idempotent.
 #
-# Usage: relai-stream-wait.sh <api_url> <token> <agent_id> [max_seconds]
+# Usage: RELAI_TOKEN=<token> relai-stream-wait.sh <api_url> <agent_id> [max_seconds]
+#
+# The token comes from the environment, never argv: `ps` exposes process
+# arguments, so passing it positionally published every agent's bearer token.
 set -uo pipefail
 
 API_URL="$1"
-TOKEN="$2"
-AGENT_ID="$3"
-MAX_SECONDS="${4:-590}"
+AGENT_ID="$2"
+MAX_SECONDS="${3:-590}"
+TOKEN="${RELAI_TOKEN:?RELAI_TOKEN must be set — the token is read from the environment, not argv}"
+
+# Catch the pre-2026-08-25 positional form, which would read the token as the agent id.
+case "$AGENT_ID" in
+  aio_*)
+    echo "relai-stream-wait.sh: arg 2 looks like a token. Signature is now <api_url> <agent_id> with RELAI_TOKEN in env." >&2
+    exit 2
+    ;;
+esac
 
 curl -sS -o /dev/null \
   -H "Authorization: Bearer $TOKEN" \

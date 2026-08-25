@@ -104,7 +104,7 @@ backoff="${RELAI_WATCH_BACKOFF:-2}"   # pause after a timeout/drop before reconn
 # Loop until a real event prints something; timeouts and drops just reconnect,
 # so the model is never woken by a heartbeat or an idle window.
 while true; do
-  out="$("$here/relai-stream-wait.sh" "$API_URL" "$API_SECRET" "$AGENT_ID" "$window" 2>/dev/null)" || true
+  out="$(RELAI_TOKEN="$API_SECRET" "$here/relai-stream-wait.sh" "$API_URL" "$AGENT_ID" "$window" 2>/dev/null)" || true
   if [ -n "$out" ]; then
     printf '%s\n' "$out"
     exit 0

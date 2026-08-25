@@ -65,7 +65,8 @@ The fix is a **background** listener (Claude Code Bash `run_in_background: true`
 ### 1. (relai) Reusable listener script — the main new artifact
 
 Add `scripts/relai-stream-wait.sh` to the relai repo (reusable by any consuming agent).
-**Shipped signature:** `relai-stream-wait.sh <api_url> <token> <agent_id> [max_seconds]`
+**Shipped signature:** `RELAI_TOKEN=<token> relai-stream-wait.sh <api_url> <agent_id> [max_seconds]`
+(the token moved from argv to the environment on 2026-08-25; `ps` exposed it)
 — it self-subscribes (work item #3) then blocks on the stream with `--max-time` and an
 `awk` filter (no in-script reconnect loop; the caller re-launches per wake). The sketch
 below is the original design; the shipped version is the source of truth.
@@ -129,7 +130,8 @@ documented here for cohesion.
 
 The wake-loop contract the agent follows:
 1. At session start (prompted by the hook), launch
-   `scripts/relai-stream-wait.sh <base> <token>` via Bash `run_in_background: true`.
+   `RELAI_TOKEN=<token> scripts/relai-stream-wait.sh <base> <agent_id>` via Bash
+   `run_in_background: true`.
 2. Continue doing normal work — the listener is detached.
 3. When the listener exits (a real event arrived), the harness re-invokes the agent.
    The agent then:

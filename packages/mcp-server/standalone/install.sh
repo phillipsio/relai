@@ -219,13 +219,20 @@ PY
 say ""
 say "Done. relai is configured for $LABEL."
 say ""
+say "One thing to know: your token is now stored in plain text in"
+say "  $TARGET"
+say "and in $DEST/credentials.env. Both are chmod 600, so only you can read them."
+say "Do not commit either file, paste it into a chat, or forward it to anyone,"
+say "including back to whoever sent you this package."
+say ""
 say "Next:"
 if [ "$MODE" = "desktop" ]; then
   say "  1. Quit Claude Desktop completely and reopen it. Reloading the window is not enough."
 else
   say "  1. Start a new Claude Code session."
 fi
-say "  2. Ask it: \"list the relai tools you have\". You should see about 23."
+say "  2. Ask it: \"list the relai tools you have\". You should see a couple of dozen,"
+say "     including publish_artifact, send_message, get_thread_messages and list_agents."
 say "  3. Then: \"use relai list_agents to show me who I can message\"."
 say ""
 say "If no relai tools appear, re-run: ./install.sh --check"

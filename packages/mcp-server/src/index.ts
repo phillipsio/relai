@@ -31,8 +31,8 @@ const {
 
 // Two modes. Owner mode (API_OWNER_TOKEN + OWNER_ID) exposes the operator
 // toolset that acts across ALL of the owner's projects — for remote/mobile
-// triage and unblocking. Otherwise the default per-agent mode exposes the 13
-// agent tools scoped to one project.
+// triage and unblocking. Otherwise the default per-agent mode exposes the agent
+// tools scoped to one project.
 const OWNER_MODE = Boolean(API_OWNER_TOKEN);
 
 if (OWNER_MODE) {

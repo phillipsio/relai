@@ -14,9 +14,10 @@
     "dev:ui": "pnpm --parallel --filter @getrelai/api --filter @getrelai/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run --workspace=vitest.workspace.ts",
+    "test": "vitest run --workspace=vitest.workspace.ts && ./scripts/run-shell-tests.sh",
     "demo": "pnpm --filter @getrelai/api exec tsx ../../scripts/demo.ts",
-    "start-worker": "node_modules/.pnpm/node_modules/.bin/tsx scripts/start-worker.ts"
+    "start-worker": "node_modules/.pnpm/node_modules/.bin/tsx scripts/start-worker.ts",
+    "test:shell": "./scripts/run-shell-tests.sh"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

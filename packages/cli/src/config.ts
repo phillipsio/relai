@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 
 export interface Config {
@@ -11,15 +11,18 @@ export interface Config {
   specialization?: string;
 }
 
-// RELAI_CONFIG_DIR lets you run multiple agent identities on one machine —
-// useful for solo testing of multi-agent flows. Defaults to ~/.config/relai.
-const CONFIG_DIR  = process.env.RELAI_CONFIG_DIR ?? join(homedir(), ".config", "relai");
-const CONFIG_FILE = join(CONFIG_DIR, "config.json");
+// RELAI_CONFIG_DIR lets you run multiple agent identities on one machine.
+// Read on every call, not cached, so an override set after import (tests) takes effect.
+export function configPath(): string {
+  const dir = process.env.RELAI_CONFIG_DIR ?? join(homedir(), ".config", "relai");
+  return join(dir, "config.json");
+}
 
 export function readConfig(): Config | null {
-  if (!existsSync(CONFIG_FILE)) return null;
+  const file = configPath();
+  if (!existsSync(file)) return null;
   try {
-    const raw = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Config & { apiSecret?: string };
+    const raw = JSON.parse(readFileSync(file, "utf-8")) as Config & { apiSecret?: string };
     // Migrate legacy field name. Existing configs stored a shared API_SECRET as `apiSecret`;
     // it still authenticates via the API's fallback path until removed.
     if (!raw.apiToken && raw.apiSecret) raw.apiToken = raw.apiSecret;
@@ -30,12 +33,9 @@ export function readConfig(): Config | null {
 }
 
 export function writeConfig(config: Config): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-}
-
-export function configPath(): string {
-  return CONFIG_FILE;
+  const file = configPath();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(config, null, 2));
 }
 
 export function requireConfig(): Config {

@@ -216,6 +216,13 @@ describe("ownership: agents and tasks scoping", () => {
     expect(titles).toContain("A-task");
     expect(titles).not.toContain("B-task");
   });
+
+  it("an owner with no repos gets an empty list with the meta shape intact, not a bare array", async () => {
+    const freshOwner = "usr_test_empty_" + Date.now();
+    const list = await app.inject({ method: "GET", url: "/tasks", headers: serviceHeaders(freshOwner) });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toEqual({ data: [], meta: { total: 0, returned: 0 } });
+  });
 });
 
 describe("ownership: subscriptions cross-tenant", () => {

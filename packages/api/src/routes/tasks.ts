@@ -1,13 +1,31 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray, asc, isNull } from "drizzle-orm";
+import { eq, and, inArray, asc, desc, isNull, count } from "drizzle-orm";
 import { tasks, repos, agents, threads, messages } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import { assertRepoAccess } from "../lib/ownership.js";
 import { verifyTask } from "../lib/router/scheduler.js";
+import { clip, clipMetadata } from "../lib/payload.js";
 import type { Db } from "@getrelai/db";
 import type { TaskStatus } from "@getrelai/types";
+
+// GET /tasks bounds. A caller opts in with ?limit= and ?clip=true. Read per
+// call, not cached, so a test that sets these after import isn't ignored.
+const maxLimit  = () => Number(process.env.TASKS_MAX_LIMIT ?? 200);
+const descChars = () => Number(process.env.TASKS_DESC_CHARS ?? 500);
+const metaChars = () => Number(process.env.TASKS_META_CHARS ?? 800);
+
+// Absent means no cap. Present-but-unparseable clamps to the cap, never
+// falls through to unbounded — the exact failure this endpoint prevents.
+function parseLimit(raw: string | string[] | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw; // repeated query param
+  const max = maxLimit();
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 1) return max;
+  return Math.min(n, max);
+}
 
 // Lookup a task and verify the caller may access its project. Returns 404 to
 // avoid leaking task existence across tenants.
@@ -332,10 +350,15 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     return reply.status(201).send({ data: task });
   });
 
-  fastify.get<{ Querystring: { repoId?: string; status?: string; assignedTo?: string; epicId?: string; archived?: string } }>(
+  fastify.get<{ Querystring: { repoId?: string; status?: string; assignedTo?: string; epicId?: string; archived?: string; limit?: string; clip?: string } }>(
     "/tasks",
     async (request, reply) => {
-      const { repoId, status, assignedTo, epicId, archived } = request.query;
+      const { repoId, status, assignedTo, epicId, archived, clip: clipParam } = request.query;
+
+      // Bounding is opt-in: the dashboard and scripts/attention-check both
+      // rely on the unbounded shape today. meta.total always reports truth.
+      const limit = parseLimit(request.query.limit);
+      const shouldClip = clipParam === "true";
 
       const conditions = [];
       if (repoId)  conditions.push(eq(tasks.repoId, repoId));
@@ -358,15 +381,39 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
           .select({ id: repos.id })
           .from(repos)
           .where(eq(repos.ownerId, request.ownerId))).map((p) => p.id);
-        if (ownedRepoIds.length === 0) return { data: [] };
+        if (ownedRepoIds.length === 0) return { data: [], meta: { total: 0, returned: 0 } };
         conditions.push(inArray(tasks.repoId, ownedRepoIds));
       }
 
-      const rows = conditions.length > 0
-        ? await db.select().from(tasks).where(and(...conditions))
-        : await db.select().from(tasks);
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-      return { data: rows };
+      // Order and pre-count only matter for the capped path, keeping the
+      // default (unbounded) path's shape identical to before this change.
+      let query = db.select().from(tasks).where(where).$dynamic();
+      let total: number | undefined;
+      if (limit !== undefined) {
+        const [{ value }] = await db.select({ value: count() }).from(tasks).where(where);
+        total = value;
+        query = query.orderBy(desc(tasks.updatedAt), desc(tasks.id)).limit(limit);
+      }
+      const rows = await query;
+      if (total === undefined) total = rows.length;
+
+      const data = shouldClip
+        ? rows.map((t) => {
+            const description = clip(t.description, descChars());
+            return {
+              ...t,
+              description: description.text,
+              metadata: clipMetadata(t.metadata, metaChars()),
+              ...(description.truncated
+                ? { truncated: true, descriptionLength: t.description.length }
+                : {}),
+            };
+          })
+        : rows;
+
+      return { data, meta: { total, returned: data.length } };
     }
   );
 

@@ -8,6 +8,7 @@ const REPO_ID = "proj_test";
 function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getTasks: vi.fn().mockResolvedValue([]),
+    getTasksPage: vi.fn().mockResolvedValue({ data: [], meta: { total: 0, returned: 0 } }),
     getTask: vi.fn().mockResolvedValue({}),
     createTask: vi.fn().mockResolvedValue({}),
     updateTask: vi.fn().mockResolvedValue({ id: "task_1", status: "in_progress" }),
@@ -199,7 +200,8 @@ describe("get_my_tasks", () => {
 describe("list tools wrap payloads in a record (structuredContent safety)", () => {
   it("get_my_tasks / list_all_tasks / list_threads / get_unread_messages never return a bare array", async () => {
     const client = mockClient({
-      getTasks:    vi.fn().mockResolvedValue([{ id: "task_1" }]),
+      getTasks:     vi.fn().mockResolvedValue([{ id: "task_1" }]),
+      getTasksPage: vi.fn().mockResolvedValue({ data: [{ id: "task_1" }], meta: { total: 1, returned: 1 } }),
       listThreads: vi.fn().mockResolvedValue([{ id: "thread_1" }]),
       getUnread:   vi.fn().mockResolvedValue({ data: [{ id: "msg_1" }], meta: { total: 1, returned: 1 } }),
     });
@@ -330,18 +332,70 @@ describe("create_thread", () => {
 });
 
 describe("list_all_tasks", () => {
+  const page = (tasks: unknown[], total = tasks.length) =>
+    vi.fn().mockResolvedValue({ data: tasks, meta: { total, returned: tasks.length } });
+
+  const run = async (client: ApiClient, input: Record<string, unknown> = {}) => {
+    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_all_tasks");
+    const result = await (handler as Function)(input);
+    return result.content[0].text;
+  };
+
   it("fetches tasks for this project without assignedTo filter", async () => {
     const client = mockClient();
-    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_all_tasks");
-    await (handler as Function)({});
-    expect(client.getTasks).toHaveBeenCalledWith({ repoId: REPO_ID, status: undefined });
+    await run(client);
+    expect(client.getTasksPage).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: REPO_ID, status: undefined }),
+    );
   });
 
   it("passes status filter through", async () => {
     const client = mockClient();
-    const handler = getHandler(buildTools(client, AGENT_ID, REPO_ID), "list_all_tasks");
-    await (handler as Function)({ status: "pending,assigned" });
-    expect(client.getTasks).toHaveBeenCalledWith({ repoId: REPO_ID, status: "pending,assigned" });
+    await run(client, { status: "pending,assigned" });
+    expect(client.getTasksPage).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: REPO_ID, status: "pending,assigned" }),
+    );
+  });
+
+  // The bug: an unfiltered call returned the whole repo and blew past the MCP
+  // client's token limit, so the tool could not do the job it advertises.
+  it("caps and clips by default rather than returning the whole repo", async () => {
+    const client = mockClient();
+    await run(client);
+    const args = (client.getTasksPage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(args.limit).toBeGreaterThan(0);
+    expect(args.clip).toBe(true);
+  });
+
+  it("honours an explicit limit", async () => {
+    const client = mockClient();
+    await run(client, { limit: 5 });
+    expect(client.getTasksPage).toHaveBeenCalledWith(expect.objectContaining({ limit: 5 }));
+  });
+
+  it("always clips — there is no unclip-the-whole-list escape hatch, unlike every other capped list here", async () => {
+    const client = mockClient();
+    await run(client, { limit: 200 });
+    expect(client.getTasksPage).toHaveBeenCalledWith(expect.objectContaining({ clip: true }));
+  });
+
+  it("reports the true total and says what it withheld", async () => {
+    const client = mockClient({ getTasksPage: page([{ id: "task_1" }, { id: "task_2" }], 142) });
+    const parsed = JSON.parse(await run(client));
+    expect(parsed.taskCount).toBe(142);
+    expect(parsed.notShown).toContain("142");
+  });
+
+  it("says nothing about withholding when the list is complete", async () => {
+    const client = mockClient({ getTasksPage: page([{ id: "task_1" }]) });
+    const parsed = JSON.parse(await run(client));
+    expect(parsed.taskCount).toBe(1);
+    expect(parsed.notShown).toBeUndefined();
+  });
+
+  it("still reports no tasks found on an empty repo", async () => {
+    const client = mockClient({ getTasksPage: page([]) });
+    expect(await run(client)).toBe("No tasks found.");
   });
 });
 

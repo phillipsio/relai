@@ -11,7 +11,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ApiClient } from "./api-client.js";
 import { buildTools, buildOperatorTools } from "./tools.js";
 import { diffAttention, type AttentionState, type WatchTask } from "./owner-watch.js";
-import { checkRepoMatch } from "@getrelai/git";
+import { assertRepoMatch } from "./repo-guard.js";
 
 // Report the package version (dist/index.js → ../package.json) so the MCP
 // handshake matches the published package.
@@ -168,10 +168,11 @@ apiClient.getUnread(AGENT_ID!, REPO_ID!)
 setInterval(pollInbox, POLL_INTERVAL_MS);
 }
 
-// Repo guard: in agent mode, refuse to serve if this process isn't running in a
-// clone of the agent's repo (no-ops when the repo has no url or under
+// Repo guard: in agent mode, refuse to serve unless a clone of the agent's repo
+// can be located (no-ops when the repo has no url or under
 // RELAI_SKIP_REPO_CHECK). Owner mode is exempt — it acts across all repos and
 // has no single working tree. A null url / unreachable API just skips the check.
+// See repo-guard.ts for which directories are considered, in what order, and why.
 async function assertRepoOrExit() {
   if (OWNER_MODE) return;
   let repoUrl: string | null = null;
@@ -180,11 +181,19 @@ async function assertRepoOrExit() {
   } catch {
     return; // can't resolve the repo (e.g. API unreachable) — don't hard-block
   }
-  const check = checkRepoMatch(process.cwd(), repoUrl);
-  if (!check.ok) {
-    console.error(`[relai-mcp] ${check.reason}\n  ${check.fix}`);
-    process.exit(1);
+  if (!repoUrl || process.env.RELAI_SKIP_REPO_CHECK) return;
+
+  const result = await assertRepoMatch(
+    process.cwd(),
+    repoUrl,
+    async () => (await apiClient.getAgent(AGENT_ID!))?.repoPath,
+  );
+  if (result.ok) {
+    if (result.via) console.error(`[relai-mcp] repo guard passed via ${result.via}`);
+    return;
   }
+  console.error(result.message);
+  process.exit(1);
 }
 
 // Transport

@@ -81,7 +81,9 @@ export function checkRepoMatch(workingDir: string, repoUrl: string | null | unde
   if (!root) {
     return {
       ok: false,
-      reason: `Not in a git repo (cwd: ${workingDir}).`,
+      // Not necessarily the cwd: the workers pass a configured repoPath, and
+      // the MCP server resolves this from repoPath / RELAI_REPO_PATH / cwd.
+      reason: `Not a git repo: ${workingDir}.`,
       fix: `git clone ${repoUrl} && cd ${repoNameFromUrl(repoUrl)}`,
     };
   }

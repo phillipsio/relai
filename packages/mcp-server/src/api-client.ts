@@ -86,6 +86,19 @@ export class ApiClient {
     return this.request<unknown[]>("GET", `/tasks?${qs}`);
   }
 
+  // Bounded variant, for callers that would otherwise pull the whole repo into
+  // one response. Keeps meta so the caller can say how much it did not show.
+  getTasksPage(params: {
+    repoId?: string; status?: string; assignedTo?: string; limit?: number; clip?: boolean;
+  }) {
+    const qs = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => [k, String(v)]) as [string, string][],
+    );
+    return this.requestEnvelope<unknown[]>("GET", `/tasks?${qs}`);
+  }
+
   getTask(id: string) {
     return this.request<unknown>("GET", `/tasks/${id}`);
   }
@@ -187,6 +200,10 @@ export class ApiClient {
 
   heartbeat(agentId: string) {
     return this.request<unknown>("PUT", `/agents/${agentId}/heartbeat`, {});
+  }
+
+  getAgent(id: string) {
+    return this.request<{ id: string; repoPath?: string | null }>("GET", `/agents/${id}`);
   }
 
   listAgents(repoId?: string) {

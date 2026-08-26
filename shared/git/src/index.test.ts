@@ -71,5 +71,9 @@ describe("checkRepoMatch", () => {
     const res = checkRepoMatch(dir, "https://github.com/phillipsio/relai");
     expect(res.ok).toBe(false);
     expect(res.fix).toContain("git clone https://github.com/phillipsio/relai");
+    // Callers pass a configured path as often as a cwd, so the reason has to
+    // name the directory it actually checked.
+    expect(res.reason).toContain(dir);
+    expect(res.reason).not.toContain("cwd");
   });
 });

@@ -29,6 +29,28 @@ case "$AGENT_ID" in
     ;;
 esac
 
+# TOKEN and AGENT_ID both flow into a curl -K config file and a JSON body
+# below; a control character (a newline especially) in TOKEN injects config
+# directives (e.g. "tok\noutput = /some/path" redirects curl's response to an
+# attacker-chosen file), and one in AGENT_ID breaks out of the JSON string.
+# Caller (relai-watch.sh) already validates its own sources, but this script
+# is callable directly, so it validates again rather than trusting a caller.
+case "$TOKEN" in
+  *[![:print:]]*) echo "relai-stream-wait.sh: RELAI_TOKEN contains a control character — refusing" >&2; exit 2 ;;
+esac
+# `agent_*` alone only checks the prefix — a value with an embedded quote
+# still matches it, since `*` matches any remaining characters. AGENT_ID is
+# about to go straight into a JSON string literal below, so reject anything
+# outside its real charset too.
+case "$AGENT_ID" in
+  agent_*)
+    case "$AGENT_ID" in
+      *[![:alnum:]_-]*) echo "relai-stream-wait.sh: AGENT_ID '$AGENT_ID' contains a character outside [A-Za-z0-9_-] — refusing" >&2; exit 2 ;;
+    esac
+    ;;
+  *) echo "relai-stream-wait.sh: AGENT_ID '$AGENT_ID' doesn't look like an agent id (expected agent_*)" >&2; exit 2 ;;
+esac
+
 # Lifecycle logging goes to a FILE, never stdout: the caller treats any stdout
 # from this script as the event that ends its wait.
 LOG="${RELAI_WATCH_LOG:-$HOME/Library/Logs/relai/watcher.log}"
@@ -45,7 +67,7 @@ wlog() {
 # an SSE connection open and writing for up to --max-time after the script died.
 cleanup() {
   [ -n "${curl_pid:-}" ] && kill "$curl_pid" 2>/dev/null
-  [ -n "${fifo:-}" ] && rm -f "$fifo"
+  [ -n "${fifo_dir:-}" ] && rm -rf "$fifo_dir"
 }
 on_signal() { wlog "window-end reason=signal sig=$1"; cleanup; exit 130; }
 trap 'on_signal TERM' TERM
@@ -68,8 +90,15 @@ curl -sS -o /dev/null -K <(authcfg) \
 # (the 25s heartbeat or --max-time), and the shell blocks on the whole pipeline
 # — so the caller wouldn't wake until then. Reading from a fifo lets us break
 # and kill curl immediately.
-fifo="$(mktemp -u)"
-mkfifo "$fifo"
+# Explicit template, because BSD mktemp ignores TMPDIR without one. RELAI_FIFO_DIR
+# lets a test scope the fifo to a directory it owns and count only its own.
+fifo_base="${RELAI_FIFO_DIR:-${TMPDIR:-/tmp}}"
+# Exit 3 (not 1) on setup failure: relai-watch.sh backs off harder on it, since
+# a bad TMPDIR/permissions problem doesn't clear on its own — reconnecting
+# immediately would hot-loop.
+fifo_dir="$(mktemp -d "${fifo_base%/}/relai-events.XXXXXX")" || { wlog "window-end reason=error detail=mktemp-d"; exit 3; }
+fifo="$fifo_dir/events"
+mkfifo "$fifo" || { wlog "window-end reason=error detail=mkfifo"; exit 3; }
 curl -sN --max-time "$MAX_SECONDS" -K <(authcfg) "$API_URL/events" > "$fifo" &
 curl_pid=$!
 

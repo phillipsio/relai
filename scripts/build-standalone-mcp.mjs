@@ -39,6 +39,15 @@ const CREDS = argAfter("--credentials");
 const STAGE = join(OUT, NAME);
 const ZIP = join(OUT, `${NAME}.zip`);
 
+// A credentialed archive contains a live token (see the --credentials note
+// above). --out defaulting to $HOME/Desktop is the only reason one has never
+// landed inside the repo and gotten swept up by `git add -A` — that's luck,
+// not a guard, since .gitignore has no pattern for the zip itself.
+if (CREDS && (OUT === REPO || OUT.startsWith(REPO + "/"))) {
+  console.error(`refusing to write a credentialed archive inside the repo (--out resolved to ${OUT})`);
+  process.exit(1);
+}
+
 const git = (args) => execFileSync("git", args, { cwd: REPO, encoding: "utf8" }).trim();
 
 const commit = git(["rev-parse", "--short", "HEAD"]);

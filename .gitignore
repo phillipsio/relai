@@ -10,5 +10,13 @@ dist/
 .ai/
 .claude/settings.local.json
 # Contains real agent/owner tokens once configured — copy .mcp.json.example
-# to .mcp.json and fill in real values; never commit the result.
+# to .mcp.json and fill in real values; never commit the result or its backup.
 .mcp.json
+.mcp.json.bak*
+*.bak-relai
+
+# install.sh sources a live agent token from this; build-standalone-mcp.mjs writes it.
+credentials.env
+# build-standalone-mcp.mjs --credentials bakes a live token into this.
+relai-mcp*.zip
+relai-for-*.zip

@@ -96,7 +96,13 @@ else
 fi
 
 if [ "$livez" = "200" ]; then
-  auth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "Authorization: Bearer $API_SECRET" "$API_URL/health" 2>/dev/null)
+  case "$API_SECRET" in
+    *[![:print:]]*) bad "API_SECRET in credentials.env contains a control character — refusing"; exit 1 ;;
+  esac
+  # -K from a process substitution: curl's own -H would put the token in ps,
+  # world-readable, for the full --max-time against a slow server.
+  authcfg() { printf 'header = "Authorization: Bearer %s"\n' "$API_SECRET"; }
+  auth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -K <(authcfg) "$API_URL/health" 2>/dev/null)
   [ -z "$auth" ] && auth=000
   case "$auth" in
     200) ok "token accepted" ;;
@@ -124,9 +130,14 @@ say "Installing"
 if [ "$SRC" != "$DEST" ]; then
   mkdir -p "$DEST"
   cp -R "$SRC/bin" "$DEST/" 2>/dev/null
-  for f in README.md BUILD.txt package.json credentials.env; do
+  for f in README.md BUILD.txt package.json; do
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DEST/$f"
   done
+  # Copied through a 0600-created fd rather than cp+chmod: cp preserves the
+  # source's mode, so the copy would briefly hold a live token world-readable.
+  if [ -f "$SRC/credentials.env" ]; then
+    (umask 077 && cp "$SRC/credentials.env" "$DEST/credentials.env")
+  fi
   ok "server placed at $DEST"
 else
   ok "already running from $DEST"
@@ -193,14 +204,20 @@ entry = {
 
 cfg = {}
 if os.path.exists(target):
-    shutil.copy2(target, target + ".bak-relai")
+    # Create at 0600 directly rather than copy2()+chmod: copy2 preserves the
+    # SOURCE's mode, so a world-readable original config left the backup
+    # world-readable (holding a live token) for the window before the chmod.
+    bak = target + ".bak-relai"
+    fd = os.open(bak, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with open(target, "rb") as src, os.fdopen(fd, "wb") as dst:
+        shutil.copyfileobj(src, dst)
     try:
         with open(target) as f:
             cfg = json.load(f)
     except Exception as e:
         print(f"  FAIL  {target} is not valid JSON ({e}). Backed up to {target}.bak-relai; fix it and re-run.")
         sys.exit(1)
-    print(f"  ok    backed up existing config to {os.path.basename(target)}.bak-relai")
+    print(f"  ok    backed up existing config to {os.path.basename(target)}.bak-relai (chmod 600 — it holds the old token)")
 
 servers = cfg.setdefault("mcpServers", {})
 replaced = "relai" in servers
@@ -221,7 +238,8 @@ say "Done. relai is configured for $LABEL."
 say ""
 say "One thing to know: your token is now stored in plain text in"
 say "  $TARGET"
-say "and in $DEST/credentials.env. Both are chmod 600, so only you can read them."
+say "and in $DEST/credentials.env, plus any .bak-relai backup noted above."
+say "All are chmod 600, so only you can read them."
 say "Do not commit either file, paste it into a chat, or forward it to anyone,"
 say "including back to whoever sent you this package."
 say ""

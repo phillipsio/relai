@@ -543,6 +543,53 @@ if start_server -1 25; then
   rm -rf "$piddir"
   stop_server
 fi
+# --- the SessionStart hook: what it tells a woken agent to do -----------------
+# The hook is the only thing that decides what a wake COSTS. An external kill
+# (Claude Code reaps background tasks on a ~30-min per-session grid) wakes the
+# agent with no event to reconcile, so an unconditional session_start there is
+# pure waste — measured at 5 spurious wakes in one session on 2026-08-27.
+
+hookdir="$(mktemp -d)"
+hook_ctx() { RELAI_DIR="$SCRIPTS/.." CLAUDE_PROJECT_DIR="$1" bash "$SCRIPTS/relai-watch-hook.sh" 2>/dev/null; }
+
+out="$(hook_ctx "$hookdir")"
+check "no .mcp.json means the hook injects nothing" "${out:-empty}" "empty"
+
+printf '{"mcpServers":{"other":{}}}' > "$hookdir/.mcp.json"
+out="$(hook_ctx "$hookdir")"
+check "a repo not wired to relai injects nothing" "${out:-empty}" "empty"
+
+printf '{"mcpServers":{"relai":{"command":"tsx"}}}' > "$hookdir/.mcp.json"
+out="$(hook_ctx "$hookdir")"
+kind="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).hookSpecificOutput.hookEventName)}catch(e){process.stdout.write("unparseable")}})')"
+check "a wired repo gets valid SessionStart JSON" "$kind" "SessionStart"
+
+ctx="$(printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).hookSpecificOutput.additionalContext)}catch(e){process.stdout.write("")}})')"
+
+# The expensive call must be conditional on an event actually having arrived.
+case "$ctx" in
+  *'session_start FIRST'*) bad "hook still orders session_start unconditionally on every wake" ;;
+  *) ok "hook does not order session_start unconditionally" ;;
+esac
+
+case "$ctx" in
+  *'[killed]'*) ok "hook names the [killed] marker so a spurious wake is recognisable" ;;
+  *) bad "hook gives the agent no way to tell an external kill from a real event" ;;
+esac
+
+case "$ctx" in
+  *'exits only when'*) bad "hook still claims the watcher exits only on a real event — an external kill also exits it" ;;
+  *) ok "hook does not claim a real event is the only exit" ;;
+esac
+
+# Relaunching has to survive both paths, or the session stops waking entirely.
+case "$ctx" in
+  *[Rr]elaunch*) ok "hook still tells the agent to relaunch the watcher" ;;
+  *) bad "hook dropped the relaunch instruction" ;;
+esac
+
+rm -rf "$hookdir"
+
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

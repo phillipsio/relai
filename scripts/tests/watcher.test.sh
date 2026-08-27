@@ -8,7 +8,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$(dirname "$HERE")"
 pass=0; fail=0
 
-trap 'kill "${SRV_PID:-}" 2>/dev/null; [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"' EXIT INT TERM
+# Every relai-watch.sh invocation in this file goes through this pidfile dir,
+# not the real default (~/.relai) — set globally, once, so no block (old or
+# new) can ever read or replace a real running watcher's entry.
+PIDFILE_SCRATCH="$(mktemp -d)"
+export RELAI_WATCH_PIDFILE_DIR="$PIDFILE_SCRATCH"
+
+trap 'kill "${SRV_PID:-}" 2>/dev/null; [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"; rm -rf "$PIDFILE_SCRATCH"' EXIT INT TERM
 
 ok()   { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
@@ -346,6 +352,197 @@ case "$out" in
   *"refusing a non-http"*) bad "empty API_URL was rejected instead of falling back to the default" ;;
   *) ok "empty API_URL falls back to the http:// default rather than erroring" ;;
 esac
+
+# --- idempotency: at most one live watcher per agent --------------------------
+# Each case below uses its own RELAI_WATCH_PIDFILE_DIR (on top of the file's
+# global export), so nothing here can ever touch a real running watcher.
+
+alive() { kill -0 "$1" 2>/dev/null; }
+
+# The inverse of poll_until: wait for a condition to become false.
+wait_until_false() {
+  local i; for i in $(seq 1 50); do eval "$1" || return 0; sleep 0.1; done; return 1
+}
+
+# Poll rather than sleep for a pidfile to exist and (optionally) hold a pid
+# other than $2, so this doesn't race the second watcher's own startup.
+poll_pidfile_pid() {
+  local file="$1" not="${2:-}" i
+  for i in $(seq 1 50); do
+    if [ -s "$file" ]; then
+      local p; p="$(cat "$file" 2>/dev/null || true)"
+      [ -n "$p" ] && [ "$p" != "$not" ] && { printf '%s' "$p"; return 0; }
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+if start_server -1 25; then
+  piddir="$(mktemp -d)"
+  agent="agent_dup_$$"
+
+  RELAI_WATCH_PIDFILE_DIR="$piddir" RELAI_WATCH_LOG=/dev/null RELAI_WATCH_WINDOW=30 RELAI_WATCH_BACKOFF=1 \
+    API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID="$agent" \
+    bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+  a_wrapper=$!
+  pidfile="$piddir/watch-$agent.pid"
+  pid_a="$(poll_pidfile_pid "$pidfile")"
+
+  if [ -n "$pid_a" ] && alive "$pid_a"; then
+    RELAI_WATCH_PIDFILE_DIR="$piddir" RELAI_WATCH_LOG=/dev/null RELAI_WATCH_WINDOW=30 RELAI_WATCH_BACKOFF=1 \
+      API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID="$agent" \
+      bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+    b_wrapper=$!
+    pid_b="$(poll_pidfile_pid "$pidfile" "$pid_a")"
+
+    if [ -n "$pid_b" ]; then
+      ! alive "$pid_a" && ok "relaunching for the same agent terminates the first watcher" \
+        || bad "the first watcher is still alive after a second one started"
+      alive "$pid_b" && ok "the second watcher becomes the sole live one" \
+        || bad "the second watcher is not alive after replacing the first"
+    else
+      bad "second watcher never wrote a (different) pid to the pidfile"
+    fi
+
+    # Kill both unconditionally, not just $b_wrapper/$pid_b: if the code under
+    # test is broken and $pid_a is still alive, this is the only thing that
+    # stops it leaking past this test.
+    kill -TERM "$a_wrapper" "${pid_a:-}" "$b_wrapper" "${pid_b:-}" 2>/dev/null
+    wait "$a_wrapper" "$b_wrapper" 2>/dev/null
+    wait_until_false '[ -f "$pidfile" ]'
+    [ -f "$pidfile" ] && bad "pidfile not removed after the sole watcher exited" \
+      || ok "pidfile is removed on clean signal exit"
+  else
+    bad "first watcher never wrote a live pid to the pidfile — could not run the replace test"
+    kill -TERM "$a_wrapper" 2>/dev/null; wait "$a_wrapper" 2>/dev/null
+  fi
+  rm -rf "$piddir"
+  stop_server
+fi
+
+if start_server -1 25; then
+  piddir="$(mktemp -d)"
+  agent="agent_stale_$$"
+  pidfile="$piddir/watch-$agent.pid"
+
+  # A pid guaranteed dead: spawn, wait for it to actually exit, reuse its number.
+  ( exit 0 ) & dead_pid=$!; wait "$dead_pid" 2>/dev/null
+  mkdir -p "$piddir"
+  printf '%s' "$dead_pid" > "$pidfile"
+
+  RELAI_WATCH_PIDFILE_DIR="$piddir" RELAI_WATCH_LOG=/dev/null RELAI_WATCH_WINDOW=30 RELAI_WATCH_BACKOFF=1 \
+    API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID="$agent" \
+    bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+  c_wrapper=$!
+  pid_c="$(poll_pidfile_pid "$pidfile" "$dead_pid")"
+
+  [ -n "$pid_c" ] && alive "$pid_c" && ok "a stale pidfile (dead pid) does not block startup" \
+    || bad "startup was blocked (or failed) by a stale pidfile"
+
+  kill -TERM "$c_wrapper" "${pid_c:-}" 2>/dev/null; wait "$c_wrapper" 2>/dev/null
+  wait_until_false '[ -n "${pid_c:-}" ] && alive "$pid_c"'
+  rm -rf "$piddir"
+  stop_server
+fi
+
+if start_server 1; then
+  piddir="$(mktemp -d)"
+  agent="agent_event_$$"
+  pidfile="$piddir/watch-$agent.pid"
+  eventout="$(mktemp)"
+
+  RELAI_WATCH_PIDFILE_DIR="$piddir" RELAI_WATCH_LOG=/dev/null \
+    API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID="$agent" \
+    bash "$SCRIPTS/relai-watch.sh" >"$eventout" 2>/dev/null &
+  ewrapper=$!
+
+  # Non-vacuous: confirms the pidfile actually held a live pid WHILE running,
+  # not just that it's absent afterward (which a pidfile that was never
+  # created would also satisfy).
+  pid_e="$(poll_pidfile_pid "$pidfile")"
+  [ -n "$pid_e" ] && alive "$pid_e" && ok "the pidfile names a live pid while the watcher is running" \
+    || bad "pidfile never appeared with a live pid before the event fired"
+
+  wait "$ewrapper"
+  out="$(cat "$eventout")"; rm -f "$eventout"
+  case "$out" in *evt_test*) ok "a real event still ends the wait with the pidfile mechanism active" ;;
+    *) bad "event not returned with pidfile idempotency active (got '${out:0:60}')" ;; esac
+  [ -f "$pidfile" ] && bad "pidfile not removed after a clean (event) exit" \
+    || ok "pidfile is removed after a clean (event) exit"
+  rm -rf "$piddir"
+  stop_server
+fi
+
+# Ownership guard: exiting must not delete a pidfile that no longer names
+# this process — simulated directly (racing two real launches isn't deterministic).
+if start_server -1 25; then
+  piddir="$(mktemp -d)"
+  agent="agent_owner_$$"
+  pidfile="$piddir/watch-$agent.pid"
+
+  RELAI_WATCH_PIDFILE_DIR="$piddir" RELAI_WATCH_LOG=/dev/null RELAI_WATCH_WINDOW=30 RELAI_WATCH_BACKOFF=1 \
+    API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID="$agent" \
+    bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+  o_wrapper=$!
+  pid_o="$(poll_pidfile_pid "$pidfile")"
+
+  if [ -n "$pid_o" ] && alive "$pid_o"; then
+    foreign="99999"
+    printf '%s' "$foreign" > "$pidfile"
+    kill -TERM "$o_wrapper" "$pid_o" 2>/dev/null
+    wait_until_false 'alive "$pid_o"'
+
+    [ "$(cat "$pidfile" 2>/dev/null)" = "$foreign" ] \
+      && ok "exiting does not touch a pidfile entry that no longer names this process" \
+      || bad "exit removed or overwrote a pidfile entry already claimed by another instance"
+  else
+    bad "watcher never wrote a live pid to the pidfile — could not run the ownership-guard test"
+    kill -TERM "$o_wrapper" 2>/dev/null; wait "$o_wrapper" 2>/dev/null
+  fi
+  rm -rf "$piddir"
+  stop_server
+fi
+
+# The race itself: two simultaneous relaunches must leave exactly one live
+# watcher — the exact failure this whole guard exists to prevent.
+if start_server -1 25; then
+  piddir="$(mktemp -d)"
+  agent="agent_race_$$"
+  pidfile="$piddir/watch-$agent.pid"
+  common_env=(RELAI_WATCH_PIDFILE_DIR="$piddir" RELAI_WATCH_LOG=/dev/null RELAI_WATCH_WINDOW=30 RELAI_WATCH_BACKOFF=1 \
+    API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID="$agent")
+
+  env "${common_env[@]}" bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+  a_wrapper=$!
+  pid_a="$(poll_pidfile_pid "$pidfile")"
+
+  if [ -n "$pid_a" ] && alive "$pid_a"; then
+    env "${common_env[@]}" bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+    b_wrapper=$!
+    env "${common_env[@]}" bash "$SCRIPTS/relai-watch.sh" >/dev/null 2>&1 &
+    c_wrapper=$!
+
+    survivors=""
+    for _ in $(seq 1 50); do
+      survivors="$(pgrep -f "relai-stream-wait\.sh .*$agent" 2>/dev/null || true)"
+      count="$(printf '%s\n' "$survivors" | grep -c . || true)"
+      [ "$count" -le 1 ] 2>/dev/null && break
+      sleep 0.1
+    done
+    [ "$count" = "1" ] && ok "two simultaneous relaunches racing one incumbent leave exactly one live watcher" \
+      || bad "the race left $count live watcher(s) for one agent instead of exactly 1"
+
+    for p in $survivors; do kill -TERM "$p" 2>/dev/null; done
+    kill -TERM "$a_wrapper" "$b_wrapper" "$c_wrapper" 2>/dev/null
+    wait "$a_wrapper" "$b_wrapper" "$c_wrapper" 2>/dev/null
+  else
+    bad "incumbent watcher never wrote a live pid to the pidfile — could not run the race test"
+    kill -TERM "$a_wrapper" 2>/dev/null; wait "$a_wrapper" 2>/dev/null
+  fi
+  rm -rf "$piddir"
+  stop_server
+fi
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -179,6 +179,64 @@ trap 'on_signal TERM' TERM
 trap 'on_signal INT'  INT
 trap 'on_signal HUP'  HUP
 
+# At most one live watcher per agent. Not derived from RELAI_WATCH_LOG's
+# directory — that breaks when the log is silenced to /dev/null.
+pidfile_dir="${RELAI_WATCH_PIDFILE_DIR:-$HOME/.relai}"
+mkdir -p "$pidfile_dir" 2>/dev/null || true
+pidfile="$pidfile_dir/watch-$AGENT_ID.pid"
+lockdir="$pidfile.lock"
+
+# A bare pid survives a reboot and pids get reused — only ever act on an
+# entry confirmed to still be a relai-watch.sh process, not just any process.
+is_our_watcher() {
+  kill -0 "$1" 2>/dev/null && ps -p "$1" -o command= 2>/dev/null | grep -q 'relai-watch\.sh'
+}
+
+# mkdir is atomic across processes: without a lock, two racing instances
+# could both replace the incumbent and both write, leaking the loser.
+lock_acquired=0
+for _ in $(seq 1 100); do
+  mkdir "$lockdir" 2>/dev/null && { lock_acquired=1; break; }
+  sleep 0.1
+done
+if [ "$lock_acquired" -ne 1 ]; then
+  wlog "watcher-exit reason=lock-timeout"
+  echo "relai-watch: could not acquire the startup lock for $AGENT_ID (rmdir \"$lockdir\" if no relai-watch.sh is actually running)" >&2
+  exit 1
+fi
+
+if [ -s "$pidfile" ]; then
+  old_pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [ -n "$old_pid" ] && is_our_watcher "$old_pid"; then
+    wlog "watcher-start replacing pid=$old_pid"
+    kill -TERM "$old_pid" 2>/dev/null
+    for _ in $(seq 1 50); do
+      is_our_watcher "$old_pid" || break
+      sleep 0.1
+    done
+    if is_our_watcher "$old_pid"; then
+      wlog "watcher-start kill-escalate pid=$old_pid"
+      kill -KILL "$old_pid" 2>/dev/null
+      for _ in $(seq 1 20); do
+        is_our_watcher "$old_pid" || break
+        sleep 0.1
+      done
+    fi
+    # Refusing to start beats proceeding and creating an untracked duplicate.
+    if is_our_watcher "$old_pid"; then
+      rmdir "$lockdir" 2>/dev/null
+      wlog "watcher-exit reason=replace-failed pid=$old_pid"
+      echo "relai-watch: could not replace the running watcher (pid $old_pid) for $AGENT_ID — refusing to start a second one" >&2
+      exit 1
+    fi
+  fi
+fi
+if ! echo "$$" > "$pidfile"; then
+  wlog "pidfile-write-failed dir=$pidfile_dir"
+  echo "relai-watch: cannot write $pidfile — running without single-instance protection" >&2
+fi
+rmdir "$lockdir" 2>/dev/null
+
 window="${RELAI_WATCH_WINDOW:-590}"   # per-connection cap before a silent reconnect
 backoff="${RELAI_WATCH_BACKOFF:-2}"   # pause after a timeout/drop before reconnecting
 
@@ -189,7 +247,9 @@ wlog "watcher-start api=$API_URL window=${window}s backoff=${backoff}s"
 windows=0
 setup_failures=0
 outfile="$(mktemp)"
-trap 'rm -f "$outfile"' EXIT
+# Remove the pidfile only if it still names us — a race where a newer instance
+# already replaced us must not delete that instance's own entry.
+trap 'rm -f "$outfile"; [ "$(cat "$pidfile" 2>/dev/null)" = "$$" ] && rm -f "$pidfile"' EXIT
 while true; do
   # Backgrounded + `wait` rather than $(...): a foreground child makes the signal
   # traps above undeliverable until it finishes, which is how kills orphaned curl.
@@ -217,10 +277,10 @@ while true; do
       exit 1
     fi
     wlog "window-reconnect n=$windows rc=$rc setup_failures=$setup_failures backoff=60s"
-    sleep 60
+    sleep 60 & wait $!   # backgrounded: a foreground sleep defers a trapped signal until it returns
     continue
   fi
   setup_failures=0
   wlog "window-reconnect n=$windows rc=$rc"
-  sleep "$backoff"
+  sleep "$backoff" & wait $!
 done

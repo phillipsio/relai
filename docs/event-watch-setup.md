@@ -3,7 +3,8 @@
 Make an already-running Claude Code agent listen for relai events (new tasks
 assigned to it, messages) while it works normally, and auto-start that listener
 on every session. Zero idle model cost: the watcher blocks as a background
-process and the harness re-invokes the agent only when a real event arrives.
+process and the harness re-invokes the agent when that process ends. A real event
+is one way it ends; an external kill is the other (see Two kinds of wake below).
 
 This is "Mode 2" from `docs/plan-event-driven-agent-watch.md`. For a standalone
 headless daemon with no interactive session, use the `event-worker` package instead.
@@ -14,8 +15,8 @@ headless daemon with no interactive session, use the `event-worker` package inst
   for one connection window and prints the first real event. Takes the token from
   `RELAI_TOKEN` in the environment, not argv, because `ps` exposes arguments.
 - `scripts/relai-watch.sh` — wake-loop wrapper: resolves config, reconnects across
-  heartbeats/timeouts/drops, exits **only** on a genuine event. This is what the
-  agent launches.
+  heartbeats/timeouts/drops, and never ends itself for less than a genuine event.
+  This is what the agent launches.
 - `scripts/relai-watch-hook.sh` — SessionStart hook: injects the instruction to
   launch the watcher (a hook can't issue a tool call itself).
 
@@ -68,7 +69,29 @@ To test, or to start it by hand inside any agent session, run via Bash with
 $HOME/github/relai/scripts/relai-watch.sh
 ```
 
-When it exits, call `session_start`, handle what's new, and relaunch it.
+When it ends, read the background output before anything else, then follow
+**Two kinds of wake** below.
+
+## Two kinds of wake
+
+The harness re-invokes the agent whenever the background task ends, and two very
+different things end it. Telling them apart is worth a full turn.
+
+| Output | What happened | What to do |
+|---|---|---|
+| event JSON, exit 0 | a real relai event | call `session_start`, handle what's new, relaunch |
+| empty or `[killed]` | Claude Code reaped the background task | relaunch and resume; do **not** call `session_start` |
+
+Claude Code reaps background tasks on a recurring timer whose phase is per
+session, so a reap is routine and carries no information. Measured 2026-08-27:
+five reaps for one agent 30 minutes apart to the second. Reconciling on one costs
+a turn and finds nothing, which is why `relai-watch-hook.sh` injects the split
+rather than an unconditional `session_start`.
+
+Removing the reap means supervising the watcher outside the harness (launchd), but
+a background-task exit is currently the only thing that can start a turn in an
+interactive session, so that trades the spurious wake for no wake at all. It is
+gated on a doorbell channel that can start a turn directly.
 
 ## Tunables (env vars)
 

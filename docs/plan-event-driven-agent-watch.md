@@ -56,9 +56,14 @@ The fix is a **background** listener (Claude Code Bash `run_in_background: true`
 - It runs detached, holding the SSE connection open at **zero model cost** while the
   agent does normal work.
 - The harness **re-invokes the model when the background process exits**.
-- So if the listener is written to exit *only when a real event arrives*, the model is
-  woken **exactly once per real event — zero idle turns, zero idle cost**. This is what
-  the foreground design claimed but could not deliver.
+- So if the listener never ends itself for less than a real event, the model is woken
+  once per real event rather than on every heartbeat. This is what the foreground design
+  claimed but could not deliver.
+- **Corrected 2026-08-27:** this does not give "zero idle turns". The harness also reaps
+  background tasks on a recurring timer, and that exit wakes the agent with no event to
+  show. The wake is unavoidable while a background-task exit is the only thing that can
+  start a turn; what the hook can do is make that wake cheap. See
+  `docs/event-watch-setup.md`, "Two kinds of wake".
 
 ## Work items
 
@@ -74,7 +79,7 @@ below is the original design; the shipped version is the source of truth.
 - Connects to `GET $BASE/events` with `Authorization: Bearer $TOKEN` via `curl -sN`
   (no buffering).
 - **Internally** handles heartbeats and connection drops (silent reconnect with small
-  backoff) so the caller is woken ONLY by a genuine event.
+  backoff), so no heartbeat or drop reaches the caller. An external kill still can.
 - On the first real event frame, prints the event JSON (the `data:` payload) to stdout
   and exits 0.
 

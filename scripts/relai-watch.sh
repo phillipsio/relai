@@ -3,10 +3,13 @@
 #
 # Resolves the agent's API URL / token / id from env or the repo's .mcp.json,
 # self-subscribes, then blocks on the SSE stream. It reconnects across
-# heartbeats, timeouts, and drops, so it exits ONLY when a genuine relai event
-# arrives (a task assigned to you, a message). Designed to be launched from an
-# interactive agent via Bash run_in_background:true: the agent keeps working at
-# zero model cost and is re-invoked the moment an event lands.
+# heartbeats, timeouts, and drops, so it never ends on its own for anything less
+# than a genuine relai event (a task assigned to you, a message). It can still be
+# ended from outside: Claude Code reaps background tasks on a recurring timer, and
+# that exit carries no event. Distinguish the two by the output, not the exit:
+# an event prints JSON on stdout, a kill prints nothing.
+# Designed to be launched from an interactive agent via Bash run_in_background:true:
+# the agent keeps working at zero model cost and is re-invoked when the task ends.
 #
 # Usage: relai-watch.sh [--repo-path <dir> | <dir>]
 #

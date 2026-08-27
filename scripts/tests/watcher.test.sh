@@ -590,6 +590,21 @@ esac
 
 rm -rf "$hookdir"
 
+# --- the claim must not come back anywhere, not just in the hook -------------
+# Correcting the hook did not converge: the same false claim survived in the
+# script header, the setup doc and the design doc, in wordings a grep for the
+# hook's exact sentence never matched. This guard greps the CLAIM, not one
+# spelling of it, across everything an agent or operator might read.
+
+claim_hits="$(cd "$SCRIPTS/.." && grep -rn --include="*.md" --include="*.sh" -iE \
+  "exits? \*{0,2}only\*{0,2} (on|when)|woken \*{0,2}only\*{0,2} by|only when a real (relai )?event" . 2>/dev/null \
+  | grep -v node_modules | grep -v 'scripts/tests/' || true)"
+if [ -z "$claim_hits" ]; then
+  ok "no file claims the watcher exits only on a real event"
+else
+  bad "the 'exits only on a real event' claim survives in: $(printf '%s' "$claim_hits" | cut -d: -f1,2 | tr '\n' ' ')"
+fi
+
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

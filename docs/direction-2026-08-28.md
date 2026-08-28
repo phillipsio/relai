@@ -212,10 +212,98 @@ Two of the three findings did not bear on the question at all:
 - Does the fleet view justify dropping the client's single-repo assumption, which
   touches every query in `packages/web/src/lib/api.ts`?
 - `employment-model.md` needs a dated answer to Linear's accountability doctrine.
-- Should `routing_log` gain an outcome column before or after there is any reason
-  to read it?
-- Is comparative execution (same task, several vendors, one judge, cost and
-  outcome recorded) worth prototyping by hand? The edgefinder repo carries
-  `architect/work`, `claude-code/work`, `copilot/work`, `gemini/work`,
-  `qwen/work` and `cw2/work` branches from 2026-05-30 to 06-01, so the experiment
-  has been run manually twice and never through relai.
+- ~~Is comparative execution worth prototyping by hand?~~ Done, see below. **Still
+  open:** should `routing_log` gain an outcome column and the schema gain a cost
+  column before or after there is a second real use of either?
+
+---
+
+## Update 2026-08-28: raced one real task by hand
+
+Answered the open question above before building anything. Ultracode
+(`workflow-authoring`) came up as a possible fit for relai — a workflow script's
+`agent()`/`parallel()`/`pipeline()` fan-out, adversarial verify, and judge-panel
+patterns are structurally the same shape as relai's `blockedBy`-gated tasks, just
+ephemeral and single-vendor where relai's version would be durable and
+cross-vendor. Rather than design that mechanism, ran one instance of it by hand
+first, as plain `Agent` calls rather than a scripted `Workflow`, specifically to
+feel the toil the schema doesn't yet automate before deciding whether to build
+for it.
+
+**No real vendor diversity was available.** The fleet check from earlier in the
+day still held: no Gemini, Copilot, or Cursor agent was online. Raced two Claude
+attempts instead — one on Sonnet, one inheriting Opus — as the nearest available
+proxy for a cost/quality tradeoff between cheap and expensive execution. This
+tests the judge-and-record mechanics, not the cross-vendor thesis.
+
+**The task.** Owner-scope `GET /repos` for a per-agent caller, item 3/7/8 from
+the gaps list above. Identical brief to both racers, each in its own git
+worktree, pointed at `GET /agents` in `agents.ts` as the precedent to follow.
+
+**The result.** Both produced correct, fully green (476/476) implementations
+with equivalent test coverage. They differ in exactly the way a judge is
+supposed to catch:
+
+- **Race A (Sonnet)** followed the named precedent literally: an inline
+  two-query null-fallback branch, matching `GET /agents`'s structure.
+- **Race B (Opus)** found `peerRepoIds()` in `lib/ownership.ts` — already used by
+  `messages.ts` for DM reachability — and reused it instead of writing a third
+  copy of the same logic.
+
+**The finding underneath that: the precedent I pointed both racers at is itself
+stale.** `GET /agents` inlines its own copy rather than calling `peerRepoIds()`,
+which post-dates it. Race A followed the brief exactly and reproduced a pattern
+`AGENTS.md` already names as a past bug source (duplicated ownership logic
+drifting — the DM thread-access case). Race B deviated from the letter of the
+instruction toward the deeper principle already documented in this repo, and was
+right to. A judge scoring "matched the named precedent" would rank the worse
+answer higher. **Follow-up, not yet filed:** migrate `GET /agents` itself to call
+`peerRepoIds()` and delete its inline copy.
+
+**Cost, recorded by hand because there is no column for it anywhere in the
+schema:**
+
+| | Race A (Sonnet) | Race B (Opus) |
+|---|---|---|
+| Tokens | 141,354 | 150,067 |
+| Wall clock | 127s | 192s |
+| Tool calls | 24 | 45 |
+| Tests | 476/476 | 476/476 |
+
+Opus cost 6% more tokens and 51% more wall clock for the architecturally better
+answer. Not a blowout either direction; both are shippable.
+
+**What this implies for the schema, if the pattern is worth making native to
+relai** rather than repeating by hand each time:
+
+1. **A fan-out group id.** Today N sibling tasks racing the same brief would be
+   linked only by hand-typed IDs in a synthesis task's description. Nothing
+   structural says "these are one batch."
+2. **N-of-M on `verifyKind: reviewer_agent`.** Currently exactly one reviewer,
+   pass or fail. Adversarial verify (spawn 3, kill on majority refute) needs a
+   threshold, not a single approver.
+3. **Cost per task attempt.** The same gap `routing_log`'s missing outcome column
+   already pointed at. Without it, relai can route work but can never learn
+   whether a route was worth its price.
+
+None of these is designed yet. This entry exists so the shape doesn't need
+re-deriving: the mechanism is proven small-scale, the schema gaps are named, and
+the one open decision is whether a second real use case justifies building it.
+
+**State left for pickup, not yet acted on:**
+
+- Two worktrees still on disk, uncommitted, nothing pushed:
+  `.claude/worktrees/agent-a1fbe6b8580eb034c` (Race A, branch
+  `worktree-agent-a1fbe6b8580eb034c`) and
+  `.claude/worktrees/agent-aeba4309cb8223190` (Race B, branch
+  `worktree-agent-aeba4309cb8223190`).
+- Race B's diff is the one worth landing on its own merits, independent of the
+  experiment — it's the owner-scope `GET /repos` fix from the gaps list above,
+  tested and green. Not yet brought into a real branch or pushed; needs a
+  decision, not more work.
+- Also not yet corrected: an earlier verbal claim this session that
+  `packages/orchestrator` should be "deleted" as a repo defect. It isn't one —
+  the directory is untracked, not gitignored, and holds only a stray
+  `node_modules` with no `package.json`, left over from some past install of a
+  package no longer in git history. `rm -rf packages/orchestrator` locally is
+  enough; there is nothing to commit or remove from the repo.

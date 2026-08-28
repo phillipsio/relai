@@ -79,8 +79,13 @@ different things end it. Telling them apart is worth a full turn.
 
 | Output | What happened | What to do |
 |---|---|---|
-| event JSON, exit 0 | a real relai event | call `session_start`, handle what's new, relaunch |
-| empty or `[killed]` | Claude Code reaped the background task | relaunch and resume; do **not** call `session_start` |
+| contains relai event JSON | a real event | call `session_start`, handle what's new, relaunch |
+| no event JSON | the background task was killed | relaunch and resume; do **not** call `session_start` |
+
+Decide on the event JSON alone, never on the exact shape of a kill. A reap usually
+leaves `[killed]` and nothing else, but a child dying on a signal also leaves a shell
+job-status line (`Abort trap: 6` was seen on 2026-08-28, 212 bytes instead of 10). That
+is still a kill. Matching "empty or `[killed]`" leaves that output in neither case.
 
 Claude Code reaps background tasks on a recurring timer whose phase is per
 session, so a reap is routine and carries no information. Measured 2026-08-27:

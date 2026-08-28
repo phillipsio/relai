@@ -30,12 +30,14 @@ Relai event watching is enabled for this repo. Launch the watcher in the backgro
 
 It blocks at zero model cost. Two different things end it, and they need different responses. Check the background task's output before doing anything else.
 
-CASE 1 — a real relai event arrived (a task assigned to you, a message). The output holds event JSON and the task exited 0.
+CASE 1 — the output contains relai event JSON. A real event arrived (a task assigned to you, a message).
   1. Call relai session_start to reconcile all unread tasks/messages. The stream is only a "go look now" trigger; do not act on the raw event payload alone.
   2. Handle everything new autonomously per the relai protocol. Route questions/blockers back to the originating thread, not local chat.
   3. Relaunch $watcher in the background.
 
-CASE 2 — something killed the watcher. The output is empty or just "[killed]". Nothing happened in relai. Do NOT call session_start and do NOT reconcile: relaunch $watcher in the background and resume exactly what you were doing. Claude Code reaps background tasks on a recurring timer, so this is routine and carries no information. Reconciling here costs a full turn and finds nothing.
+CASE 2 — the output contains no event JSON. Something killed the watcher; nothing happened in relai. Do NOT call session_start and do NOT reconcile: relaunch $watcher in the background and resume exactly what you were doing. Claude Code reaps background tasks on a recurring timer, so this is routine and carries no information. Reconciling here costs a full turn and finds nothing.
+
+Decide on the event JSON alone. A kill usually leaves "[killed]" and nothing else, but it can also leave a shell job-status line such as "Abort trap: 6" when the child dies on a signal, and that is still CASE 2. Anything that is not event JSON is CASE 2.
 
 Repeat for the whole session.
 EOF

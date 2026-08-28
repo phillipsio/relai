@@ -605,6 +605,28 @@ else
   bad "the 'exits only on a real event' claim survives in: $(printf '%s' "$claim_hits" | cut -d: -f1,2 | tr '\n' ' ')"
 fi
 
+ctx_reload="$ctx"
+
+# --- classification must key on the event, not on the shape of a kill --------
+# Real output seen 2026-08-28T01:13:43Z: "[killed]" plus a bash job-status line
+# ("Abort trap: 6") because the child died on SIGABRT after its TERM trap ran.
+# 212 bytes, not the 10 a plain reap gives. An agent matching CASE 2 on "empty
+# or just [killed]" finds neither case matches and is left to guess, on the one
+# path where guessing wrong costs a wasted reconcile every 30 minutes.
+
+case "$ctx_reload" in
+  *'empty or just'*) bad "hook classifies a kill by exact output shape, so any extra stderr line falls through both cases" ;;
+  *) ok "hook does not classify a kill by exact output shape" ;;
+esac
+
+# The positive test is what makes it decidable: presence of event JSON, and
+# nothing else, separates the two.
+case "$ctx_reload" in
+  *'no event JSON'*|*'without event JSON'*|*'contains no event JSON'*)
+    ok "hook decides on the presence of event JSON, so unexpected output still classifies" ;;
+  *) bad "hook gives no rule for output that is neither empty nor a bare [killed]" ;;
+esac
+
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

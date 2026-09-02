@@ -1,6 +1,5 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import sensible from "@fastify/sensible";
 import { sql } from "drizzle-orm";
 import { createDb } from "@getrelai/db";
 import authPlugin from "./plugins/auth.js";
@@ -48,7 +47,6 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   );
 
   fastify.register(cors, { origin: true });
-  fastify.register(sensible);
   fastify.register(authPlugin, { db });
 
   fastify.register(repoRoutes, { db });

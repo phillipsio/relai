@@ -25,8 +25,8 @@ export default defineConfig({
     // test asserting on lastSeenAt is not silently skipped by the throttle.
     env: { DATABASE_URL: TEST_DATABASE_URL, AUTH_STAMP_INTERVAL_MS: "0" },
     globalSetup: "./src/test/global-setup.ts",
-    // Each test file opens its own postgres-js pool (max 10) for the test and
-    // the server, so unbounded forks starve Postgres' 100 connections.
+    // Covers `pnpm --filter @getrelai/api test` only; vitest reads the pool
+    // size from whichever config is root. The root one caps `pnpm test`.
     poolOptions: { forks: { minForks: 1, maxForks: 4 } },
   },
 });

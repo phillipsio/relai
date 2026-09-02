@@ -57,9 +57,6 @@ importers:
       '@fastify/cors':
         specifier: ^11.3.0
         version: 11.3.0
-      '@fastify/sensible':
-        specifier: ^6.0.5
-        version: 6.0.5
       '@getrelai/db':
         specifier: workspace:*
         version: link:../../shared/db
@@ -896,9 +893,6 @@ packages:
   '@fastify/proxy-addr@5.1.0':
     resolution: {integrity: sha512-INS+6gh91cLUjB+PVHfu1UqcB76Sqtpyp7bnL+FYojhjygvOPA9ctiD/JDKsyD9Xgu4hUhCSJBPig/w7duNajw==}
 
-  '@fastify/sensible@6.0.5':
-    resolution: {integrity: sha512-v4mGejwT6EJA2zd2rS6XwlyUSva2ILsqzG0aGkyrlS7l2jIpUgFACclSPN3kDijX//cf8+GutRLhJVKx3ae2Cw==}
-
   '@floating-ui/core@1.7.5':
     resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
 
@@ -1203,10 +1197,6 @@ packages:
     resolution: {integrity: sha512-09p81HVKDsLXkyMRrLQzsFtCjdcFgbRW765roAu5iChHj4gfWVrGDdvtBldc1BulIEgH1/gRwa2E4vEtW3/hlw==}
     cpu: [x64]
     os: [win32]
-
-  '@lukeed/ms@2.0.2':
-    resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
-    engines: {node: '>=8'}
 
   '@modelcontextprotocol/sdk@1.6.0':
     resolution: {integrity: sha512-585s8g+jzuGBomzgzDeP5l8gEyiSs+KhoAHbA2ZZ24Zgm83IZsyCLl/fmWhPHbfYsuLG8NE6SWGZA5ZBql8jSw==}
@@ -3511,16 +3501,6 @@ snapshots:
       '@fastify/forwarded': 3.0.2
       ipaddr.js: 2.5.0
 
-  '@fastify/sensible@6.0.5':
-    dependencies:
-      '@lukeed/ms': 2.0.2
-      dequal: 2.0.3
-      fastify-plugin: 6.0.0
-      forwarded: 0.2.0
-      http-errors: 2.0.1
-      type-is: 2.0.1
-      vary: 1.1.2
-
   '@floating-ui/core@1.7.5':
     dependencies:
       '@floating-ui/utils': 0.2.11
@@ -3767,8 +3747,6 @@ snapshots:
 
   '@koromix/koffi-win32-x64@3.2.0':
     optional: true
-
-  '@lukeed/ms@2.0.2': {}
 
   '@modelcontextprotocol/sdk@1.6.0':
     dependencies:

@@ -74,13 +74,16 @@ describe("a JSON content-type with no body", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it("still refuses a prototype-poisoning body, which the default parser rejects", async () => {
-    const res = await app.inject({
-      method: "POST", url: "/repos", headers: ADMIN,
-      body: '{"name":"__test__ proto","metadata":{"__proto__":{"pwn":1}}}',
-    });
+  // Asserting the parser's own error code, not just 400: a future required
+  // field would keep a bare status assertion green with the guard gone.
+  it.each([
+    ["__proto__", '{"name":"__test__ proto","metadata":{"__proto__":{"pwn":1}}}'],
+    ["constructor.prototype", '{"name":"__test__ proto","metadata":{"constructor":{"prototype":{"pwn":1}}}}'],
+  ])("still refuses a %s body, and it is the parser that refuses it", async (_label, body) => {
+    const res = await app.inject({ method: "POST", url: "/repos", headers: ADMIN, body });
 
     expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe("FST_ERR_CTP_INVALID_JSON_BODY");
   });
 
   it("does not turn a bodyless request into a 500 on a route that destructures", async () => {
@@ -89,6 +92,16 @@ describe("a JSON content-type with no body", () => {
     });
 
     expect(res.statusCode).not.toBe(500);
+  });
+
+  it("treats a whitespace-only body as malformed, not as absent", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN, body: "   ",
+    });
+
+    // invites.ts reads `request.body ?? {}` against an all-optional schema, so
+    // an undefined body here mints a real worker invite rather than 400ing.
+    expect(res.statusCode).toBe(400);
   });
 
   it("still enforces the body limit", async () => {

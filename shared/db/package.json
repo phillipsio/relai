@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^22.19.17",
     "drizzle-kit": "^0.31.10"
   }
 }

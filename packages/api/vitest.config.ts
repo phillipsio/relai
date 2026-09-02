@@ -23,7 +23,7 @@ export default defineConfig({
     // before this run starts, so leaked rows can't survive to the next run.
     // Stamp on every authenticated request rather than once per interval, so a
     // test asserting on lastSeenAt is not silently skipped by the throttle.
-    env: { DATABASE_URL: TEST_DATABASE_URL, AUTH_STAMP_INTERVAL_MS: "0" },
+    env: { DATABASE_URL: TEST_DATABASE_URL, AUTH_STAMP_INTERVAL_MS: "0", DB_POOL_MAX: "3" },
     globalSetup: "./src/test/global-setup.ts",
     // Covers `pnpm --filter @getrelai/api test` only; vitest reads the pool
     // size from whichever config is root. The root one caps `pnpm test`.

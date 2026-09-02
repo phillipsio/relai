@@ -41,7 +41,7 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
     "application/json",
     { parseAs: "string", bodyLimit: BODY_LIMIT_BYTES },
     (request, body, done) => {
-      if (body.trim() === "") return done(null, undefined);
+      if (body.length === 0) return done(null, undefined);
       parseJson(request, body, done);
     },
   );

@@ -408,7 +408,12 @@ if start_server -1 25; then
     # Kill both unconditionally, not just $b_wrapper/$pid_b: if the code under
     # test is broken and $pid_a is still alive, this is the only thing that
     # stops it leaking past this test.
-    kill -TERM "$a_wrapper" "${pid_a:-}" "$b_wrapper" "${pid_b:-}" 2>/dev/null
+    # Deduplicated: a wrapper and the pid it writes to the pidfile are the same
+    # process, so the unduplicated form sent TERM twice and the second one could
+    # land inside the EXIT trap before it removed the pidfile.
+    for p in $(printf '%s\n' "$a_wrapper" "${pid_a:-}" "$b_wrapper" "${pid_b:-}" | grep -v '^$' | sort -u); do
+      kill -TERM "$p" 2>/dev/null
+    done
     wait "$a_wrapper" "$b_wrapper" 2>/dev/null
     wait_until_false '[ -f "$pidfile" ]'
     [ -f "$pidfile" ] && bad "pidfile not removed after the sole watcher exited" \

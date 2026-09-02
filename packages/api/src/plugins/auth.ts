@@ -12,7 +12,7 @@ declare module "fastify" {
     // Set when the request authenticates with SERVICE_ADMIN_TOKEN and carries
     // an X-Owner-Id header. The closed cloud dashboard uses this path to act
     // on behalf of a logged-in user; ownership-aware route handlers filter by
-    // this value. Null on per-agent tokens and the legacy API_SECRET path.
+    // this value. Unset on per-agent tokens and the legacy API_SECRET path.
     ownerId?: string;
   }
 }
@@ -21,8 +21,8 @@ declare module "fastify" {
 const lastStamped = new Map<string, number>();
 
 const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
-  fastify.decorateRequest("agent", null);
-  fastify.decorateRequest("ownerId", null);
+  fastify.decorateRequest("agent");
+  fastify.decorateRequest("ownerId");
 
   // Endpoints that authenticate via their request body (e.g. invite codes)
   // and therefore must be reachable without a bearer token.

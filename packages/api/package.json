@@ -11,13 +11,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@fastify/cors": "^9.0.1",
-    "@fastify/sensible": "^5.5.0",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/sensible": "^6.0.5",
     "@getrelai/db": "workspace:*",
     "@getrelai/types": "workspace:*",
     "drizzle-orm": "^0.36.0",
-    "fastify": "^4.26.0",
-    "fastify-plugin": "^4.5.0",
+    "fastify": "^5.12.1",
+    "fastify-plugin": "^6.0.0",
     "nanoid": "^5.1.16",
     "zod": "^3.22.0"
   },

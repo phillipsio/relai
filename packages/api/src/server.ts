@@ -34,6 +34,22 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   // stdout cap). Raise it deliberately if a document-shaped feature lands.
   const fastify = Fastify({ logger, bodyLimit: BODY_LIMIT_BYTES });
 
+  // Every client we ship sets Content-Type: application/json unconditionally,
+  // including on bodyless DELETEs, which Fastify 5 rejects by default.
+  fastify.addContentTypeParser<string>(
+    "application/json",
+    { parseAs: "string", bodyLimit: BODY_LIMIT_BYTES },
+    (_request, body, done) => {
+      if (body.trim() === "") return done(null, undefined);
+      try {
+        done(null, JSON.parse(body));
+      } catch {
+        const err = Object.assign(new Error("Invalid JSON body"), { statusCode: 400 });
+        done(err, undefined);
+      }
+    },
+  );
+
   fastify.register(cors, { origin: true });
   fastify.register(sensible);
   fastify.register(authPlugin, { db });

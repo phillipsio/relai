@@ -91,7 +91,7 @@ export async function repoContextEditCommand() {
     const next = await editor({
       message: `Project context for ${project.name} — saved on quit`,
       default: project.context ?? "",
-      waitForUseInput: false,
+      waitForUserInput: false,
     });
     const trimmed = next.trim() === "" ? null : next;
     await client.updateRepo(config.repoId, { context: trimmed });

@@ -55,6 +55,14 @@ class ApiClient {
         const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null));
         return this.request("GET", `/tasks?${qs}`);
     }
+    // Bounded variant, for callers that would otherwise pull the whole repo into
+    // one response. Keeps meta so the caller can say how much it did not show.
+    getTasksPage(params) {
+        const qs = new URLSearchParams(Object.entries(params)
+            .filter(([, v]) => v != null)
+            .map(([k, v]) => [k, String(v)]));
+        return this.requestEnvelope("GET", `/tasks?${qs}`);
+    }
     getTask(id) {
         return this.request("GET", `/tasks/${id}`);
     }
@@ -96,6 +104,9 @@ class ApiClient {
     }
     heartbeat(agentId) {
         return this.request("PUT", `/agents/${agentId}/heartbeat`, {});
+    }
+    getAgent(id) {
+        return this.request("GET", `/agents/${id}`);
     }
     listAgents(repoId) {
         const qs = repoId ? `?repoId=${encodeURIComponent(repoId)}` : "";

@@ -348,13 +348,17 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     description: string;
     inputSchema: z.ZodObject<{
         status: z.ZodOptional<z.ZodString>;
+        limit: z.ZodOptional<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
         status?: string | undefined;
+        limit?: number | undefined;
     }, {
         status?: string | undefined;
+        limit?: number | undefined;
     }>;
     handler: (input: {
         status?: string;
+        limit?: number;
     }) => Promise<{
         content: {
             type: "text";

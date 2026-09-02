@@ -55,6 +55,16 @@ export declare class ApiClient {
         status?: string;
         assignedTo?: string;
     }): Promise<unknown[]>;
+    getTasksPage(params: {
+        repoId?: string;
+        status?: string;
+        assignedTo?: string;
+        limit?: number;
+        clip?: boolean;
+    }): Promise<{
+        data?: unknown[] | undefined;
+        meta?: Record<string, unknown>;
+    }>;
     getTask(id: string): Promise<unknown>;
     createTask(body: {
         repoId: string;
@@ -129,6 +139,10 @@ export declare class ApiClient {
         domains?: string[];
     }): Promise<unknown>;
     heartbeat(agentId: string): Promise<unknown>;
+    getAgent(id: string): Promise<{
+        id: string;
+        repoPath?: string | null;
+    }>;
     listAgents(repoId?: string): Promise<unknown[]>;
     getTaskComments(taskId: string): Promise<unknown>;
     addTaskComment(taskId: string, body: {

@@ -141,11 +141,14 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     return { data: rows };
   });
 
+  const readSchema = z.object({ agentId: z.string().min(1) });
+
   fastify.put<{ Params: { id: string }; Body: { agentId: string } }>(
     "/threads/:id/messages/read",
     async (request, reply) => {
-      const { agentId } = request.body as { agentId: string };
-      if (!agentId) return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
+      const body = readSchema.safeParse(request.body);
+      if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: "agentId required" } });
+      const { agentId } = body.data;
       // Marking someone else's messages read suppresses their inbox, so a
       // per-agent caller may only name itself. Admin/owner callers (CLI,
       // dashboard) still pass an explicit id.

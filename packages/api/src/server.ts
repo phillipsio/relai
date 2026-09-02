@@ -35,18 +35,15 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   const fastify = Fastify({ logger, bodyLimit: BODY_LIMIT_BYTES });
 
   // Every client we ship sets Content-Type: application/json unconditionally,
-  // including on bodyless DELETEs, which Fastify 5 rejects by default.
+  // including on bodyless DELETEs, which Fastify 5 rejects by default. Delegate
+  // the non-empty case so secure-json-parse still rejects prototype poisoning.
+  const parseJson = fastify.getDefaultJsonParser("error", "error");
   fastify.addContentTypeParser<string>(
     "application/json",
     { parseAs: "string", bodyLimit: BODY_LIMIT_BYTES },
-    (_request, body, done) => {
+    (request, body, done) => {
       if (body.trim() === "") return done(null, undefined);
-      try {
-        done(null, JSON.parse(body));
-      } catch {
-        const err = Object.assign(new Error("Invalid JSON body"), { statusCode: 400 });
-        done(err, undefined);
-      }
+      parseJson(request, body, done);
     },
   );
 

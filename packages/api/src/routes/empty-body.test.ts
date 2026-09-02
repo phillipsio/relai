@@ -31,17 +31,22 @@ afterAll(async () => {
 
 describe("a JSON content-type with no body", () => {
   it("is accepted on DELETE, which carries no payload", async () => {
+    const agent = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "__test__ emptybody agent", role: "worker" }),
+    });
+    const agentId = agent.json().data.id;
     const sub = await app.inject({
       method: "POST", url: "/subscriptions", headers: ADMIN,
-      body: JSON.stringify({ agentId: "agent_missing", targetType: "repo", targetId: repoId }),
+      body: JSON.stringify({ agentId, targetType: "agent", targetId: agentId }),
     });
-    // The route may reject the fake agent; the point is only that a bodyless
-    // DELETE reaches the handler rather than dying in the parser.
-    const id = sub.statusCode === 201 ? sub.json().data.id : "sub_missing";
+    expect(sub.statusCode).toBe(201);
 
-    const res = await app.inject({ method: "DELETE", url: `/subscriptions/${id}`, headers: ADMIN });
+    const res = await app.inject({
+      method: "DELETE", url: `/subscriptions/${sub.json().data.id}`, headers: ADMIN,
+    });
 
-    expect(res.statusCode).not.toBe(400);
+    expect(res.statusCode).toBe(204);
   });
 
   it("is accepted on a PUT whose route takes no payload", async () => {
@@ -67,6 +72,23 @@ describe("a JSON content-type with no body", () => {
     });
 
     expect(res.statusCode).toBe(400);
+  });
+
+  it("still refuses a prototype-poisoning body, which the default parser rejects", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: '{"name":"__test__ proto","metadata":{"__proto__":{"pwn":1}}}',
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("does not turn a bodyless request into a 500 on a route that destructures", async () => {
+    const res = await app.inject({
+      method: "PUT", url: "/threads/thread_missing/messages/read", headers: ADMIN,
+    });
+
+    expect(res.statusCode).not.toBe(500);
   });
 
   it("still enforces the body limit", async () => {

@@ -21,9 +21,15 @@
   },
   "devDependencies": {
     "typescript": "^5.4.0",
+    "vite": "^6.4.3",
     "vitest": "^3.2.7"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ],
+    "overrides": {
+      "browserslist": "^4.28.8"
+    }
   }
 }

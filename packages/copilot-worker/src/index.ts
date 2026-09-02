@@ -75,7 +75,7 @@ async function runIteration(client: CopilotClient, config: ReturnType<typeof loa
 
   console.log("[copilot-worker] Running session...");
   await session.sendAndWait({ prompt }, 300_000);
-  await session.destroy();
+  await session.disconnect();
 
   if (toolsUsed.length) {
     console.log(`\n[copilot-worker] Done — tools used: ${toolsUsed.join(", ")}`);

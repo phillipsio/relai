@@ -10,7 +10,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.123.0",
     "@fastify/cors": "^11.3.0",
     "@fastify/sensible": "^6.0.5",
     "@getrelai/db": "workspace:*",

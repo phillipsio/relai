@@ -388,11 +388,15 @@ The pre-push review hook is the global `~/.claude/hooks/pre-push-review.sh`, and
 
 ## Licensing and distribution
 
-**relai is proprietary** (decided 2026-06-10). The repo is private and is not open-source. The reasoning is that the operator ingress plus cross-repo "command a fleet of coding agents from one chat" capability is the leverage worth keeping.
+**relai is proprietary** (decided 2026-06-10). The reasoning is that the operator ingress plus cross-repo "command a fleet of coding agents from one chat" capability is the leverage worth keeping.
 
-Repo-private alone is leaky, and the follow-through is **not finished**: `@getrelai/cli` and `@getrelai/mcp-server` were published publicly to npm (0.2.1 and 0.2.0), neither package.json sets `"private": true`, and the repo still has **no LICENSE file**, which leaves its terms ambiguous. Tracked on the relai board rather than here.
+**The repo is public.** It said "private" here until 2026-09-02, when Jim confirmed he had flipped it public, private, and public again; `GET /repos/phillipsio/relai` unauthenticated returns 200 with `visibility: public`. Check that rather than trusting this line, because the visibility is a setting someone can change without touching the repo, and every "repo-private alone is leaky" argument written here assumed the opposite. Zero forks as of that check.
 
-Splitting outward-facing from in-repo work, because they need different authority: flipping GitHub visibility and running `npm deprecate` are Jim's to do (the local `gh` cannot touch `phillipsio`, and unpublishing is past its 72-hour window). Adding a `private: true` publish guard and a proprietary LICENSE are ordinary in-repo changes.
+In-repo follow-through is **done** as of 2026-09-02: `LICENSE` is a proprietary all-rights-reserved notice, and both publishable packages set `"private": true` plus `"license": "UNLICENSED"`.
+
+**The two live npm releases still say MIT**, and that is the open item. `@getrelai/cli@0.2.1` and `@getrelai/mcp-server@0.2.0` were published from a tree whose package.json declared `"license": "MIT"`, so the registry metadata on those tarballs carries a public grant that contradicts the proprietary decision. The in-repo change fixes what a future publish would say; it does nothing to a copy someone already pulled, and a license already granted on a published artifact is not something a later commit withdraws. Treat what to do about it as a question for Jim, not an agent decision.
+
+Outward-facing work stays Jim's, because the local `gh` cannot touch `phillipsio` and unpublishing is long past its 72-hour window: `npm deprecate` on both packages, and any decision about the MIT metadata above.
 
 ## Deploy
 

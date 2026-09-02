@@ -1,6 +1,7 @@
 {
   "name": "@getrelai/mcp-server",
   "version": "0.2.0",
+  "private": true,
   "description": "MCP server for relai — connect any MCP-capable agent (Claude Code, Cursor, Copilot, Windsurf, etc.) to a relai project.",
   "keywords": [
     "mcp",
@@ -11,7 +12,7 @@
     "ai-agents",
     "relai"
   ],
-  "license": "MIT",
+  "license": "UNLICENSED",
   "homepage": "https://github.com/phillipsio/relai/tree/main/packages/mcp-server",
   "repository": {
     "type": "git",

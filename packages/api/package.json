@@ -15,7 +15,7 @@
     "@fastify/sensible": "^6.0.5",
     "@getrelai/db": "workspace:*",
     "@getrelai/types": "workspace:*",
-    "drizzle-orm": "^0.36.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.1",
     "fastify-plugin": "^6.0.0",
     "nanoid": "^5.1.16",

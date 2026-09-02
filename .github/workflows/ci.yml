@@ -59,3 +59,11 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm test
+
+      # dist is tracked on purpose (.gitignore un-ignores it so a consumer can
+      # run the server straight from git), so it drifts silently. It did, by
+      # five commits, until 2026-09-02.
+      - name: Tracked mcp-server dist matches a fresh build
+        run: |
+          pnpm --filter @getrelai/mcp-server build
+          git diff --exit-code -- packages/mcp-server/dist

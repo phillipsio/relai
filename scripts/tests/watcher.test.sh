@@ -14,7 +14,23 @@ pass=0; fail=0
 PIDFILE_SCRATCH="$(mktemp -d)"
 export RELAI_WATCH_PIDFILE_DIR="$PIDFILE_SCRATCH"
 
-trap 'kill "${SRV_PID:-}" 2>/dev/null; [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"; rm -rf "$PIDFILE_SCRATCH"' EXIT INT TERM
+# A watcher this suite backgrounded: our own process group, and a real
+# `bash <path>/relai-watch.sh` argv, since a zsh -c wrapper carries it as data.
+SUITE_PGID="$(ps -p $$ -o pgid= | tr -d ' ')"
+watch_pids() {
+  ps -Ao pid=,pgid=,args= |
+    awk -v g="$SUITE_PGID" '$2==g && $3 ~ /(^|\/)bash$/ && $4 ~ /relai-watch\.sh$/ { print $1 }'
+}
+PRE_EXISTING=" $(watch_pids | tr '\n' ' ')"
+suite_watchers() {
+  local p
+  for p in $(watch_pids); do
+    case "$PRE_EXISTING" in *" $p "*) continue ;; esac
+    printf '%s\n' "$p"
+  done
+}
+
+trap 'kill "${SRV_PID:-}" 2>/dev/null; [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"; rm -rf "$PIDFILE_SCRATCH"; for p in $(suite_watchers); do kill -TERM "$p" 2>/dev/null; done' EXIT INT TERM
 
 ok()   { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
@@ -36,6 +52,13 @@ start_server() {
 stop_server() { kill "${SRV_PID:-}" 2>/dev/null; wait "${SRV_PID:-}" 2>/dev/null; }
 
 fifos() { find "${SCRATCH:-${TMPDIR:-/tmp}}" -type p 2>/dev/null | wc -l | tr -d ' '; }
+
+# Credentials unset so only .mcp.json resolution is under test. exec is
+# load-bearing: without it $! names the subshell and the kill misses the leaf.
+bg_watcher() {
+  ( cd "$1" 2>/dev/null && API_URL= API_SECRET= AGENT_ID= RELAI_WATCH_LOG=/dev/null \
+      exec bash "$SCRIPTS/relai-watch.sh" >"$2" 2>&1 ) &
+}
 
 # Poll rather than sleep: cleanup is asynchronous in the grandchild, so a fixed
 # wait is a race that passes or fails on machine load.
@@ -249,8 +272,7 @@ JSON
 # relai-watch.sh enters its normal reconnect-forever loop instead of exiting
 # — a synchronous call here would hang the whole suite on a regression.
 decout="$(mktemp)"
-( cd "$walkdir/outer/repo/sub" && API_URL= API_SECRET= AGENT_ID= RELAI_WATCH_LOG=/dev/null \
-    bash "$SCRIPTS/relai-watch.sh" >"$decout" 2>&1 ) &
+bg_watcher "$walkdir/outer/repo/sub" "$decout"
 dpid=$!
 sleep 1
 kill -TERM "$dpid" 2>/dev/null; wait "$dpid" 2>/dev/null
@@ -277,15 +299,17 @@ JSON
 ( cd "$walkdir/repo" && git init -q && git config user.email t@t && git config user.name t \
   && git commit -q --allow-empty -m init )
 posout="$(mktemp)"
-( cd "$walkdir/repo/sub" && API_URL= API_SECRET= AGENT_ID= RELAI_WATCH_LOG=/dev/null \
-    bash "$SCRIPTS/relai-watch.sh" >"$posout" 2>&1 ) &
+bg_watcher "$walkdir/repo/sub" "$posout"
 ppid=$!
 sleep 1
+# Success here is silence (the watcher resolved creds and started looping), and
+# so is never starting at all, so aliveness is what separates them.
+kill -0 "$ppid" 2>/dev/null && running=1 || running=0
 kill -TERM "$ppid" 2>/dev/null; wait "$ppid" 2>/dev/null
 out="$(cat "$posout")"; rm -f "$posout"
 case "$out" in
   *"could not resolve"*) bad "a .mcp.json at the git root was not found from a subdirectory" ;;
-  *) ok "a .mcp.json at the git root IS found from a subdirectory (walk isn't overcorrected)" ;;
+  *) check "a .mcp.json at the git root IS found from a subdirectory (walk isn't overcorrected)" "$running" 1 ;;
 esac
 rm -rf "$walkdir"
 
@@ -306,8 +330,7 @@ JSON
   # Backgrounded + killed, same reasoning as the decoy-above-root case above:
   # a broken bound means this enters the reconnect-forever loop, not a quick exit.
   symout="$(mktemp)"
-  ( cd "$symdir/link/repo/sub" 2>/dev/null && API_URL= API_SECRET= AGENT_ID= RELAI_WATCH_LOG=/dev/null \
-      bash "$SCRIPTS/relai-watch.sh" >"$symout" 2>&1 ) &
+  bg_watcher "$symdir/link/repo/sub" "$symout"
   ypid=$!
   sleep 1
   kill -TERM "$ypid" 2>/dev/null; wait "$ypid" 2>/dev/null
@@ -632,6 +655,20 @@ case "$ctx_reload" in
   *) bad "hook gives no rule for output that is neither empty nor a bare [killed]" ;;
 esac
 
+
+# --- the suite must not outlive its own watchers -----------------------------
+# A leaked wrapper logs to /dev/null and its pidfile dir is deleted, so it
+# shows up in neither store. ps was the only place it was ever visible.
+for _ in $(seq 1 30); do
+  [ -z "$(suite_watchers)" ] && break
+  sleep 0.1
+done
+leaked="$(suite_watchers | tr '\n' ' ' | sed 's/ *$//')"
+if [ -z "$leaked" ]; then
+  ok "the suite leaves no relai-watch.sh process behind"
+else
+  bad "the suite leaked relai-watch.sh (pids: $leaked)"
+fi
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

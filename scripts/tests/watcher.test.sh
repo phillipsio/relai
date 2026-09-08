@@ -382,6 +382,19 @@ esac
 
 alive() { kill -0 "$1" 2>/dev/null; }
 
+# A watcher writes its pidfile before installing the EXIT trap that removes it,
+# so signalling it earlier than its stream loop tests startup, not clean exit.
+in_stream_loop() {
+  local i c
+  for i in $(seq 1 100); do
+    for c in $(pgrep -P "$1" 2>/dev/null); do
+      ps -p "$c" -o command= 2>/dev/null | grep -q 'relai-stream-wait\.sh' && return 0
+    done
+    sleep 0.1
+  done
+  return 1
+}
+
 # The inverse of poll_until: wait for a condition to become false.
 wait_until_false() {
   local i; for i in $(seq 1 50); do eval "$1" || return 0; sleep 0.1; done; return 1
@@ -431,6 +444,9 @@ if start_server -1 25; then
     # Kill both unconditionally, not just $b_wrapper/$pid_b: if the code under
     # test is broken and $pid_a is still alive, this is the only thing that
     # stops it leaking past this test.
+    # Clean exit is only defined once the survivor owns its EXIT trap; killing
+    # it mid-startup leaves the pidfile behind and is a different test.
+    [ -n "${pid_b:-}" ] && in_stream_loop "$pid_b"
     # Deduplicated: a wrapper and the pid it writes to the pidfile are the same
     # process, so the unduplicated form sent TERM twice and the second one could
     # land inside the EXIT trap before it removed the pidfile.
@@ -552,10 +568,12 @@ if start_server -1 25; then
     c_wrapper=$!
 
     survivors=""
+    # Settle on exactly one. Zero is a legitimate transient, since the guard
+    # TERMs the incumbent's child before the survivor spawns its own.
     for _ in $(seq 1 50); do
       survivors="$(pgrep -f "relai-stream-wait\.sh .*$agent" 2>/dev/null || true)"
       count="$(printf '%s\n' "$survivors" | grep -c . || true)"
-      [ "$count" -le 1 ] 2>/dev/null && break
+      [ "$count" = "1" ] && break
       sleep 0.1
     done
     [ "$count" = "1" ] && ok "two simultaneous relaunches racing one incumbent leave exactly one live watcher" \

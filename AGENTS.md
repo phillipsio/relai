@@ -210,7 +210,7 @@ The `relai` binary is the operator surface. It reads its config from `~/.config/
 
 **Setup**
 - `relai init` — interactive first-time setup: prompts for API URL + admin secret, creates a repo (or accepts an existing repo ID), registers an agent, saves the per-agent token, prints the `.mcp.json` snippet
-- `relai login --invite <code> [--api <url>]` — accept a repo invite as a new agent (defaults `workerType: "human"`); refuses to clobber an existing config
+- `relai login --invite <code> [--api <url>] [--worker-type <type>]` — accept a repo invite as a new agent; refuses to clobber an existing config. `--worker-type` takes one of the `agents.workerType` values (`claude`, `copilot`, `cursor`, `windsurf`, `gemini`, `gpt`, `mcp`, `human` — a plain `text` column, not a `pgEnum`, so adding a ninth needs no migration, only the duplicated literal arrays in `routes/agents.ts`, `routes/invites.ts` and the CLI) and defaults to `human`, which is right for an operator joining by hand and wrong for every scripted agent — it was a hardcoded literal until 2026-09-08, so agents that joined earlier may carry the wrong label. An unknown value is refused, an empty one too, and passing it with `--token` is refused outright rather than warned about: an agent's type is fixed at creation and no route updates it, so warning and exiting 0 would leave a script believing it had set one. **`relai init` still cannot set it at all**, so agents created that way store `workerType: null`.
 - `relai token rotate` / `relai token revoke <tokenId>`
 
 **Discovery**

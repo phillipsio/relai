@@ -194,6 +194,7 @@ program
   .option("--token <token>", "Per-agent token (from the cloud dashboard)")
   .option("--api <url>", "API URL (skips prompt)")
   .option("--working-dir <path>", "Override the working directory (defaults to CWD)")
+  .option("--worker-type <type>", "Agent runtime: claude, copilot, cursor, windsurf, gemini, gpt, mcp, human (default: human)")
   .action(loginCommand);
 
 // ── repo invite ───────────────────────────────────────────────────────────

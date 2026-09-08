@@ -11,6 +11,10 @@ import {
   WorkingDirCollisionError,
 } from "../lib/agents-state.js";
 
+// Mirrors the values the API accepts for agents.workerType (a text column,
+// not a pgEnum); "human" stays the default for `relai login`.
+const WORKER_TYPES = ["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"] as const;
+
 const SPECIALIZATION_CHOICES = [
   { value: "writer",       name: "writer        — implementation, code changes" },
   { value: "reviewer",     name: "reviewer      — code review, PR feedback" },
@@ -63,6 +67,7 @@ export async function loginCommand(opts: {
   api?: string;
   token?: string;
   workingDir?: string;
+  workerType?: string;
 }) {
   if (opts.invite && opts.token) {
     console.error(chalk.red("Pass either --invite or --token, not both"));
@@ -72,6 +77,18 @@ export async function loginCommand(opts: {
     console.error(chalk.red("relai login requires --invite <code> or --token <token>"));
     console.error(chalk.dim("Ask a repo member to run `relai repo invite` and share the code, or create an agent in the cloud dashboard."));
     process.exit(1);
+  }
+  if (opts.workerType !== undefined) {
+    if (!(WORKER_TYPES as readonly string[]).includes(opts.workerType)) {
+      console.error(chalk.red(`--worker-type must be one of: ${WORKER_TYPES.join(", ")}`));
+      process.exit(1);
+    }
+    // An agent's type is fixed at creation and no route updates it, so warning
+    // and continuing would leave the label wrong with an exit code of 0.
+    if (opts.token) {
+      console.error(chalk.red("--worker-type cannot be used with --token: an agent's type is fixed when it is created."));
+      process.exit(1);
+    }
   }
 
   const existing = readConfig();
@@ -123,7 +140,7 @@ export async function loginCommand(opts: {
         code: opts.invite!,
         name,
         specialization: specForApi,
-        workerType: "human",
+        workerType: opts.workerType ?? "human",
       });
       agentId = result.agent.id;
       agentName = result.agent.name;

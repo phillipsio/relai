@@ -4,7 +4,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { agents, tokens, repos } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
-import { assertRepoAccess, assertAgentAccess } from "../lib/ownership.js";
+import { assertRepoAccess, assertAgentAccess, callerMayActOnAgent } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 const registerSchema = z.object({
@@ -64,6 +64,14 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
     const agent = check.agent;
 
+    // Repo membership alone let any worker mint another agent's token; see
+    // callerMayActOnAgent.
+    if (!callerMayActOnAgent(request, agent.id)) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only the agent itself or an orchestrator may rotate this token." },
+      });
+    }
+
     const plaintext = generateToken();
     const [row] = await db.insert(tokens).values({
       id:        newId("tok"),
@@ -96,6 +104,13 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
   fastify.delete<{ Params: { id: string } }>("/agents/:id", async (request, reply) => {
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
+
+    if (!callerMayActOnAgent(request, check.agent.id)) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only the agent itself or an orchestrator may delete this agent." },
+      });
+    }
+
     await db.delete(agents).where(eq(agents.id, request.params.id));
     return reply.status(204).send();
   });

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { eq } from "drizzle-orm";
 import { tokens } from "@getrelai/db";
-import { assertAgentAccess } from "../lib/ownership.js";
+import { assertAgentAccess, callerMayActOnAgent } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 export const tokenRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -10,6 +10,13 @@ export const tokenRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     if (!existing) return reply.status(404).send({ error: { code: "not_found", message: "Token not found" } });
     const access = await assertAgentAccess(request, db, existing.agentId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Token not found" } });
+
+    // Revocation carries the same authority as the rotation it undoes.
+    if (!callerMayActOnAgent(request, existing.agentId)) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only the agent itself or an orchestrator may revoke this token." },
+      });
+    }
 
     await db
       .update(tokens)

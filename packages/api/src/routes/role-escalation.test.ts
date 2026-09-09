@@ -187,3 +187,124 @@ describe("the shell-predicate gate is sound once roles cannot be self-granted", 
     expect(res.statusCode).toBe(201);
   });
 });
+
+// The premise the block above depends on and never checked: a worker cannot
+// acquire an orchestrator TOKEN either. POST /agents was gated; the rotate
+// route beside it, and DELETE, were not.
+describe("a worker cannot mint or destroy another agent's token", () => {
+  let victimOrchId: string;
+
+  beforeAll(async () => {
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "escalation-victim-orch", role: "orchestrator" }),
+    });
+    victimOrchId = o.json().data.id;
+  });
+
+  it("refuses a worker rotating another agent's token", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/agents/${victimOrchId}/tokens`, headers: asAgent(workerToken),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("stops the escalation this enables: minting an orchestrator token and authoring a shell predicate with it", async () => {
+    const rotate = await app.inject({
+      method: "POST", url: `/agents/${victimOrchId}/tokens`, headers: asAgent(workerToken),
+    });
+    expect(rotate.statusCode).toBe(403);
+    // If the rotate had succeeded, this call with the minted token would have
+    // been the actual reachable-code-execution step. It must never run.
+    const stolen = rotate.json().token as string | undefined;
+    expect(stolen).toBeUndefined();
+  });
+
+  it("still allows an agent to rotate its own token", async () => {
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "self-rotate-worker", role: "worker" }),
+    });
+    const selfId = w.json().data.id;
+    const selfToken = w.json().token;
+
+    const res = await app.inject({
+      method: "POST", url: `/agents/${selfId}/tokens`, headers: asAgent(selfToken),
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it("refuses a worker deleting another agent's registration", async () => {
+    const res = await app.inject({
+      method: "DELETE", url: `/agents/${victimOrchId}`, headers: asAgent(workerToken),
+    });
+    expect(res.statusCode).toBe(403);
+
+    const still = await app.inject({ method: "GET", url: `/agents/${victimOrchId}`, headers: ADMIN });
+    expect(still.statusCode).toBe(200);
+  });
+
+  it("lets an orchestrator rotate and delete another agent's token in its own repo", async () => {
+    const rotate = await app.inject({
+      method: "POST", url: `/agents/${victimOrchId}/tokens`, headers: asAgent(orchToken),
+    });
+    expect(rotate.statusCode).toBe(201);
+
+    const del = await app.inject({
+      method: "DELETE", url: `/agents/${victimOrchId}`, headers: asAgent(orchToken),
+    });
+    expect(del.statusCode).toBe(204);
+  });
+});
+
+// Same authority as rotation, on the route that undoes it. A worker revoking
+// the orchestrator's active tokens is as much a lockout as minting a new one.
+describe("a worker cannot revoke another agent's token", () => {
+  it("refuses revocation, and the token still authenticates afterward", async () => {
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "revoke-victim-orch", role: "orchestrator" }),
+    });
+    const victimId = o.json().data.id;
+    const victimToken = o.json().token;
+
+    // GET /agents does not expose a token id; mint one this caller can target.
+    const minted = await app.inject({
+      method: "POST", url: `/agents/${victimId}/tokens`, headers: asAgent(victimToken),
+    });
+    const tokenId = minted.json().data.id as string;
+
+    const revoke = await app.inject({
+      method: "DELETE", url: `/tokens/${tokenId}`, headers: asAgent(workerToken),
+    });
+    expect(revoke.statusCode).toBe(403);
+
+    const still = await app.inject({ method: "GET", url: "/health", headers: asAgent(victimToken) });
+    expect(still.statusCode).not.toBe(401);
+  });
+
+  it("still lets the agent revoke its own token, and an orchestrator revoke another's", async () => {
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "self-revoke-worker", role: "worker" }),
+    });
+    const selfId = w.json().data.id;
+    const selfToken = w.json().token;
+    const minted = await app.inject({
+      method: "POST", url: `/agents/${selfId}/tokens`, headers: asAgent(selfToken),
+    });
+
+    const selfRevoke = await app.inject({
+      method: "DELETE", url: `/tokens/${minted.json().data.id}`, headers: asAgent(selfToken),
+    });
+    expect(selfRevoke.statusCode).toBe(204);
+
+    const minted2 = await app.inject({
+      method: "POST", url: `/agents/${selfId}/tokens`, headers: asAgent(orchToken),
+    });
+    const orchRevoke = await app.inject({
+      method: "DELETE", url: `/tokens/${minted2.json().data.id}`, headers: asAgent(orchToken),
+    });
+    expect(orchRevoke.statusCode).toBe(204);
+  });
+});

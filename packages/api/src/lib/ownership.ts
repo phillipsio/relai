@@ -43,6 +43,14 @@ export async function assertRepoAccess(
 // For list endpoints. Returns a drizzle predicate to AND into the where
 // clause, or null when no filtering is required (per-agent caller — they
 // already filter by agent.repoId — or legacy API_SECRET).
+// Repo membership alone is not authority over another agent's credential.
+// True when the caller may act on the named agent: it is themself, an
+// orchestrator, or a caller with no agent identity (admin/owner paths).
+export function callerMayActOnAgent(request: FastifyRequest, targetAgentId: string): boolean {
+  if (!request.agent) return true;
+  return request.agent.id === targetAgentId || request.agent.role === "orchestrator";
+}
+
 export function scopedRepoFilter(request: FastifyRequest): SQL | null {
   if (request.ownerId) return eq(repos.ownerId, request.ownerId);
   return null;

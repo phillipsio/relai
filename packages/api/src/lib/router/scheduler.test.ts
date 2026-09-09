@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { buildServer } from "../../server.js";
-import { detectStalls, watchProposedTasks, watchBlockedTasks, reapStalledTasks } from "./scheduler.js";
+import { detectStalls, watchProposedTasks, watchBlockedTasks, reapStalledTasks, routePendingTasks } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
-import { createDb, tasks, subscriptions } from "@getrelai/db";
+import { createDb, tasks, subscriptions, agents } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
@@ -373,5 +373,170 @@ describe("reapStalledTasks", () => {
     bus.on("event", handler);
     try { await reapStalledTasks(db, repoId); } finally { bus.off("event", handler); }
     expect(seen.filter((e) => e.kind.startsWith("task.stall_"))).toHaveLength(0);
+  });
+});
+
+describe("routePendingTasks: an unchanging skip condition", () => {
+  it("resets when reapStalledTasks re-queues the task, so a second stall is reported", async () => {
+    const repo = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ route-log-reap" }),
+    });
+    const rRepoId = repo.json().data.id;
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: rRepoId, name: "reap-worker", role: "worker" }),
+    });
+    const reapWorkerId = w.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId: rRepoId, createdBy: reapWorkerId, title: "unroutable-reap", description: "x",
+        assignedTo: "@auto", specialization: "nobody-has-this",
+      }),
+    });
+    const taskId = create.json().data.id;
+
+    const prevKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m?: unknown) => { logs.push(String(m)); });
+    try {
+      const db = createDb(DB_URL);
+      await routePendingTasks(db, rRepoId);
+      expect(logs.filter((l) => l.includes("needs Claude routing"))).toHaveLength(1);
+
+      // Simulate the row having gone in_progress and stalled, then reaped.
+      await db.update(tasks)
+        .set({ status: "in_progress", assignedTo: reapWorkerId, stalledAt: new Date(Date.now() - 999_999_999) })
+        .where(eq(tasks.id, taskId));
+      await reapStalledTasks(db, rRepoId);
+
+      const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(row.status).toBe("pending");
+      expect(row.autoAssign).toBe(true);
+
+      await routePendingTasks(db, rRepoId);
+      expect(logs.filter((l) => l.includes("needs Claude routing"))).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+      if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevKey;
+    }
+  });
+
+  it("resets when a task is manually assigned via PUT, so a later stall is reported again", async () => {
+    const repo = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ route-log-manual" }),
+    });
+    const rRepoId = repo.json().data.id;
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: rRepoId, name: "manual-worker", role: "worker" }),
+    });
+    const manualWorkerId = w.json().data.id;
+
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId: rRepoId, createdBy: manualWorkerId, title: "unroutable-manual", description: "x",
+        assignedTo: "@auto", specialization: "nobody-has-this",
+      }),
+    });
+    const taskId = create.json().data.id;
+
+    const prevKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m?: unknown) => { logs.push(String(m)); });
+    try {
+      const db = createDb(DB_URL);
+      await routePendingTasks(db, rRepoId);
+      expect(logs.filter((l) => l.includes("needs Claude routing"))).toHaveLength(1);
+
+      const assign = await app.inject({
+        method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+        body: JSON.stringify({ assignedTo: manualWorkerId, status: "assigned" }),
+      });
+      expect(assign.statusCode).toBe(200);
+
+      await app.inject({
+        method: "PUT", url: `/tasks/${taskId}`, headers: ADMIN,
+        body: JSON.stringify({ status: "pending", assignedTo: null }),
+      });
+      await db.update(tasks).set({ autoAssign: true }).where(eq(tasks.id, taskId));
+
+      await routePendingTasks(db, rRepoId);
+      expect(logs.filter((l) => l.includes("needs Claude routing"))).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+      if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevKey;
+    }
+  });
+
+
+  it("logs the missing-key skip once per task, not once per tick", async () => {
+    const repo = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ route-log-once" }),
+    });
+    const rRepoId = repo.json().data.id;
+
+    // A worker must exist or routePendingTasks returns before the branch;
+    // its specialization must not match, so rules cannot resolve the task.
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: rRepoId, name: "w-writer", role: "worker", specialization: "writer" }),
+    });
+    const wId = w.json().data.id;
+
+    await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId: rRepoId, createdBy: wId, title: "unroutable", description: "x",
+        assignedTo: "@auto", specialization: "nobody-has-this",
+      }),
+    });
+
+    const prevKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m?: unknown) => { logs.push(String(m)); });
+    try {
+      const db = createDb(DB_URL);
+      await routePendingTasks(db, rRepoId);
+      await routePendingTasks(db, rRepoId);
+      await routePendingTasks(db, rRepoId);
+
+      const skips = logs.filter((l) => l.includes("needs Claude routing"));
+      expect(skips).toHaveLength(1);
+
+      // A stalled task is re-queued as pending+autoAssign by reapStalledTasks,
+      // so the same row can come back around and must be reported again.
+      const [row] = await db.select().from(tasks).where(eq(tasks.repoId, rRepoId));
+      await db.update(tasks)
+        .set({ specialization: null, status: "pending", assignedTo: null, autoAssign: true })
+        .where(eq(tasks.id, row.id));
+      // Rules pre-filter to agents seen in the last 10 minutes, and a freshly
+      // registered agent starts at the epoch.
+      await app.inject({ method: "PUT", url: `/agents/${wId}/heartbeat`, headers: ADMIN });
+      await routePendingTasks(db, rRepoId);          // rules now match -> routed, resets
+      // Rules fall back to ALL online agents when no specialization matches, so
+      // the only way back to unroutable is for the worker to go offline again.
+      await db.update(agents).set({ lastSeenAt: new Date(0) }).where(eq(agents.id, wId));
+      await db.update(tasks)
+        .set({ specialization: "nobody-has-this", status: "pending", assignedTo: null, autoAssign: true })
+        .where(eq(tasks.id, row.id));
+      await routePendingTasks(db, rRepoId);          // unroutable again -> reported again
+
+      expect(logs.filter((l) => l.includes("needs Claude routing"))).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+      if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevKey;
+    }
   });
 });

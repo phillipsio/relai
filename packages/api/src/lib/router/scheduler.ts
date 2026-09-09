@@ -3,6 +3,7 @@ import { eq, and, inArray, isNull, isNotNull, lt, or } from "drizzle-orm";
 import { agents, tasks, repos, routingLog, messages, verificationLog } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
+import { logOnce, resetLogOnce } from "../log-once.js";
 import { publish, ensureSubscription } from "../events.js";
 import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
@@ -41,7 +42,7 @@ function getAnthropic(): Anthropic | null {
 
 // ── Task routing ──────────────────────────────────────────────────────────────
 
-async function routePendingTasks(db: Db, repoId: string): Promise<void> {
+export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
   const pending = await db
     .select()
     .from(tasks)
@@ -82,7 +83,10 @@ async function routePendingTasks(db: Db, repoId: string): Promise<void> {
 
     if (!result) {
       if (!ai) {
-        console.log(`[scheduler] Task ${task.id} needs Claude routing but ANTHROPIC_API_KEY not set — skipping`);
+        logOnce(
+          `route-no-key:${task.id}`,
+          `[scheduler] Task ${task.id} needs Claude routing but ANTHROPIC_API_KEY not set — skipping`,
+        );
         continue;
       }
       try {
@@ -98,6 +102,7 @@ async function routePendingTasks(db: Db, repoId: string): Promise<void> {
       continue;
     }
 
+    resetLogOnce(`route-no-key:${task.id}`);
     await db.update(tasks).set({ status: "assigned", assignedTo: result.agentId }).where(eq(tasks.id, task.id));
     await db.insert(routingLog).values({
       id: newId("route"),
@@ -298,6 +303,7 @@ export async function reapStalledTasks(db: Db, repoId: string): Promise<void> {
     }
 
     console.warn(`[scheduler] re-queueing stalled task ${task.id} (release ${released + 1}) — was assigned to ${task.assignedTo ?? "nobody"}`);
+    resetLogOnce(`route-no-key:${task.id}`);
 
     await db.update(tasks)
       .set({

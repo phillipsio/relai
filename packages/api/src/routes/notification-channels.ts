@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { notificationChannels, users, type Db } from "@getrelai/db";
 import type { FastifyRequest } from "fastify";
 import { newId } from "../lib/id.js";
+import { outboundUrlProblem } from "../lib/outbound-url.js";
 import { assertAgentAccess, callerMayActOnAgent, scopedAgentIds } from "../lib/ownership.js";
 
 // A channel is agent- or owner-scoped. Agent channels reuse assertAgentAccess.
@@ -33,15 +34,22 @@ function generateSecret(): string {
   return `whsec_${randomBytes(32).toString("hex")}`;
 }
 
+// repoUrl has had a protocol allowlist since 89d2dec; this one had nothing,
+// and unlike repoUrl it makes the API host itself issue the request.
+const outboundUrl = z.string().superRefine((value, ctx) => {
+  const problem = outboundUrlProblem(value);
+  if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `url ${problem}` });
+});
+
 const webhookConfigSchema = z.object({
-  url:     z.string().url(),
+  url:     outboundUrl,
   headers: z.record(z.string()).optional(),
 });
 
 // Slack Incoming Webhook URL. Delivery posts a human-readable { text }
 // summary (see lib/notifications.ts) rather than the raw signed event JSON.
 const slackConfigSchema = z.object({
-  webhookUrl: z.string().url(),
+  webhookUrl: outboundUrl,
 });
 
 const createSchema = z.discriminatedUnion("kind", [

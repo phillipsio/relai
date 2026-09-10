@@ -722,3 +722,116 @@ describe("a worker cannot take over a peer's notification channel", () => {
     expect(res.statusCode).toBe(200);
   });
 });
+
+// The API host issues the request, so the caller picks the target. repoUrl has
+// had a protocol allowlist since 89d2dec; this had none.
+describe("a channel cannot point the API host at the private network", () => {
+  it.each([
+    ["cloud metadata", "https://169.254.169.254/latest/meta-data/"],
+    ["loopback",       "https://127.0.0.1/hook"],
+    ["private 10/8",   "https://10.0.0.5/hook"],
+    ["plain http",     "http://hooks.example.com/hook"],
+  ])("refuses creating a webhook channel targeting %s", async (_label, url) => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentAId, kind: "webhook", config: { url } }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("refuses moving an existing channel onto a private address", async () => {
+    const made = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentAId, kind: "webhook", config: { url: "https://ok.example.com/hook" } }),
+    });
+    expect(made.statusCode).toBe(201);
+
+    const res = await app.inject({
+      method: "PUT", url: `/notification-channels/${made.json().data.id}`, headers: ADMIN,
+      body: JSON.stringify({ config: { url: "https://169.254.169.254/latest/meta-data/" } }),
+    });
+    expect(res.statusCode).toBe(400);
+
+    await app.inject({ method: "DELETE", url: `/notification-channels/${made.json().data.id}`, headers: ADMIN });
+  });
+
+  it("holds for slack channels too", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentAId, kind: "slack", config: { webhookUrl: "https://127.0.0.1/slack" } }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("still accepts an ordinary public https webhook", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentAId, kind: "webhook", config: { url: "https://hooks.example.com/ok" } }),
+    });
+    expect(res.statusCode).toBe(201);
+    await app.inject({ method: "DELETE", url: `/notification-channels/${res.json().data.id}`, headers: ADMIN });
+  });
+});
+
+// The schema stops a private URL going in. This is the other half: a hostname
+// that resolved publicly when the channel was created can resolve somewhere
+// private later, so delivery re-checks rather than trusting the stored row.
+describe("delivery refuses a channel whose hostname resolves privately", () => {
+  const fetchMock = vi.fn();
+  let originalFetch: typeof fetch;
+  let rebindChannelId: string;
+  let rebindThreadId: string;
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+
+    const t = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ repoId, title: "rebind thread" }),
+    });
+    rebindThreadId = t.json().data.id;
+
+    await app.inject({
+      method: "POST", url: "/subscriptions", headers: ADMIN,
+      body: JSON.stringify({ agentId: agentBId, targetType: "thread", targetId: rebindThreadId }),
+    });
+
+    // Written straight to the row: the schema refuses this on the way in,
+    // which is exactly the state a rebind produces after the fact.
+    const db = createDb(DB_URL);
+    rebindChannelId = `nch_rebind_${Date.now()}`;
+    await db.insert(notificationChannels).values({
+      id:      rebindChannelId,
+      agentId: agentBId,
+      kind:    "webhook",
+      config:  { url: "https://localhost/hook" },
+      secret:  "whsec_test",
+    });
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    const db = createDb(DB_URL);
+    await db.delete(notificationChannels).where(eq(notificationChannels.id, rebindChannelId));
+  });
+
+  it("does not fetch, and records why", async () => {
+    const db = createDb(DB_URL);
+    await deliver(db, {
+      id:         "evt_rebind_1",
+      kind:       "message.posted",
+      repoId,
+      targetType: "thread",
+      targetId:   rebindThreadId,
+      payload:    { hello: "world" },
+      createdAt:  new Date().toISOString(),
+    }, { retries: 0 });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const [after] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, rebindChannelId));
+    expect(after.lastError ?? "").toMatch(/private or link-local/);
+  });
+});

@@ -1,4 +1,5 @@
 import { eq, and, inArray, isNull } from "drizzle-orm";
+import { resolvesToBlockedAddress } from "./outbound-url.js";
 import { createHmac, randomBytes } from "node:crypto";
 import { notificationChannels, repos, type Db } from "@getrelai/db";
 import { bus, resolveSubscribers, type AppEvent, type EventKind } from "./events.js";
@@ -129,6 +130,11 @@ function shouldRetry(status: number | null): boolean {
 }
 
 async function attemptOnce(url: string, headers: Record<string, string>, body: string): Promise<{ ok: true } | { ok: false; status: number | null; message: string }> {
+  // Re-checked here, not just at insert: a hostname that resolved publicly
+  // when the channel was created can resolve to a private address later.
+  if (await resolvesToBlockedAddress(url)) {
+    return { ok: false, status: null, message: "refusing to deliver to a private or link-local address" };
+  }
   try {
     const res = await fetch(url, { method: "POST", headers, body });
     if (res.ok) return { ok: true };

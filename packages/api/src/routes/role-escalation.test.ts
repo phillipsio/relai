@@ -516,3 +516,86 @@ describe("a worker cannot forge a peer's liveness or silence its events", () => 
     expect(still.json().data.some((x: { id: string }) => x.id === sub.json().data.id)).toBe(true);
   });
 });
+
+// Six FKs point at agents.id with NO ACTION, so deregistering an agent that
+// had done anything used to fail on a constraint violation, and the default
+// error handler returned the failing SQL and its bound parameters with it.
+describe("deregistering an agent with history succeeds and leaks nothing", () => {
+  let histRepoId: string;
+  let doomedId: string;
+  let orchToken2: string;
+
+  beforeAll(async () => {
+    const r = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ agent-history" }),
+    });
+    histRepoId = r.json().data.id;
+
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: histRepoId, name: "hist-orch", role: "orchestrator" }),
+    });
+    orchToken2 = o.json().token;
+
+    const d = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: histRepoId, name: "hist-worker", role: "worker" }),
+    });
+    doomedId = d.json().data.id;
+  });
+
+  afterAll(async () => {
+    if (histRepoId) await app.inject({ method: "DELETE", url: `/repos/${histRepoId}`, headers: ADMIN });
+  });
+
+  it("deletes the agent, re-queues its live task, and keeps its finished one", async () => {
+    const live = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({ repoId: histRepoId, createdBy: doomedId, title: "live", description: "x", assignedTo: doomedId, status: "in_progress" }),
+    });
+    const doneTask = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({ repoId: histRepoId, createdBy: doomedId, title: "done", description: "x", assignedTo: doomedId, status: "completed" }),
+    });
+    await app.inject({
+      method: "POST", url: `/repos/${histRepoId}/invites`, headers: asAgent(orchToken2),
+      body: JSON.stringify({ role: "worker" }),
+    });
+
+    const del = await app.inject({ method: "DELETE", url: `/agents/${doomedId}`, headers: asAgent(orchToken2) });
+    expect(del.statusCode).toBe(204);
+
+    const liveAfter = await app.inject({ method: "GET", url: `/tasks/${live.json().data.id}`, headers: ADMIN });
+    expect(liveAfter.json().data.status).toBe("pending");
+    expect(liveAfter.json().data.assignedTo).toBeNull();
+
+    const doneAfter = await app.inject({ method: "GET", url: `/tasks/${doneTask.json().data.id}`, headers: ADMIN });
+    expect(doneAfter.json().data.status).toBe("completed");
+    expect(doneAfter.json().data.assignedTo).toBeNull();
+
+    const gone = await app.inject({ method: "GET", url: `/agents/${doomedId}`, headers: ADMIN });
+    expect(gone.statusCode).toBe(404);
+  });
+
+  it("returns a generic 500 body, not the failing SQL, when a query does blow up", async () => {
+    // Valid enough to clear Zod and reach the insert, then violates the FK on
+    // tasks.assigned_to. Before the error handler, drizzle's message carried
+    // the INSERT and its bound parameters and Fastify copied it to the client.
+    const author = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: histRepoId, name: "leak-author", role: "worker" }),
+    });
+    const res = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId: histRepoId, createdBy: author.json().data.id,
+        title: "boom", description: "x", assignedTo: "agent_does_not_exist",
+      }),
+    });
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toEqual({ error: { code: "internal_error", message: "Internal Server Error" } });
+    expect(res.body).not.toMatch(/insert into/i);
+    expect(res.body).not.toMatch(/params:/i);
+  });
+});

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray } from "drizzle-orm";
-import { agents, tokens, repos } from "@getrelai/db";
+import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { assertRepoAccess, assertAgentAccess, callerMayActOnAgent } from "../lib/ownership.js";
@@ -117,7 +117,31 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       });
     }
 
-    await db.delete(agents).where(eq(agents.id, request.params.id));
+    // Six FKs point at agents.id with NO ACTION, so a deregister used to fail
+    // with a constraint violation the moment the agent had any history. Same
+    // manual-cascade shape DELETE /repos/:id already uses.
+    const agentId = request.params.id;
+
+    // An assigned task with a null assignee is unreachable, so anything still
+    // in flight goes back to the queue rather than being stranded.
+    await db.update(tasks)
+      .set({ status: "pending", assignedTo: null, autoAssign: true })
+      .where(and(
+        eq(tasks.assignedTo, agentId),
+        inArray(tasks.status, ["assigned", "in_progress", "blocked", "pending_verification"]),
+      ));
+    await db.update(tasks).set({ assignedTo: null }).where(eq(tasks.assignedTo, agentId));
+
+    // routing_log.assigned_to is NOT NULL, so the decision rows go with the
+    // agent. They record who was chosen, which is meaningless once it is gone.
+    await db.delete(routingLog).where(eq(routingLog.assignedTo, agentId));
+
+    await db.update(invites).set({ createdBy: null }).where(eq(invites.createdBy, agentId));
+    await db.update(invites).set({ acceptedAgentId: null }).where(eq(invites.acceptedAgentId, agentId));
+    await db.update(artifacts).set({ ownerAgentId: null }).where(eq(artifacts.ownerAgentId, agentId));
+    await db.update(artifactVersions).set({ publishedByAgentId: null }).where(eq(artifactVersions.publishedByAgentId, agentId));
+
+    await db.delete(agents).where(eq(agents.id, agentId));
     return reply.status(204).send();
   });
 

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { FastifyError } from "fastify";
 import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
 import { createDb } from "@getrelai/db";
@@ -45,6 +46,16 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
       parseJson(request, body, done);
     },
   );
+
+  // Fastify's default hands err.message straight to the client, and drizzle
+  // puts the failing SQL and its bound parameters in there. Every value the
+  // server binds is in scope, including a token's SHA-256 in the auth lookup.
+  fastify.setErrorHandler((err: FastifyError, request, reply) => {
+    const status = err.statusCode ?? 500;
+    if (status < 500) return reply.status(status).send(err);
+    request.log.error({ err }, "unhandled error");
+    return reply.status(500).send({ error: { code: "internal_error", message: "Internal Server Error" } });
+  });
 
   fastify.register(cors, { origin: true });
   fastify.register(authPlugin, { db });

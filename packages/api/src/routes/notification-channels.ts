@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { notificationChannels, users, type Db } from "@getrelai/db";
 import type { FastifyRequest } from "fastify";
 import { newId } from "../lib/id.js";
-import { assertAgentAccess, scopedAgentIds } from "../lib/ownership.js";
+import { assertAgentAccess, callerMayActOnAgent, scopedAgentIds } from "../lib/ownership.js";
 
 // A channel is agent- or owner-scoped. Agent channels reuse assertAgentAccess.
 // For owner channels: owner-mode callers may touch only their own; the legacy
@@ -22,7 +22,11 @@ async function assertChannelAccess(
     return { ok: true };
   }
   const access = await assertAgentAccess(request, db, channel.agentId!);
-  return access.ok ? { ok: true } : { ok: false, status: access.status };
+  if (!access.ok) return { ok: false, status: access.status };
+  // Repo membership is not authority over a peer's channel: PUT can repoint
+  // its URL and hand back a regenerated secret, which is a delivery takeover.
+  if (!callerMayActOnAgent(request, channel.agentId!)) return { ok: false, status: 404 };
+  return { ok: true };
 }
 
 function generateSecret(): string {
@@ -90,6 +94,9 @@ export const notificationChannelRoutes: FastifyPluginAsync<{ db: Db }> = async (
 
     const access = await assertAgentAccess(request, db, agentId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Agent not found" } });
+    if (!callerMayActOnAgent(request, agentId)) {
+      return reply.status(404).send({ error: { code: "not_found", message: "Agent not found" } });
+    }
 
     const [row] = await db.insert(notificationChannels).values({
       id:      newId("nch"),

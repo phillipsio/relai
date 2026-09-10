@@ -614,3 +614,111 @@ describe("owner-scoped notification channels", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+// Repo membership is not authority over a peer's notification channel. A
+// worker that can PUT another agent's channel repoints its delivery URL and,
+// with regenerateSecret, is handed the HMAC secret in the response — enough to
+// receive that agent's messages and to forge signatures for them.
+describe("a worker cannot take over a peer's notification channel", () => {
+  let victimChannelId: string;
+  let workerToken: string;
+  let victimToken: string;
+
+  beforeAll(async () => {
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "nch-worker", role: "worker" }),
+    });
+    workerToken = w.json().token;
+
+    const v = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "nch-victim", role: "worker" }),
+    });
+    const victimId = v.json().data.id;
+    victimToken = v.json().token;
+
+    const ch = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({
+        agentId: victimId, kind: "webhook",
+        config: { url: "https://victim.test/hook" },
+      }),
+    });
+    victimChannelId = ch.json().data.id;
+  });
+
+  const asAgent = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
+
+  it("refuses a worker repointing another agent's channel, and leaks no secret", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/notification-channels/${victimChannelId}`, headers: asAgent(workerToken),
+      body: JSON.stringify({ regenerateSecret: true, config: { url: "https://attacker.test/steal" } }),
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().data?.secret).toBeUndefined();
+
+    // and the channel is untouched
+    const [row] = await createDb(DB_URL)
+      .select().from(notificationChannels).where(eq(notificationChannels.id, victimChannelId));
+    expect((row.config as Record<string, unknown>).url).toBe("https://victim.test/hook");
+  });
+
+  it("refuses a worker deleting another agent's channel", async () => {
+    // Its own channel, so that if the gate regresses and the delete succeeds,
+    // the failure stays local instead of destroying the fixture the positive
+    // cases below depend on.
+    const victimId = (await app.inject({ method: "GET", url: "/agents", headers: ADMIN }))
+      .json().data.find((a: { name: string }) => a.name === "nch-victim").id;
+    const doomed = await app.inject({
+      method: "POST", url: "/notification-channels", headers: ADMIN,
+      body: JSON.stringify({ agentId: victimId, kind: "webhook", config: { url: "https://victim.test/doomed" } }),
+    });
+    const res = await app.inject({
+      method: "DELETE", url: `/notification-channels/${doomed.json().data.id}`, headers: asAgent(workerToken),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("refuses a worker creating a channel against another agent's id", async () => {
+    const victim = await app.inject({
+      method: "GET", url: "/agents", headers: ADMIN,
+    });
+    const victimId = victim.json().data.find((a: { name: string }) => a.name === "nch-victim").id;
+
+    const res = await app.inject({
+      method: "POST", url: "/notification-channels", headers: asAgent(workerToken),
+      body: JSON.stringify({ agentId: victimId, kind: "webhook", config: { url: "https://attacker.test/hook" } }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("still lets the owning agent manage its own channel", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/notification-channels/${victimChannelId}`, headers: asAgent(victimToken),
+      body: JSON.stringify({ config: { url: "https://victim.test/moved" } }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.config.url).toBe("https://victim.test/moved");
+  });
+
+  it("still lets an orchestrator in the same repo manage it", async () => {
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "nch-orch", role: "orchestrator" }),
+    });
+    const res = await app.inject({
+      method: "PUT", url: `/notification-channels/${victimChannelId}`, headers: asAgent(o.json().token),
+      body: JSON.stringify({ config: { url: "https://victim.test/orch" } }),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("still lets the admin path manage it", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/notification-channels/${victimChannelId}`, headers: ADMIN,
+      body: JSON.stringify({ config: { url: "https://victim.test/admin" } }),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});

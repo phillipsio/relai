@@ -18,10 +18,24 @@ process.env.API_SECRET   = SECRET;
 
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
-let app: FastifyInstance;
+// One pool for the file: createDb opens 10 connections and the workspace runs
+// several forks against one database.
+const db = createDb(DB_URL);
 
-beforeAll(async () => { app = await buildServer(); await app.ready(); });
-afterAll(async () => { await app.close(); });
+let app: FastifyInstance;
+let repoId: string;
+
+// scheduler:false matters. The default starts the real loop, which ticks over
+// EVERY repo in relai_test and would race sibling suites' own reap assertions.
+beforeAll(async () => {
+  app = await buildServer({ logger: false, scheduler: false });
+  await app.ready();
+});
+
+afterAll(async () => {
+  if (repoId) await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
+  await app?.close();
+});
 
 describe("routePendingTasks: the unroutable branch that fires when a key IS set", () => {
   it("logs the unroutable verdict once per task, not once per tick", async () => {
@@ -29,7 +43,7 @@ describe("routePendingTasks: the unroutable branch that fires when a key IS set"
       method: "POST", url: "/repos", headers: ADMIN,
       body: JSON.stringify({ name: "__test__ route-unroutable-once" }),
     });
-    const repoId = repo.json().data.id;
+    repoId = repo.json().data.id;
 
     const w = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
@@ -47,14 +61,13 @@ describe("routePendingTasks: the unroutable branch that fires when a key IS set"
 
     const prevKey = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = "sk-test-not-used";
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((m?: unknown) => { logs.push(String(m)); });
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((m?: unknown) => { warns.push(String(m)); });
     try {
-      const db = createDb(DB_URL);
       await routePendingTasks(db, repoId);
       await routePendingTasks(db, repoId);
       await routePendingTasks(db, repoId);
-      expect(logs.filter((l) => l.includes("unroutable"))).toHaveLength(1);
+      expect(warns.filter((l) => l.includes("unroutable"))).toHaveLength(1);
     } finally {
       spy.mockRestore();
       if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;

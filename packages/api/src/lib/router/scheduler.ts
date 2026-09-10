@@ -4,13 +4,6 @@ import { agents, tasks, repos, routingLog, messages, verificationLog } from "@ge
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
 import { logOnce, resetLogOnce } from "../log-once.js";
-
-// Both reasons a task stops routing. Cleared together, so a task that becomes
-// routable again reports the next occurrence of either.
-export function resetRouteLogs(taskId: string): void {
-  resetLogOnce(`route-no-key:${taskId}`);
-  resetLogOnce(`route-unroutable:${taskId}`);
-}
 import { publish, ensureSubscription } from "../events.js";
 import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
@@ -18,6 +11,13 @@ import { runFileExistsVerification } from "../verify-file-exists.js";
 import { runThreadConcludedVerification } from "../verify-thread-concluded.js";
 import { runReviewerAgentVerification, type ReviewDecision } from "../verify-reviewer-agent.js";
 import { runGitPushedVerification } from "../verify-git-pushed.js";
+
+// Both reasons a task stops routing, cleared together so a task that becomes
+// routable again reports the next occurrence of either.
+export function resetRouteLogs(taskId: string): void {
+  resetLogOnce(`route-no-key:${taskId}`);
+  resetLogOnce(`route-unroutable:${taskId}`);
+}
 import { tryRulesRouting } from "./rules.js";
 import { claudeRouting } from "./claude.js";
 import { runMessageLoopCycle } from "./message-loop.js";
@@ -105,9 +105,12 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
     }
 
     if (result.agentId === "UNROUTABLE") {
+      // Keyed on the task, not the message: an LLM rationale varies per call,
+      // so only the first is reported until the task routes or is reassigned.
       logOnce(
         `route-unroutable:${task.id}`,
         `[scheduler] Task ${task.id} unroutable: ${result.rationale}`,
+        console.warn,
       );
       continue;
     }

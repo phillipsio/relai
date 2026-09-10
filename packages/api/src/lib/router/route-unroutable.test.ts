@@ -18,15 +18,13 @@ process.env.API_SECRET   = SECRET;
 
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 
-// One pool for the file: createDb opens 10 connections and the workspace runs
-// several forks against one database.
 const db = createDb(DB_URL);
 
 let app: FastifyInstance;
 let repoId: string;
 
-// scheduler:false matters. The default starts the real loop, which ticks over
-// EVERY repo in relai_test and would race sibling suites' own reap assertions.
+// scheduler:false matters: the default loop ticks over EVERY repo in
+// relai_test and races sibling forks' reap assertions.
 beforeAll(async () => {
   app = await buildServer({ logger: false, scheduler: false });
   await app.ready();

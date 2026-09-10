@@ -229,8 +229,14 @@ describe("watchBlockedTasks (operator unblock path)", () => {
       }),
     });
     const taskId = create.json().data.id;
+    // Backdated: the resume compares the reply's Postgres createdAt against
+    // this with a strict >, so a same-millisecond block flakes under load.
     await db.update(tasks)
-      .set({ status: "blocked", blockedAt: new Date(), metadata: { blockedThreadId: threadId } })
+      .set({
+        status: "blocked",
+        blockedAt: new Date(Date.now() - 60_000),
+        metadata: { blockedThreadId: threadId },
+      })
       .where(eq(tasks.id, taskId));
     return { taskId, threadId };
   }

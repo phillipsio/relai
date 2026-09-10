@@ -27,7 +27,7 @@ let threadId: string;
 const extraRepoIds: string[] = [];
 
 beforeAll(async () => {
-  app = buildServer({ logger: false });
+  app = buildServer({ logger: false, scheduler: false });
   await app.ready();
 
   // Seed a test project to anchor all test data.

@@ -12,15 +12,16 @@ import { runThreadConcludedVerification } from "../verify-thread-concluded.js";
 import { runReviewerAgentVerification, type ReviewDecision } from "../verify-reviewer-agent.js";
 import { runGitPushedVerification } from "../verify-git-pushed.js";
 
+import { tryRulesRouting } from "./rules.js";
+import { claudeRouting } from "./claude.js";
+import { runMessageLoopCycle } from "./message-loop.js";
+
 // Both reasons a task stops routing, cleared together so a task that becomes
 // routable again reports the next occurrence of either.
 export function resetRouteLogs(taskId: string): void {
   resetLogOnce(`route-no-key:${taskId}`);
   resetLogOnce(`route-unroutable:${taskId}`);
 }
-import { tryRulesRouting } from "./rules.js";
-import { claudeRouting } from "./claude.js";
-import { runMessageLoopCycle } from "./message-loop.js";
 
 const VERIFY_STUCK_MS = 5 * 60 * 1000;
 

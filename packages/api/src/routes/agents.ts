@@ -85,6 +85,12 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
   fastify.put<{ Params: { id: string } }>("/agents/:id/heartbeat", async (request, reply) => {
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
+    // Only the agent can truthfully claim it is awake. Rules routing keeps
+    // agents seen in the last 10 minutes, so a forged stamp holds an offline
+    // peer in the pool and tasks route to something that never collects them.
+    if (!callerMayActOnAgent(request, request.params.id)) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "Cannot heartbeat another agent" } });
+    }
 
     const [agent] = await db
       .update(agents)

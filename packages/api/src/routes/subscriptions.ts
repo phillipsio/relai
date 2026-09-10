@@ -4,7 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { subscriptions, tasks, threads, agents } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
-import { assertAgentAccess, scopedAgentIds } from "../lib/ownership.js";
+import { assertAgentAccess, callerMayActOnAgent, scopedAgentIds } from "../lib/ownership.js";
 
 const createSchema = z.object({
   agentId:    z.string(),
@@ -40,6 +40,9 @@ export const subscriptionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify
 
     const access = await assertAgentAccess(request, db, body.data.agentId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Agent not found" } });
+    if (!callerMayActOnAgent(request, body.data.agentId)) {
+      return reply.status(404).send({ error: { code: "not_found", message: "Agent not found" } });
+    }
 
     // Enforced for every caller, not just per-agent tokens, so the invariant is
     // simply "no subscription created through this route crosses repos".
@@ -85,6 +88,11 @@ export const subscriptionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify
     if (!existing) return reply.status(404).send({ error: { code: "not_found", message: "Subscription not found" } });
     const access = await assertAgentAccess(request, db, existing.agentId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: "not_found", message: "Subscription not found" } });
+    // Deleting a peer's subscription silences its event and notification
+    // delivery, since selectChannels resolves channels through subscribers.
+    if (!callerMayActOnAgent(request, existing.agentId)) {
+      return reply.status(404).send({ error: { code: "not_found", message: "Subscription not found" } });
+    }
 
     await db.delete(subscriptions).where(eq(subscriptions.id, request.params.id));
     return reply.status(204).send();

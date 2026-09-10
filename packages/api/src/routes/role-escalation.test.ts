@@ -428,3 +428,91 @@ describe("a worker cannot administer the repo out from under the agent gate", ()
     expect(del.statusCode).toBe(204);
   });
 });
+
+// Repo membership is not authority over a peer's liveness or its event
+// delivery. Both were reachable with a plain worker token.
+describe("a worker cannot forge a peer's liveness or silence its events", () => {
+  let wToken: string;
+  let peerId: string;
+  let peerToken: string;
+  let subRepoId: string;
+
+  beforeAll(async () => {
+    const r = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ liveness-gate" }),
+    });
+    subRepoId = r.json().data.id;
+
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: subRepoId, name: "lv-worker", role: "worker" }),
+    });
+    wToken = w.json().token;
+
+    const p = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: subRepoId, name: "lv-peer", role: "worker" }),
+    });
+    peerId = p.json().data.id;
+    peerToken = p.json().token;
+  });
+
+  afterAll(async () => {
+    if (subRepoId) await app.inject({ method: "DELETE", url: `/repos/${subRepoId}`, headers: ADMIN });
+  });
+
+  it("refuses a worker heartbeating a peer", async () => {
+    const before = await app.inject({ method: "GET", url: `/agents/${peerId}`, headers: ADMIN });
+    const seenBefore = before.json().data.lastSeenAt;
+
+    const res = await app.inject({
+      method: "PUT", url: `/agents/${peerId}/heartbeat`, headers: asAgent(wToken),
+    });
+    expect(res.statusCode).toBe(403);
+
+    const after = await app.inject({ method: "GET", url: `/agents/${peerId}`, headers: ADMIN });
+    expect(after.json().data.lastSeenAt).toBe(seenBefore);
+  });
+
+  it("still lets an agent heartbeat itself", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/agents/${peerId}/heartbeat`, headers: asAgent(peerToken),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("refuses a worker subscribing a peer", async () => {
+    const thread = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ repoId: subRepoId, title: "lv thread", createdBy: peerId }),
+    });
+    const res = await app.inject({
+      method: "POST", url: "/subscriptions", headers: asAgent(wToken),
+      body: JSON.stringify({ agentId: peerId, targetType: "thread", targetId: thread.json().data.id }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("refuses a worker deleting a peer's subscription", async () => {
+    const thread = await app.inject({
+      method: "POST", url: "/threads", headers: ADMIN,
+      body: JSON.stringify({ repoId: subRepoId, title: "lv thread 2", createdBy: peerId }),
+    });
+    const sub = await app.inject({
+      method: "POST", url: "/subscriptions", headers: asAgent(peerToken),
+      body: JSON.stringify({ agentId: peerId, targetType: "thread", targetId: thread.json().data.id }),
+    });
+    expect(sub.statusCode).toBe(201);
+
+    const res = await app.inject({
+      method: "DELETE", url: `/subscriptions/${sub.json().data.id}`, headers: asAgent(wToken),
+    });
+    expect(res.statusCode).toBe(404);
+
+    const still = await app.inject({
+      method: "GET", url: `/subscriptions?agentId=${peerId}`, headers: asAgent(peerToken),
+    });
+    expect(still.json().data.some((x: { id: string }) => x.id === sub.json().data.id)).toBe(true);
+  });
+});

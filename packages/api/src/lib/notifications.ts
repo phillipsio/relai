@@ -124,19 +124,20 @@ function sign(secret: string, timestamp: string, body: string): string {
 
 function shouldRetry(status: number | null): boolean {
   if (status === null) return true;       // network error
+  if (status >= 300 && status < 400) return false;  // a receiver that redirects is misconfigured
   if (status === 429) return true;
   if (status >= 500 && status <= 599) return true;
   return false;
 }
 
 async function attemptOnce(url: string, headers: Record<string, string>, body: string): Promise<{ ok: true } | { ok: false; status: number | null; message: string }> {
-  // Re-checked here, not just at insert: a hostname that resolved publicly
-  // when the channel was created can resolve to a private address later.
-  if (await resolvesToBlockedAddress(url)) {
-    return { ok: false, status: null, message: "refusing to deliver to a private or link-local address" };
-  }
   try {
-    const res = await fetch(url, { method: "POST", headers, body });
+    // redirect:"manual" is load-bearing. The allowlist judges the stored URL,
+    // so one 3xx would send this POST anywhere, allowlist and all.
+    const res = await fetch(url, { method: "POST", headers, body, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      return { ok: false, status: res.status, message: `refusing to follow a ${res.status} redirect` };
+    }
     if (res.ok) return { ok: true };
     return { ok: false, status: res.status, message: `HTTP ${res.status}` };
   } catch (err) {
@@ -204,7 +205,13 @@ async function deliverOne(db: Db, channel: Channel, event: AppEvent, opts: Deliv
   }
 
   let lastError = "unknown error";
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  let lastStatus: number | null = null;
+  // Checked once, outside the loop: a refusal is a precondition, not a failed
+  // attempt, and status null would otherwise read as a retryable network error.
+  const blocked = await resolvesToBlockedAddress(url);
+  if (blocked) lastError = "refusing to deliver to a private or link-local address";
+
+  for (let attempt = 0; !blocked && attempt <= retries; attempt++) {
     const result = await attemptOnce(url, headers, body);
     if (result.ok) {
       await db.update(notificationChannels).set({
@@ -215,6 +222,7 @@ async function deliverOne(db: Db, channel: Channel, event: AppEvent, opts: Deliv
       return;
     }
     lastError = result.message;
+    lastStatus = result.status;
     if (attempt < retries && shouldRetry(result.status)) {
       const delay = baseDelayMs * Math.pow(4, attempt);
       await new Promise((r) => setTimeout(r, delay));
@@ -223,11 +231,14 @@ async function deliverOne(db: Db, channel: Channel, event: AppEvent, opts: Deliv
     break;
   }
 
-  const nextCount = channel.failureCount + 1;
+  // A refused redirect or address is a standing misconfiguration, not
+  // flakiness: advancing the breaker would silently disable a working channel.
+  const configRefusal = blocked || (lastStatus !== null && lastStatus >= 300 && lastStatus < 400);
+  const nextCount = configRefusal ? channel.failureCount : channel.failureCount + 1;
   await db.update(notificationChannels).set({
     failureCount: nextCount,
     lastErrorAt:  new Date(),
     lastError:    lastError,
-    ...(nextCount >= FAILURE_THRESHOLD ? { disabledAt: new Date() } : {}),
+    ...(!configRefusal && nextCount >= FAILURE_THRESHOLD ? { disabledAt: new Date() } : {}),
   }).where(eq(notificationChannels.id, channel.id));
 }

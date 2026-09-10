@@ -26,6 +26,15 @@ describe("outboundUrlProblem", () => {
     ["v6 unique-local",      "https://[fd00::1]/x"],
     ["v4-mapped loopback",   "https://[::ffff:127.0.0.1]/x"],
     ["v4-mapped metadata",   "https://[::ffff:169.254.169.254]/x"],
+    ["localhost, trailing dot", "https://localhost./x"],
+    ["v6 fe80 upper range",  "https://[febf::1]/x"],
+    ["v6 multicast",         "https://[ff02::1]/x"],
+    ["v6 ::a.b.c.d form",    "https://[::127.0.0.1]/x"],
+    ["v6 mapped, 3-group",   "https://[::ffff:0:127.0.0.1]/x"],
+    ["v6 NAT64 metadata",    "https://[64:ff9b::169.254.169.254]/x"],
+    ["v6 6to4",              "https://[2002:7f00:1::1]/x"],
+    ["v6 site-local",        "https://[fec0::1]/x"],
+    ["localhost, two dots",  "https://localhost../x"],
   ])("refuses %s", (_label, url) => {
     expect(outboundUrlProblem(url)).not.toBeNull();
   });

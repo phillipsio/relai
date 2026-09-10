@@ -312,7 +312,17 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       }
     }
 
-    await ensureSubscription(db, body.data.createdBy, "task", task.id);
+    // createdBy is unconstrained on the agentless paths, so it is honoured only
+    // when it names an agent in this repo. A subscription is the fan-out grant.
+    let subscriber: string | null = request.agent?.id ?? null;
+    if (!subscriber) {
+      const [author] = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.id, body.data.createdBy), eq(agents.repoId, body.data.repoId)));
+      subscriber = author?.id ?? null;
+    }
+    if (subscriber) await ensureSubscription(db, subscriber, "task", task.id);
 
     if (status === "proposed") {
       // Notify + auto-subscribe every orchestrator in the project so the

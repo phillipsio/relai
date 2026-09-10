@@ -615,14 +615,13 @@ describe("owner-scoped notification channels", () => {
   });
 });
 
-// Repo membership is not authority over a peer's notification channel. A
-// worker that can PUT another agent's channel repoints its delivery URL and,
-// with regenerateSecret, is handed the HMAC secret in the response — enough to
-// receive that agent's messages and to forge signatures for them.
+// PUT repoints the delivery URL and, with regenerateSecret, returns the HMAC
+// secret, so repo membership alone was delivery takeover.
 describe("a worker cannot take over a peer's notification channel", () => {
   let victimChannelId: string;
   let workerToken: string;
   let victimToken: string;
+  let victimAgentId: string;
 
   beforeAll(async () => {
     const w = await app.inject({
@@ -635,13 +634,13 @@ describe("a worker cannot take over a peer's notification channel", () => {
       method: "POST", url: "/agents", headers: ADMIN,
       body: JSON.stringify({ repoId, name: "nch-victim", role: "worker" }),
     });
-    const victimId = v.json().data.id;
+    victimAgentId = v.json().data.id;
     victimToken = v.json().token;
 
     const ch = await app.inject({
       method: "POST", url: "/notification-channels", headers: ADMIN,
       body: JSON.stringify({
-        agentId: victimId, kind: "webhook",
+        agentId: victimAgentId, kind: "webhook",
         config: { url: "https://victim.test/hook" },
       }),
     });
@@ -665,14 +664,11 @@ describe("a worker cannot take over a peer's notification channel", () => {
   });
 
   it("refuses a worker deleting another agent's channel", async () => {
-    // Its own channel, so that if the gate regresses and the delete succeeds,
-    // the failure stays local instead of destroying the fixture the positive
-    // cases below depend on.
-    const victimId = (await app.inject({ method: "GET", url: "/agents", headers: ADMIN }))
-      .json().data.find((a: { name: string }) => a.name === "nch-victim").id;
+    // Its own channel: a regressed gate then fails here rather than destroying
+    // the fixture the positive cases need.
     const doomed = await app.inject({
       method: "POST", url: "/notification-channels", headers: ADMIN,
-      body: JSON.stringify({ agentId: victimId, kind: "webhook", config: { url: "https://victim.test/doomed" } }),
+      body: JSON.stringify({ agentId: victimAgentId, kind: "webhook", config: { url: "https://victim.test/doomed" } }),
     });
     const res = await app.inject({
       method: "DELETE", url: `/notification-channels/${doomed.json().data.id}`, headers: asAgent(workerToken),
@@ -681,14 +677,9 @@ describe("a worker cannot take over a peer's notification channel", () => {
   });
 
   it("refuses a worker creating a channel against another agent's id", async () => {
-    const victim = await app.inject({
-      method: "GET", url: "/agents", headers: ADMIN,
-    });
-    const victimId = victim.json().data.find((a: { name: string }) => a.name === "nch-victim").id;
-
     const res = await app.inject({
       method: "POST", url: "/notification-channels", headers: asAgent(workerToken),
-      body: JSON.stringify({ agentId: victimId, kind: "webhook", config: { url: "https://attacker.test/hook" } }),
+      body: JSON.stringify({ agentId: victimAgentId, kind: "webhook", config: { url: "https://attacker.test/hook" } }),
     });
     expect(res.statusCode).toBe(404);
   });
@@ -773,9 +764,8 @@ describe("a channel cannot point the API host at the private network", () => {
   });
 });
 
-// The schema stops a private URL going in. This is the other half: a hostname
-// that resolved publicly when the channel was created can resolve somewhere
-// private later, so delivery re-checks rather than trusting the stored row.
+// The other half of the schema guard: a name can resolve privately later, so
+// delivery re-checks rather than trusting the stored row.
 describe("delivery refuses a channel whose hostname resolves privately", () => {
   const fetchMock = vi.fn();
   let originalFetch: typeof fetch;
@@ -818,8 +808,11 @@ describe("delivery refuses a channel whose hostname resolves privately", () => {
     await db.delete(notificationChannels).where(eq(notificationChannels.id, rebindChannelId));
   });
 
-  it("does not fetch, and records why", async () => {
+  it("does not fetch, records why, and does not retry", async () => {
     const db = createDb(DB_URL);
+    // retries:2 on purpose: a refusal used to read as a transient network
+    // error and sleep between attempts, which retries:0 could never catch.
+    const started = Date.now();
     await deliver(db, {
       id:         "evt_rebind_1",
       kind:       "message.posted",
@@ -828,10 +821,15 @@ describe("delivery refuses a channel whose hostname resolves privately", () => {
       targetId:   rebindThreadId,
       payload:    { hello: "world" },
       createdAt:  new Date().toISOString(),
-    }, { retries: 0 });
+    }, { retries: 2, baseDelayMs: 50 });
+    const elapsed = Date.now() - started;
 
     expect(fetchMock).not.toHaveBeenCalled();
+    // 50 * 4^0 + 50 * 4^1 = 250ms of mandated sleep if it retries at all.
+    expect(elapsed).toBeLessThan(200);
     const [after] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, rebindChannelId));
     expect(after.lastError ?? "").toMatch(/private or link-local/);
+    // A refused address stays visible rather than tripping the breaker.
+    expect(after.failureCount).toBe(0);
   });
 });

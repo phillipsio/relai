@@ -131,23 +131,25 @@ export const repoRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const [project] = await db.select().from(repos).where(eq(repos.id, id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 
-    // Cascade manually in dependency order
-    const threadIds = (await db.select({ id: threads.id }).from(threads).where(eq(threads.repoId, id))).map((t) => t.id);
-    if (threadIds.length > 0) await db.delete(messages).where(inArray(messages.threadId, threadIds));
-    await db.delete(threads).where(eq(threads.repoId, id));
+    // One transaction, same reason as DELETE /agents/:id: a partial cascade
+    // leaves the repo alive with its tasks and threads already gone.
+    await db.transaction(async (tx) => {
+      const threadIds = (await tx.select({ id: threads.id }).from(threads).where(eq(threads.repoId, id))).map((t) => t.id);
+      if (threadIds.length > 0) await tx.delete(messages).where(inArray(messages.threadId, threadIds));
+      await tx.delete(threads).where(eq(threads.repoId, id));
 
-    const taskIds = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.repoId, id))).map((t) => t.id);
-    if (taskIds.length > 0) {
-      await db.delete(routingLog).where(inArray(routingLog.taskId, taskIds));
-      await db.delete(verificationLog).where(inArray(verificationLog.taskId, taskIds));
-    }
-    await db.delete(tasks).where(eq(tasks.repoId, id));
+      const taskIds = (await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.repoId, id))).map((t) => t.id);
+      if (taskIds.length > 0) {
+        await tx.delete(routingLog).where(inArray(routingLog.taskId, taskIds));
+        await tx.delete(verificationLog).where(inArray(verificationLog.taskId, taskIds));
+      }
+      await tx.delete(tasks).where(eq(tasks.repoId, id));
 
-    // invites.createdBy → agents.id has no FK cascade, so invites must be cleared
-    // before agents to avoid blocking the agent delete.
-    await db.delete(invites).where(eq(invites.repoId, id));
-    await db.delete(agents).where(eq(agents.repoId, id));
-    await db.delete(repos).where(eq(repos.id, id));
+      // invites.createdBy has no FK cascade, so invites go before agents.
+      await tx.delete(invites).where(eq(invites.repoId, id));
+      await tx.delete(agents).where(eq(agents.repoId, id));
+      await tx.delete(repos).where(eq(repos.id, id));
+    });
 
     return reply.status(204).send();
   });

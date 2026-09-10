@@ -324,10 +324,8 @@ describe("a worker cannot revoke another agent's token", () => {
   });
 });
 
-// The gate on DELETE /agents/:id is one route wide. DELETE /repos/:id removes
-// every agent in the repo, so a worker refused at the first reaches the same
-// orchestrator lockout at the second. PUT is the quieter half: defaultAssignee
-// was writable by any member.
+// DELETE /repos/:id removes every agent, so it reached the same lockout the
+// agent gate blocks. PUT left defaultAssignee writable by any member.
 describe("a worker cannot administer the repo out from under the agent gate", () => {
   let wToken: string;
   let oToken: string;
@@ -517,9 +515,8 @@ describe("a worker cannot forge a peer's liveness or silence its events", () => 
   });
 });
 
-// Six FKs point at agents.id with NO ACTION, so deregistering an agent that
-// had done anything used to fail on a constraint violation, and the default
-// error handler returned the failing SQL and its bound parameters with it.
+// Deregistering an agent with history failed on a FK, and the default error
+// handler returned the failing SQL and its parameters with it.
 describe("deregistering an agent with history succeeds and leaks nothing", () => {
   let histRepoId: string;
   let doomedId: string;
@@ -580,8 +577,7 @@ describe("deregistering an agent with history succeeds and leaks nothing", () =>
 
   it("returns a generic 500 body, not the failing SQL, when a query does blow up", async () => {
     // Valid enough to clear Zod and reach the insert, then violates the FK on
-    // tasks.assigned_to. Before the error handler, drizzle's message carried
-    // the INSERT and its bound parameters and Fastify copied it to the client.
+    // tasks.assigned_to, which is what put drizzle's SQL in the response.
     const author = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
       body: JSON.stringify({ repoId: histRepoId, name: "leak-author", role: "worker" }),
@@ -597,5 +593,55 @@ describe("deregistering an agent with history succeeds and leaks nothing", () =>
     expect(res.json()).toEqual({ error: { code: "internal_error", message: "Internal Server Error" } });
     expect(res.body).not.toMatch(/insert into/i);
     expect(res.body).not.toMatch(/params:/i);
+  });
+});
+
+// Two columns hold an agent id with no FK, so they break after the delete
+// rather than during it, and the error handler renders that opaque.
+describe("deregistering clears the agent ids that have no foreign key", () => {
+  let danglingRepoId: string;
+
+  afterAll(async () => {
+    if (danglingRepoId) await app.inject({ method: "DELETE", url: `/repos/${danglingRepoId}`, headers: ADMIN });
+  });
+
+  it("clears repos.defaultAssignee, so task creation still works after", async () => {
+    const r = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ dangling-assignee" }),
+    });
+    danglingRepoId = r.json().data.id;
+
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: danglingRepoId, name: "da-orch", role: "orchestrator" }),
+    });
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: danglingRepoId, name: "da-worker", role: "worker" }),
+    });
+    const workerId = w.json().data.id;
+
+    const put = await app.inject({
+      method: "PUT", url: `/repos/${danglingRepoId}`, headers: asAgent(o.json().token),
+      body: JSON.stringify({ defaultAssignee: workerId }),
+    });
+    expect(put.statusCode).toBe(200);
+
+    const del = await app.inject({ method: "DELETE", url: `/agents/${workerId}`, headers: ADMIN });
+    expect(del.statusCode).toBe(204);
+
+    const repo = await app.inject({ method: "GET", url: `/repos/${danglingRepoId}`, headers: ADMIN });
+    expect(repo.json().data.defaultAssignee).toBeNull();
+
+    // The payoff: without the clear this insert violates the FK and 500s.
+    const task = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({
+        repoId: danglingRepoId, createdBy: o.json().data.id,
+        title: "after the deregister", description: "x",
+      }),
+    });
+    expect(task.statusCode).toBe(201);
   });
 });

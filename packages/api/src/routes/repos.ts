@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq, inArray, and } from "drizzle-orm";
 import { repos, agents, threads, messages, tasks, routingLog, verificationLog, invites } from "@getrelai/db";
 import { newId } from "../lib/id.js";
-import { assertRepoAccess, scopedRepoFilter } from "../lib/ownership.js";
+import { assertRepoAccess, callerMayAdministerRepo, scopedRepoFilter } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
 
 // repoUrl feeds straight into `git ls-remote <repoUrl>` (the git_pushed
@@ -99,9 +99,11 @@ export const repoRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const access = await assertRepoAccess(request, db, request.params.id);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
-    if ("repoUrl" in body.data && request.agent && request.agent.role !== "orchestrator") {
+    // Was scoped to repoUrl alone, which left defaultAssignee writable by any
+    // member — a worker could point every unassigned task at itself.
+    if (!callerMayAdministerRepo(request)) {
       return reply.status(403).send({
-        error: { code: "forbidden", message: "Only orchestrator agents may change repoUrl." },
+        error: { code: "forbidden", message: "Only orchestrator agents may change a repo." },
       });
     }
 
@@ -119,6 +121,13 @@ export const repoRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const { id } = request.params;
     const access = await assertRepoAccess(request, db, id);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
+    // This deletes every agent in the repo, so it reaches the orchestrator
+    // lockout that the gate on DELETE /agents/:id exists to prevent.
+    if (!callerMayAdministerRepo(request)) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only orchestrator agents may delete a repo." },
+      });
+    }
     const [project] = await db.select().from(repos).where(eq(repos.id, id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 

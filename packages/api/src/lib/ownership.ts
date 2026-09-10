@@ -55,6 +55,14 @@ export function callerMayActOnAgent(request: FastifyRequest, targetAgentId: stri
   return request.agent.id === targetAgentId || request.agent.role === "orchestrator";
 }
 
+// Callers must already be repo-scoped (assertRepoAccess). Reshaping or
+// deleting a repo is an orchestrator act; a worker holding membership is not
+// enough, since DELETE removes every agent in it.
+export function callerMayAdministerRepo(request: FastifyRequest): boolean {
+  if (!request.agent) return true;
+  return request.agent.role === "orchestrator";
+}
+
 // Convenience for routes that scope by agent (subscriptions, notification
 // channels, tokens). Resolves the agent's project and reuses
 // `assertRepoAccess`. Returns 404 to avoid leaking agent existence across

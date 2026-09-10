@@ -323,3 +323,108 @@ describe("a worker cannot revoke another agent's token", () => {
     expect(orchRevoke.statusCode).toBe(204);
   });
 });
+
+// The gate on DELETE /agents/:id is one route wide. DELETE /repos/:id removes
+// every agent in the repo, so a worker refused at the first reaches the same
+// orchestrator lockout at the second. PUT is the quieter half: defaultAssignee
+// was writable by any member.
+describe("a worker cannot administer the repo out from under the agent gate", () => {
+  let wToken: string;
+  let oToken: string;
+  let victimRepoId: string;
+
+  beforeAll(async () => {
+    const r = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ repo-admin-gate" }),
+    });
+    victimRepoId = r.json().data.id;
+
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: victimRepoId, name: "ra-orch", role: "orchestrator" }),
+    });
+    oToken = o.json().token;
+
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: victimRepoId, name: "ra-worker", role: "worker" }),
+    });
+    wToken = w.json().token;
+  });
+
+  afterAll(async () => {
+    if (victimRepoId) await app.inject({ method: "DELETE", url: `/repos/${victimRepoId}`, headers: ADMIN });
+  });
+
+  it("refuses a worker deleting its own repo, so the orchestrator survives", async () => {
+    // Its own repo: if the gate regresses the delete succeeds, and reusing the
+    // shared fixture would 404 every later case instead of failing just this one.
+    const r = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ repo-admin-gate-del" }),
+    });
+    const rid = r.json().data.id;
+    const o = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: rid, name: "rad-orch", role: "orchestrator" }),
+    });
+    const w = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: rid, name: "rad-worker", role: "worker" }),
+    });
+
+    const blocked = await app.inject({
+      method: "DELETE", url: `/agents/${o.json().data.id}`, headers: asAgent(w.json().token),
+    });
+    expect(blocked.statusCode).toBe(403);
+
+    const res = await app.inject({
+      method: "DELETE", url: `/repos/${rid}`, headers: asAgent(w.json().token),
+    });
+    expect(res.statusCode).toBe(403);
+
+    // the orchestrator's token still authenticates
+    const alive = await app.inject({ method: "GET", url: "/agents", headers: asAgent(o.json().token) });
+    expect(alive.statusCode).toBe(200);
+
+    await app.inject({ method: "DELETE", url: `/repos/${rid}`, headers: ADMIN });
+  });
+
+  it("refuses a worker repointing defaultAssignee at itself", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/repos/${victimRepoId}`, headers: asAgent(wToken),
+      body: JSON.stringify({ defaultAssignee: "ra-worker" }),
+    });
+    expect(res.statusCode).toBe(403);
+
+    const row = await app.inject({ method: "GET", url: `/repos/${victimRepoId}`, headers: ADMIN });
+    expect(row.json().data.defaultAssignee).toBeNull();
+  });
+
+  it("still lets an orchestrator change the repo", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/repos/${victimRepoId}`, headers: asAgent(oToken),
+      body: JSON.stringify({ context: "set by the orchestrator" }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.context).toBe("set by the orchestrator");
+  });
+
+  it("still lets the admin path change and delete a repo", async () => {
+    const throwaway = await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ repo-admin-gate-2" }),
+    });
+    const tid = throwaway.json().data.id;
+
+    const put = await app.inject({
+      method: "PUT", url: `/repos/${tid}`, headers: ADMIN,
+      body: JSON.stringify({ context: "admin" }),
+    });
+    expect(put.statusCode).toBe(200);
+
+    const del = await app.inject({ method: "DELETE", url: `/repos/${tid}`, headers: ADMIN });
+    expect(del.statusCode).toBe(204);
+  });
+});

@@ -188,9 +188,8 @@ describe("the shell-predicate gate is sound once roles cannot be self-granted", 
   });
 });
 
-// The premise the block above depends on and never checked: a worker cannot
-// acquire an orchestrator TOKEN either. POST /agents was gated; the rotate
-// route beside it, and DELETE, were not.
+// The premise the block above assumed and never checked: POST /agents was
+// gated, the rotate and delete routes beside it were not.
 describe("a worker cannot mint or destroy another agent's token", () => {
   let victimOrchId: string;
 
@@ -254,6 +253,22 @@ describe("a worker cannot mint or destroy another agent's token", () => {
       method: "DELETE", url: `/agents/${victimOrchId}`, headers: asAgent(orchToken),
     });
     expect(del.statusCode).toBe(204);
+  });
+
+  it("still lets the admin path delete an agent", async () => {
+    const a = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "admin-delete-target", role: "worker" }),
+    });
+    const targetId = a.json().data.id;
+
+    const del = await app.inject({
+      method: "DELETE", url: `/agents/${targetId}`, headers: ADMIN,
+    });
+    expect(del.statusCode).toBe(204);
+
+    const gone = await app.inject({ method: "GET", url: `/agents/${targetId}`, headers: ADMIN });
+    expect(gone.statusCode).toBe(404);
   });
 });
 

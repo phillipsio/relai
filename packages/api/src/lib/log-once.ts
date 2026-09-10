@@ -12,9 +12,3 @@ export function logOnce(key: string, message: string): void {
 export function resetLogOnce(key: string): void {
   logged.delete(key);
 }
-
-// Tests only: the set is process-global, so cases that assert on log volume
-// would otherwise depend on which ran first.
-export function clearLogOnceState(): void {
-  logged.clear();
-}

@@ -4,6 +4,13 @@ import { agents, tasks, repos, routingLog, messages, verificationLog } from "@ge
 import type { Db } from "@getrelai/db";
 import { newId } from "../id.js";
 import { logOnce, resetLogOnce } from "../log-once.js";
+
+// Both reasons a task stops routing. Cleared together, so a task that becomes
+// routable again reports the next occurrence of either.
+export function resetRouteLogs(taskId: string): void {
+  resetLogOnce(`route-no-key:${taskId}`);
+  resetLogOnce(`route-unroutable:${taskId}`);
+}
 import { publish, ensureSubscription } from "../events.js";
 import { runVerification } from "../verify.js";
 import type { VerificationResult } from "../verify.js";
@@ -98,11 +105,14 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
     }
 
     if (result.agentId === "UNROUTABLE") {
-      console.warn(`[scheduler] Task ${task.id} unroutable: ${result.rationale}`);
+      logOnce(
+        `route-unroutable:${task.id}`,
+        `[scheduler] Task ${task.id} unroutable: ${result.rationale}`,
+      );
       continue;
     }
 
-    resetLogOnce(`route-no-key:${task.id}`);
+    resetRouteLogs(task.id);
     await db.update(tasks).set({ status: "assigned", assignedTo: result.agentId }).where(eq(tasks.id, task.id));
     await db.insert(routingLog).values({
       id: newId("route"),
@@ -303,7 +313,7 @@ export async function reapStalledTasks(db: Db, repoId: string): Promise<void> {
     }
 
     console.warn(`[scheduler] re-queueing stalled task ${task.id} (release ${released + 1}) — was assigned to ${task.assignedTo ?? "nobody"}`);
-    resetLogOnce(`route-no-key:${task.id}`);
+    resetRouteLogs(task.id);
 
     await db.update(tasks)
       .set({

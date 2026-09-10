@@ -6,7 +6,7 @@ import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import { assertRepoAccess } from "../lib/ownership.js";
 import { verifyTask } from "../lib/router/scheduler.js";
-import { resetLogOnce } from "../lib/log-once.js";
+import { resetRouteLogs } from "../lib/router/scheduler.js";
 import { clip, clipMetadata } from "../lib/payload.js";
 import type { Db } from "@getrelai/db";
 import type { TaskStatus } from "@getrelai/types";
@@ -519,7 +519,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // Manual assignment is the normal remedy for a task the scheduler could
     // not route, so it must clear the same key the scheduler set.
     if (updates.assignedTo && updates.assignedTo !== "@auto") {
-      resetLogOnce(`route-no-key:${request.params.id}`);
+      resetRouteLogs(request.params.id);
     }
     let reviewerToNotify: string | null = null;
     if (updates.status === "completed") {

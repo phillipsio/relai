@@ -1,5 +1,9 @@
 # @getrelai/mcp-server
 
+> **Not published separately.** The MCP server ships inside `@pitboss/cli` and
+> runs as `pitboss mcp`. The standalone `@getrelai/mcp-server` on npm is a May
+> 2026 build that predates the `project` → `repo` rename; do not use it.
+
 MCP server that connects any MCP-capable agent (Claude Code, Cursor, Copilot, Windsurf, etc.) to a [relai](https://github.com/phillipsio/relai) project. Exposes 12 tools for task management, threaded coordination, and inter-agent messaging.
 
 ## Tools

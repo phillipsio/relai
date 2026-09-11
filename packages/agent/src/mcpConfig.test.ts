@@ -25,7 +25,7 @@ describe("mcpConfig", () => {
       dir,
       { API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_1", REPO_ID: "repo_1" },
       "npx",
-      ["@getrelai/mcp-server"],
+      ["-y", "@pitboss/cli", "mcp"],
     );
     const env = readRelaiEnv(dir);
     expect(env).toEqual({ API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_1", REPO_ID: "repo_1" });
@@ -40,7 +40,7 @@ describe("mcpConfig", () => {
       dir,
       { API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_1", REPO_ID: "repo_1" },
       "npx",
-      ["@getrelai/mcp-server"],
+      ["-y", "@pitboss/cli", "mcp"],
     );
     const json = JSON.parse(readFileSync(join(dir, ".mcp.json"), "utf8"));
     expect(json.mcpServers.other).toEqual({ command: "foo", args: [] });
@@ -67,7 +67,7 @@ describe("mcpConfig", () => {
       dir,
       { API_URL: "http://localhost:3010", API_SECRET: "tok", AGENT_ID: "agent_1", REPO_ID: "repo_1" },
       "npx",
-      ["@getrelai/mcp-server"],
+      ["-y", "@pitboss/cli", "mcp"],
     );
     const mode = statSync(join(dir, ".mcp.json")).mode & 0o777;
     expect(mode).toBe(0o600);

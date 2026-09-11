@@ -5,7 +5,8 @@ import { readdirSync, chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const PKG = dirname(fileURLToPath(import.meta.url));
+const REPO = dirname(dirname(PKG));
 const STORE = join(REPO, "node_modules/.pnpm");
 const newest = readdirSync(STORE)
   .filter((d) => /^esbuild@\d/.test(d))
@@ -27,9 +28,9 @@ const BANNER = [
 
 for (const [entry, out] of [["src/index.ts", "dist/cli.js"], ["../mcp-server/src/index.ts", "dist/mcp.js"]]) {
   execFileSync(ESBUILD, [
-    entry, "--bundle", "--platform=node", "--target=node20", "--format=esm",
+    entry, "--bundle", "--platform=node", "--target=node20.12", "--format=esm",
     `--outfile=${out}`, `--banner:js=${BANNER}`, "--log-level=warning",
-  ], { cwd: dirname(fileURLToPath(import.meta.url)), stdio: "inherit" });
-  chmodSync(out, 0o755);
+  ], { cwd: PKG, stdio: "inherit" });
+  chmodSync(join(PKG, out), 0o755);
 }
 console.log(`built dist/cli.js and dist/mcp.js with ${newest}`);

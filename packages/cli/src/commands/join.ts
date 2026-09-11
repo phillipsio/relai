@@ -6,9 +6,10 @@ import { homedir } from "node:os";
 import chalk from "chalk";
 import { detectRuntimes, mergeMcpServer, runtimeTargets, RUNTIMES, type WorkerType } from "../lib/runtimes.js";
 import { writeConfig, configPath as cliConfigPath } from "../config.js";
+import { MCP_SERVER_ENTRY } from "../lib/mcp-entry.js";
 
 const DEFAULT_API = "https://api.pitboss.dev";
-const MCP_PACKAGE = "@pitboss/cli";
+
 
 interface StartResponse {
   data: { userCode: string; verificationUri: string; expiresIn: number; interval: number };
@@ -213,7 +214,7 @@ async function run(opts: { api?: string }) {
           writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
           wroteCliConfig = invite.name;
         } else {
-          writeMcpConfig(dest, { command: "npx", args: ["-y", MCP_PACKAGE, "mcp"], env });
+          writeMcpConfig(dest, { ...MCP_SERVER_ENTRY, env });
         }
         written.push(dest);
         excludeIfUntracked(root, dest);

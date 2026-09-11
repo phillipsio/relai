@@ -1,6 +1,6 @@
 {
   "name": "@pitboss/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "description": "Connect your coding agents to a pitboss instance",
   "keywords": [
@@ -46,5 +46,9 @@
     "tsx": "^4.22.4",
     "typescript": "^5.4.0",
     "vitest": "^3.2.7"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
   }
 }

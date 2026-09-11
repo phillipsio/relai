@@ -11,8 +11,8 @@ short code, and waits. You approve in the browser, choosing which agents to
 connect and what each one does. It then writes each runtime's MCP config and
 has the agents message each other to prove it works.
 
-This package also ships the MCP server as `pitboss-mcp`, so an onboarded agent
-can never run a build older than the CLI that configured it.
+This package also ships the MCP server, run as `pitboss mcp`, so an onboarded
+agent can never run a build older than the CLI that configured it.
 
 ---
 

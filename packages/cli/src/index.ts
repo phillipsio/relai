@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand, taskCommitCommand, taskArchiveCommand } from "./commands/tasks.js";
 import { reposListCommand, repoShowCommand, repoContextShowCommand, repoContextEditCommand } from "./commands/repos.js";
@@ -15,12 +15,14 @@ import { repoInviteCommand, loginCommand } from "./commands/invite.js";
 import { joinCommand } from "./commands/join.js";
 import { mcpCommand } from "./commands/mcp.js";
 import { watchCommand } from "./commands/watch.js";
+import { fileURLToPath } from "node:url";
+const __here = dirname(fileURLToPath(import.meta.url));
 
 // Read the version from package.json so `relai --version` always matches the
 // published package (dist/index.js → ../package.json; same shape when installed
 // under node_modules).
 const pkg = JSON.parse(
-  readFileSync(join(__dirname, "../package.json"), "utf8"),
+  readFileSync(join(__here, "../package.json"), "utf8"),
 ) as { version: string };
 
 const program = new Command();

@@ -62,7 +62,7 @@ export async function initCommand(opts: InitOptions): Promise<void> {
     gitRoot,
     { API_URL: opts.apiUrl, API_SECRET: token, AGENT_ID: agent.id, REPO_ID: agent.repoId, SPECIALIZATION: opts.specialization },
     "npx",
-    ["@getrelai/mcp-server"],
+    ["-y", "@pitboss/cli", "mcp"],
   );
 
   console.log(`relai-agent: registered "${agent.name}" (${agent.id}) for repo ${agent.repoId}`);

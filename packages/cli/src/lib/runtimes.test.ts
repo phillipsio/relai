@@ -3,7 +3,7 @@ import { mergeMcpServer, runtimeTargets, RUNTIMES } from "./runtimes.js";
 
 const ENTRY = {
   command: "npx",
-  args: ["-y", "@getrelai/mcp-server"],
+  args: ["-y", "@pitboss/cli", "mcp"],
   env: { API_URL: "https://api.relai.dev", API_SECRET: "aio_x", AGENT_ID: "agent_1", REPO_ID: "repo_1" },
 };
 

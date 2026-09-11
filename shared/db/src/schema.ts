@@ -118,6 +118,33 @@ export const invites = pgTable("invites", {
   acceptedAgentId:        text("accepted_agent_id").references(() => agents.id),
   revokedAt:              timestamp("revoked_at",  { withTimezone: true }),
   createdAt:              timestamp("created_at",  { withTimezone: true }).defaultNow().notNull(),
+  // One approval mints one invite per agent ticked, so the link lives here
+  // rather than as a single id on the authorization.
+  deviceAuthorizationId:  text("device_authorization_id").references(() => deviceAuthorizations.id, { onDelete: "cascade" }),
+});
+
+// ── Device authorizations ─────────────────────────────────────────────────────
+
+export const deviceAuthStatusEnum = pgEnum("device_auth_status", ["pending", "approved", "denied", "expired"]);
+
+export const deviceAuthorizations = pgTable("device_authorizations", {
+  id:             text("id").primaryKey(),
+  // Unique because the code-entry form looks rows up by it.
+  userCode:       text("user_code").notNull().unique(),
+  deviceCodeHash: text("device_code_hash").notNull().unique(),
+  status:         deviceAuthStatusEnum("status").notNull().default("pending"),
+  // What the CLI detected. Shown to the human, never trusted to grant anything.
+  proposed:       jsonb("proposed").default({}).notNull(),
+  // What the human ticked. Invites are minted from this at poll time, so a
+  // code never has to be stored in the clear.
+  granted:        jsonb("granted"),
+  repoId:         text("repo_id").references(() => repos.id, { onDelete: "cascade" }),
+  approvedBy:     text("approved_by").references(() => users.id, { onDelete: "cascade" }),
+  expiresAt:      timestamp("expires_at",     { withTimezone: true }).notNull(),
+  lastPolledAt:   timestamp("last_polled_at", { withTimezone: true }),
+  // Set by the first successful poll. Present means the codes are already out.
+  consumedAt:     timestamp("consumed_at",    { withTimezone: true }),
+  createdAt:      timestamp("created_at",     { withTimezone: true }).defaultNow().notNull(),
 });
 
 // ── Threads ───────────────────────────────────────────────────────────────────

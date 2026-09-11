@@ -37,6 +37,26 @@ export function runtimeTargets(workerType: WorkerType, { home, repo }: Paths): s
   }
 }
 
+// Which agent is running THIS process, from its own environment. Dotfiles only
+// say a runtime is installed, which is why join used to offer an agent to every
+// tool the machine had ever seen. Returns null when nothing identifies itself;
+// the human picks on the approval screen rather than the CLI guessing.
+const HOST_MARKERS: [WorkerType, string[]][] = [
+  ["claude",   ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"]],
+  ["cursor",   ["CURSOR_TRACE_ID", "CURSOR_SESSION_ID"]],
+  ["windsurf", ["WINDSURF_SESSION_ID", "CODEIUM_SESSION_ID"]],
+  ["gemini",   ["GEMINI_CLI", "GEMINI_SESSION_ID"]],
+  ["gpt",      ["CODEX_SESSION_ID", "CODEX_SANDBOX"]],
+  ["copilot",  ["COPILOT_AGENT_ID"]],
+];
+
+export function detectHostRuntime(env: NodeJS.ProcessEnv = process.env): WorkerType | null {
+  for (const [worker, keys] of HOST_MARKERS) {
+    if (keys.some((k) => env[k])) return worker;
+  }
+  return null;
+}
+
 export function detectRuntimes(paths: Paths): WorkerType[] {
   return RUNTIMES.filter((r) => r.markers(paths).some((m) => existsSync(m))).map((r) => r.workerType);
 }

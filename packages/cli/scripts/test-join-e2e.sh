@@ -54,7 +54,7 @@ git -C "$WORK" remote add origin "git@github.com:someone/e2e-widget.git"
 printf '%s\n' '{"mcpServers":{"playwright":{"command":"npx","args":["playwright"]}},"theme":"dark"}' > "$WORK/.mcp.json"
 
 export HOME="$SANDBOX/home"; mkdir -p "$HOME"
-( cd "$WORK" && npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join.log" 2>&1 ) &
+( cd "$WORK" && CLAUDECODE=1 npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join.log" 2>&1 ) &
 JOIN_PID=$!
 
 CODE=""
@@ -64,7 +64,7 @@ for _ in $(seq 1 30); do
 done
 [ -n "$CODE" ] && check "join prints a typeable code" ok || check "join prints a typeable code" no "$(tail -3 "$SANDBOX/join.log")"
 grep -q "e2e-widget" "$SANDBOX/join.log" && check "join names the repo from the git remote" ok || check "join names the repo from the git remote" no
-grep -q "cursor" "$SANDBOX/join.log" && check "join detects the cursor runtime" ok || check "join detects the cursor runtime" no
+grep -qE "Agent +claude" "$SANDBOX/join.log" && check "join names the agent running it, not everything installed" ok || check "join names the agent running it, not everything installed" no "$(grep -i agent "$SANDBOX/join.log" | head -1)"
 
 APPROVE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/device/approve" \
   -H "Authorization: Bearer $ADMIN" -H "X-Owner-Id: $OWNER" -H 'Content-Type: application/json' \
@@ -105,7 +105,7 @@ grep -q "^\.mcp\.json$" "$WORK/.git/info/exclude" 2>/dev/null && check "repo con
 git -C "$WORK" add -f .mcp.json >/dev/null 2>&1 || true
 git -C "$WORK" -c user.email=e2e@test -c user.name=e2e commit -qm "track mcp config" >/dev/null 2>&1 || true
 BEFORE=$(md5 -q "$WORK/.mcp.json" 2>/dev/null || md5sum "$WORK/.mcp.json" | cut -d" " -f1)
-( cd "$WORK" && npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join2.log" 2>&1 ) &
+( cd "$WORK" && CLAUDECODE=1 npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join2.log" 2>&1 ) &
 JOIN2_PID=$!
 CODE2=""
 for _ in $(seq 1 30); do

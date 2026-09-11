@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
-import { detectRuntimes, mergeMcpServer, runtimeTargets, RUNTIMES, type WorkerType } from "../lib/runtimes.js";
+import { detectHostRuntime, detectRuntimes, mergeMcpServer, runtimeTargets, RUNTIMES, type WorkerType } from "../lib/runtimes.js";
 import { writeConfig, configPath as cliConfigPath } from "../config.js";
 import { MCP_SERVER_ENTRY } from "../lib/mcp-entry.js";
 
@@ -132,13 +132,17 @@ async function run(opts: { api?: string }) {
   const cwd = process.cwd();
   const { root, remote, repoName } = describeRepo(cwd);
   const home = homedir();
-  const runtimes = detectRuntimes({ home, repo: root });
+  const host = detectHostRuntime();
+  const installed = detectRuntimes({ home, repo: root });
 
   console.log(chalk.bold("\npitboss join\n"));
   console.log(`  Repo      ${chalk.cyan(repoName)}${remote ? chalk.dim(`  (${remote})`) : ""}`);
-  console.log(`  Detected  ${runtimes.length ? runtimes.join(", ") : chalk.dim("nothing; you can still pick on the next screen")}`);
+  console.log(`  Agent     ${host ? chalk.cyan(host) : chalk.dim("unknown, pick it on the approval screen")}  ${chalk.dim("(orchestrator)")}`);
+  console.log(chalk.dim("            Add the rest later; they each want their own worktree."));
 
-  const started = await postJson(`${api}/auth/device/start`, { proposed: { repoName, remote, runtimes } });
+  const started = await postJson(`${api}/auth/device/start`, {
+    proposed: { repoName, remote, host: host ?? undefined, runtimes: installed },
+  });
   if (started.status !== 201) {
     console.error(chalk.red(started.status === 429
       ? "\n  Too many join requests from your network just now. Wait a minute and try again."
@@ -263,6 +267,10 @@ async function run(opts: { api?: string }) {
   console.log(`  agents    ${connected.map((c) => c.name).join(", ")}`);
   console.log(`  api       ${api}`);
   if (wrote.length) console.log(`  wrote     ${wrote.map((t) => t.replace(home, "~")).join("\n            ")}`);
-  console.log(chalk.yellow("\n  Restart these sessions before using pitboss."));
-  console.log(chalk.dim("  A running MCP client keeps the tool schema it got at initialize.\n"));
+  console.log(chalk.yellow("\n  Restart this session before using pitboss."));
+  console.log(chalk.dim("  A running MCP client keeps the tool schema it got at initialize."));
+  console.log(chalk.dim("\n  To add another agent:"));
+  console.log(chalk.dim(`    same machine   give it its own worktree, then: pitboss login --invite <code>`));
+  console.log(chalk.dim(`    somewhere else pitboss repo invite, then run that command there`));
+  console.log("");
 }

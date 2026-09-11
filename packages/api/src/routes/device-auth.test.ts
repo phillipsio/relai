@@ -502,6 +502,13 @@ describe("claiming a code", () => {
 });
 
 describe("POST /auth/device/start hardening", () => {
+  it("accepts the host field the CLI now reports", async () => {
+    const { deviceCode } = await start({ repoName: "r", host: "claude", runtimes: ["claude"] });
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.deviceCodeHash, hashSecret(deviceCode)));
+    expect((row.proposed as { host?: string }).host).toBe("claude");
+  });
+
   it("refuses a proposed payload with unknown keys, so it cannot be used as storage", async () => {
     const res = await app.inject({
       method: "POST", url: "/auth/device/start", headers: JSON_ONLY,

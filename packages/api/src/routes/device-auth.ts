@@ -36,6 +36,7 @@ const startSchema = z.object({
   proposed: z.object({
     repoName: z.string().max(200).optional(),
     remote:   z.string().max(400).optional(),
+    host:     z.string().max(40).optional(),
     runtimes: z.array(z.string().max(40)).max(20).optional(),
   }).strict().default({}),
 });

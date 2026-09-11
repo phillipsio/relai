@@ -13,6 +13,7 @@ import { statusCommand } from "./commands/status.js";
 import { startCommand } from "./commands/start.js";
 import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
 import { repoInviteCommand, loginCommand } from "./commands/invite.js";
+import { joinCommand } from "./commands/join.js";
 import { watchCommand } from "./commands/watch.js";
 
 // Read the version from package.json so `relai --version` always matches the
@@ -37,6 +38,12 @@ program
   });
 
 // ── init ─────────────────────────────────────────────────────────────────────
+
+program
+  .command("join")
+  .description("Connect this machine's agents to relai: opens a code you approve in the browser")
+  .option("--api <url>", "relai API base URL (defaults to the hosted one)")
+  .action(joinCommand);
 
 program
   .command("init")

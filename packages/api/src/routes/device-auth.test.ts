@@ -354,6 +354,91 @@ describe("tenant binding", () => {
   });
 });
 
+describe("agent tokens are not the dashboard", () => {
+  // The whole tenant gate hung on request.ownerId, which only the service-admin
+  // path sets. An agent token reached every route with ownerId undefined.
+  let agentToken: string;
+
+  beforeAll(async () => {
+    const agent = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "unrelated-worker", role: "worker" }),
+    });
+    expect(agent.statusCode).toBe(201);
+    agentToken = agent.json().token;
+  });
+
+  const asAgent = () => ({ Authorization: `Bearer ${agentToken}`, "Content-Type": "application/json" });
+
+  it("refuses to show a pending request to an agent token", async () => {
+    const { data } = await start({ repoName: "victim-private-repo" });
+    const res = await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: asAgent() });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.stringify(res.json())).not.toContain("victim-private-repo");
+  });
+
+  it("refuses an approve from an agent token", async () => {
+    const { data } = await start();
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asAgent(),
+      body: JSON.stringify({ userCode: data.userCode, repoId, agents: [{ name: "x", workerType: "claude", role: "worker" }] }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("refuses a deny from an agent token, so it cannot cancel someone else's join", async () => {
+    const { data, deviceCode } = await start();
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/deny", headers: asAgent(),
+      body: JSON.stringify({ userCode: data.userCode }),
+    });
+    expect(res.statusCode).toBe(404);
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.deviceCodeHash, hashSecret(deviceCode)));
+    expect(row.status).toBe("pending");
+  });
+});
+
+describe("role escalation through approve", () => {
+  it("refuses a worker agent granting the orchestrator role", async () => {
+    const worker = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId, name: "escalator", role: "worker" }),
+    });
+    const token = worker.json().token;
+    const { data } = await start();
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ userCode: data.userCode, repoId, agents: [{ name: "pwned", workerType: "claude", role: "orchestrator" }] }),
+    });
+    // Refused as not-found now that agent tokens cannot reach this route at all.
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("claiming a code", () => {
+  const asOwner = (id: string) => ({ Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": id, "Content-Type": "application/json" });
+
+  it("survives the same owner opening the page twice at once", async () => {
+    // Four concurrent lookups used to return 200 404 404 404: the losers of the
+    // conditional update were told their own code was unknown.
+    const { data } = await start();
+    const results = await Promise.all(Array.from({ length: 4 }, () =>
+      app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: asOwner(ownerId) })));
+    expect(results.map((r) => r.statusCode)).toEqual([200, 200, 200, 200]);
+  });
+
+  it("keeps a second tenant out once one has acted", async () => {
+    const { data } = await start();
+    expect((await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerId),
+      body: JSON.stringify({ userCode: data.userCode, repoId: ownedRepoId, agents: [{ name: "a", workerType: "claude", role: "worker" }] }),
+    })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: asOwner(outsiderId) })).statusCode).toBe(404);
+  });
+});
+
 describe("POST /auth/device/start hardening", () => {
   it("refuses a proposed payload with unknown keys, so it cannot be used as storage", async () => {
     const res = await app.inject({

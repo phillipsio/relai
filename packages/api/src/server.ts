@@ -33,7 +33,12 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   // legitimate payloads and sit orders of magnitude below it, while stored text
   // has no other ceiling (the only precedent is the verify executor's 8KB
   // stdout cap). Raise it deliberately if a document-shaped feature lands.
-  const fastify = Fastify({ logger, bodyLimit: BODY_LIMIT_BYTES });
+  const fastify = Fastify({ logger, bodyLimit: BODY_LIMIT_BYTES,
+    // Off by default: trusting X-Forwarded-For unconditionally lets a caller
+    // spoof its address. On behind a proxy, where request.ip is otherwise the
+    // proxy for everyone and per-IP limits become one global bucket.
+    trustProxy: process.env.TRUST_PROXY === "true",
+  });
 
   // Every client we ship sets Content-Type: application/json unconditionally,
   // including on bodyless DELETEs, which Fastify 5 rejects by default. Delegate

@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, chmodSync, renameSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import { detectRuntimes, mergeMcpServer, runtimeTargets, RUNTIMES, type WorkerType } from "../lib/runtimes.js";
-import { writeConfig } from "../config.js";
+import { writeConfig, configPath as cliConfigPath } from "../config.js";
 
 const DEFAULT_API = "https://api.relai.dev";
 const MCP_SERVER_PACKAGE = "@getrelai/mcp-server";
@@ -85,13 +85,17 @@ function writeMcpConfig(target: string, entry: Record<string, unknown>) {
     }
   }
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, JSON.stringify(mergeMcpServer(existing, "relai", entry), null, 2) + "\n", { mode: 0o600 });
-  chmodSync(target, 0o600);
+  const tmp = `${target}.relai-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(mergeMcpServer(existing, "relai", entry), null, 2) + "\n", { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, target);
 }
 
-function isTracked(repoRoot: string, target: string): boolean {
-  if (!target.startsWith(repoRoot + "/")) return false;
-  return git(["ls-files", "--error-unmatch", target.slice(repoRoot.length + 1)], repoRoot) !== null;
+function isTracked(target: string): boolean {
+  const dir = dirname(target);
+  const root = git(["rev-parse", "--show-toplevel"], dir);
+  if (!root) return false;
+  return git(["ls-files", "--error-unmatch", target], root) !== null;
 }
 
 /** Keeps a token out of git when the file sits inside the repo and is untracked. */
@@ -130,7 +134,9 @@ async function run(opts: { api?: string }) {
 
   const started = await postJson(`${api}/auth/device/start`, { proposed: { repoName, remote, runtimes } });
   if (started.status !== 201) {
-    console.error(chalk.red(`\n  Could not reach relai at ${api} (HTTP ${started.status})`));
+    console.error(chalk.red(started.status === 429
+      ? "\n  Too many join requests from your network just now. Wait a minute and try again."
+      : `\n  Could not reach relai at ${api} (HTTP ${started.status})`));
     process.exit(1);
   }
   const { data, deviceCode } = started.payload as unknown as StartResponse;
@@ -168,6 +174,8 @@ async function run(opts: { api?: string }) {
   const connected: { name: string; workerType: WorkerType; targets: string[] }[] = [];
   const team: { name: string; id: string; token: string }[] = [];
   const skipped: { name: string; target: string }[] = [];
+  const failed: { name: string; id: string; why: string }[] = [];
+  let wroteCliConfig = "";
   for (const invite of invites) {
     const accepted = await postJson(`${api}/auth/accept-invite`, {
       code: invite.code, name: invite.name, role: invite.role,
@@ -183,20 +191,32 @@ async function run(opts: { api?: string }) {
 
     const targets = runtimeTargets(invite.workerType, { home, repo: root }) ?? [];
     const written: string[] = [];
-    for (const target of targets) {
-      if (isTracked(root, target)) {
-        skipped.push({ name: invite.name, target });
-        continue;
+    try {
+      for (const target of targets) {
+        // The mcp branch writes wherever RELAI_CONFIG_DIR points, which is not
+        // the nominal target, so the tracked check has to follow the real path.
+        const dest = invite.workerType === "mcp" ? cliConfigPath() : target;
+        if (isTracked(dest)) {
+          skipped.push({ name: invite.name, target: dest });
+          continue;
+        }
+        if (invite.workerType === "mcp") {
+          if (wroteCliConfig) {
+            skipped.push({ name: invite.name, target: `${dest} (already holds ${wroteCliConfig})` });
+            continue;
+          }
+          writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
+          wroteCliConfig = invite.name;
+        } else {
+          writeMcpConfig(dest, { command: "npx", args: ["-y", MCP_SERVER_PACKAGE], env });
+        }
+        written.push(dest);
+        excludeIfUntracked(root, dest);
       }
-      if (invite.workerType === "mcp") {
-        const written600 = writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
-        written.push(written600);
-        excludeIfUntracked(root, written600);
-        continue;
-      }
-      writeMcpConfig(target, { command: "npx", args: ["-y", MCP_SERVER_PACKAGE], env });
-      written.push(target);
-      excludeIfUntracked(root, target);
+    } catch (err) {
+      // The token is already minted. Losing the run here would leave it nowhere.
+      failed.push({ name: invite.name, id: agent.data.id, why: err instanceof Error ? err.message : String(err) });
+      continue;
     }
     connected.push({ name: invite.name, workerType: invite.workerType, targets: written });
     team.push({ name: invite.name, id: agent.data.id, token: agent.token });
@@ -207,6 +227,11 @@ async function run(opts: { api?: string }) {
   if (connected.length === 0) {
     console.error(chalk.red("\n  Nothing was connected."));
     process.exit(1);
+  }
+
+  if (failed.length) {
+    console.log(chalk.red("\n  Created but not configured (revoke these if you do not re-run):"));
+    for (const f of failed) console.log(chalk.red(`    ${f.name} (${f.id}) — ${f.why}`));
   }
 
   if (skipped.length) {
@@ -222,11 +247,16 @@ async function run(opts: { api?: string }) {
     if (!ok) console.log(chalk.yellow("    They are connected, but messaging did not round-trip. Check the dashboard."));
   }
 
-  console.log(chalk.bold("\n  You're in.\n"));
+  const wrote = [...new Set(connected.flatMap((c) => c.targets))];
+  if (wrote.length === 0) {
+    console.log(chalk.yellow("\n  Agents were created, but nothing was written to disk.\n"));
+  } else {
+    console.log(chalk.bold("\n  You're in.\n"));
+  }
   console.log(`  repo      ${chalk.cyan(repoName)}`);
   console.log(`  agents    ${connected.map((c) => c.name).join(", ")}`);
   console.log(`  api       ${api}`);
-  console.log(`  wrote     ${[...new Set(connected.flatMap((c) => c.targets))].map((t) => t.replace(home, "~")).join("\n            ")}`);
+  if (wrote.length) console.log(`  wrote     ${wrote.map((t) => t.replace(home, "~")).join("\n            ")}`);
   console.log(chalk.yellow("\n  Restart these sessions before using relai."));
   console.log(chalk.dim("  A running MCP client keeps the tool schema it got at initialize.\n"));
 }

@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { and, eq, isNull, lt } from "drizzle-orm";
 import { deviceAuthorizations, invites, repos } from "@getrelai/db";
@@ -15,7 +15,10 @@ const POLL_INTERVAL_SECONDS = 5;
 const recentStarts = new Map<string, number[]>();
 
 // Read per call, not cached, so a test can tighten or loosen it after import.
-const startsPerMinute = () => Number(process.env.DEVICE_START_RATE_LIMIT ?? 10);
+const startsPerMinute = () => {
+  const n = Number.parseInt(process.env.DEVICE_START_RATE_LIMIT ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 10;
+};
 
 function tooManyStarts(ip: string, now: number): boolean {
   const window = (recentStarts.get(ip) ?? []).filter((t) => now - t < 60_000);
@@ -165,24 +168,41 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
   // The first tenant to look a code up claims it; nobody else may read, approve
   // or deny it. Without this, a code glimpsed on a screen-share is actionable by
   // any account on the instance.
-  async function claim(userCode: string, ownerId: string | undefined) {
+  async function findForOwner(userCode: string, ownerId: string | undefined) {
     const [row] = await db.select().from(deviceAuthorizations)
       .where(eq(deviceAuthorizations.userCode, userCode.trim().toUpperCase()));
     if (!row) return null;
     if (!ownerId) return row;
-    if (row.claimedBy && row.claimedBy !== ownerId) return null;
-    if (!row.claimedBy) {
-      const [claimed] = await db.update(deviceAuthorizations)
-        .set({ claimedBy: ownerId })
-        .where(and(eq(deviceAuthorizations.id, row.id), isNull(deviceAuthorizations.claimedBy)))
-        .returning();
-      return claimed ?? null;
-    }
-    return row;
+    return !row.claimedBy || row.claimedBy === ownerId ? row : null;
+  }
+
+  // Taken on the FIRST LOOK, not the first action. Binding late would let anyone
+  // who learns a code approve it into their own repo, which is the attack: the
+  // victim's CLI then writes the attacker's tokens.
+  async function claim(userCode: string, ownerId: string | undefined) {
+    const row = await findForOwner(userCode, ownerId);
+    if (!row || !ownerId || row.claimedBy === ownerId) return row;
+    const [claimed] = await db.update(deviceAuthorizations)
+      .set({ claimedBy: ownerId })
+      .where(and(eq(deviceAuthorizations.id, row.id), isNull(deviceAuthorizations.claimedBy)))
+      .returning();
+    if (claimed) return claimed;
+    // Lost the race. Re-read: if the winner was us, this is still our row.
+    const [after] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.id, row.id));
+    return after?.claimedBy === ownerId ? after : null;
+  }
+
+  // The approval screen is the dashboard acting for a signed-in person. An agent
+  // token is not that, and letting one through is how a worker in an unrelated
+  // repo reads and cancels someone else's request.
+  function refuseNonDashboard(request: FastifyRequest): boolean {
+    return request.agent !== undefined && request.agent !== null;
   }
 
   // Service-admin only: what the approval screen reads to pre-fill itself.
   fastify.get<{ Params: { userCode: string } }>("/auth/device/pending/:userCode", async (request, reply) => {
+    if (refuseNonDashboard(request)) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
     const row = await claim(request.params.userCode, request.ownerId);
     if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
 
@@ -201,6 +221,7 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
 
   // Service-admin only: relai-cloud calls this once a human has approved.
   fastify.post("/auth/device/approve", async (request, reply) => {
+    if (refuseNonDashboard(request)) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
     const body = approveSchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
@@ -210,6 +231,10 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
     const [repo] = await db.select().from(repos).where(eq(repos.id, body.data.repoId));
     if (!repo) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
+
+    if (body.data.agents.some((a) => a.role === "orchestrator") && request.agent && request.agent.role !== "orchestrator") {
+      return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may grant the orchestrator role." } });
+    }
 
     const row = await claim(body.data.userCode, request.ownerId);
     if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
@@ -234,6 +259,7 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
   });
 
   fastify.post("/auth/device/deny", async (request, reply) => {
+    if (refuseNonDashboard(request)) return reply.status(404).send({ error: { code: "not_found", message: "Unknown or already-decided code" } });
     const body = denySchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 

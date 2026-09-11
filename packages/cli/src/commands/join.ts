@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, chmodSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, renameSync, realpathSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
@@ -85,13 +86,17 @@ function writeMcpConfig(target: string, entry: Record<string, unknown>) {
     }
   }
   mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.relai-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(mergeMcpServer(existing, "relai", entry), null, 2) + "\n", { mode: 0o600 });
-  chmodSync(tmp, 0o600);
+  // Random, not the pid: a predictable name in a writable directory lets someone
+  // pre-place a symlink. `wx` refuses an existing path instead of following it.
+  const tmp = `${target}.relai-${randomBytes(8).toString("hex")}`;
+  writeFileSync(tmp, JSON.stringify(mergeMcpServer(existing, "relai", entry), null, 2) + "\n", { mode: 0o600, flag: "wx" });
   renameSync(tmp, target);
 }
 
-function isTracked(target: string): boolean {
+function isTracked(rawTarget: string): boolean {
+  // Resolve first: a leaf symlink into a dotfiles repo is tracked even though
+  // the path we were handed is not.
+  const target = existsSync(rawTarget) ? realpathSync(rawTarget) : rawTarget;
   const dir = dirname(target);
   const root = git(["rev-parse", "--show-toplevel"], dir);
   if (!root) return false;

@@ -16,8 +16,8 @@ const recentStarts = new Map<string, number[]>();
 
 // Read per call, not cached, so a test can tighten or loosen it after import.
 const startsPerMinute = () => {
-  const n = Number.parseInt(process.env.DEVICE_START_RATE_LIMIT ?? "", 10);
-  return Number.isFinite(n) && n > 0 ? n : 10;
+  const n = Number(process.env.DEVICE_START_RATE_LIMIT);
+  return Number.isInteger(n) && n > 0 ? n : 10;
 };
 
 function tooManyStarts(ip: string, now: number): boolean {
@@ -193,11 +193,14 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     return after?.claimedBy === ownerId ? after : null;
   }
 
-  // The approval screen is the dashboard acting for a signed-in person. An agent
-  // token is not that, and letting one through is how a worker in an unrelated
-  // repo reads and cancels someone else's request.
+  // These routes are the dashboard acting for a signed-in person. An agent token
+  // is not that. Neither is the legacy shared secret, which sets no owner at all
+  // and so falls through every tenant check below: on a multi-tenant deploy it
+  // could read and approve any tenant's code. routes/session.ts refuses it the
+  // same way. A single-tenant box has no SERVICE_ADMIN_TOKEN and keeps working.
   function refuseNonDashboard(request: FastifyRequest): boolean {
-    return request.agent !== undefined && request.agent !== null;
+    if (request.agent) return true;
+    return !request.ownerId && Boolean(process.env.SERVICE_ADMIN_TOKEN);
   }
 
   // Service-admin only: what the approval screen reads to pre-fill itself.

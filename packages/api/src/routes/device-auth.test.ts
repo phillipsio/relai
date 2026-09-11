@@ -49,11 +49,13 @@ function poll(deviceCode: string) {
   });
 }
 
+const DASHBOARD = () => ({ Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": ownerId, "Content-Type": "application/json" });
+
 function approve(userCode: string, agents: unknown[]) {
   return app.inject({
     method: "POST", url: "/auth/device/approve",
-    headers: ADMIN,
-    body: JSON.stringify({ userCode, repoId, agents }),
+    headers: DASHBOARD(),
+    body: JSON.stringify({ userCode, repoId: ownedRepoId, agents }),
   });
 }
 
@@ -169,7 +171,7 @@ describe("POST /auth/device/token", () => {
     const { deviceCode, data } = await start();
     const denied = await app.inject({
       method: "POST", url: "/auth/device/deny",
-      headers: ADMIN, body: JSON.stringify({ userCode: data.userCode }),
+      headers: DASHBOARD(), body: JSON.stringify({ userCode: data.userCode }),
     });
     expect(denied.statusCode).toBe(204);
     const res = await poll(deviceCode);
@@ -192,7 +194,7 @@ describe("POST /auth/device/token", () => {
     const res = await poll(deviceCode);
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.data.repoId).toBe(repoId);
+    expect(body.data.repoId).toBe(ownedRepoId);
     expect(body.invites).toHaveLength(2);
 
     const cursor = body.invites.find((i: { name: string }) => i.name === "cursor");
@@ -399,6 +401,38 @@ describe("agent tokens are not the dashboard", () => {
   });
 });
 
+describe("the legacy shared secret is not a tenant", () => {
+  // API_SECRET sets neither agent nor ownerId, so it used to fall through every
+  // tenant check and could read or approve any tenant's code. render.yaml
+  // provisions it on the hosted service, so this is not a self-host-only path.
+  it("refuses a lookup carrying only API_SECRET", async () => {
+    const { data } = await start({ repoName: "victim-secret-repo" });
+    const res = await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: ADMIN });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.stringify(res.json())).not.toContain("victim-secret-repo");
+  });
+
+  it("refuses an approve carrying only API_SECRET", async () => {
+    const { data } = await start();
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: ADMIN,
+      body: JSON.stringify({ userCode: data.userCode, repoId, agents: [{ name: "x", workerType: "claude", role: "orchestrator" }] }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("still allows it on a single-tenant box, where no service token is set", async () => {
+    const prev = process.env.SERVICE_ADMIN_TOKEN;
+    delete process.env.SERVICE_ADMIN_TOKEN;
+    try {
+      const { data } = await start();
+      expect((await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: ADMIN })).statusCode).toBe(200);
+    } finally {
+      process.env.SERVICE_ADMIN_TOKEN = prev;
+    }
+  });
+});
+
 describe("role escalation through approve", () => {
   it("refuses a worker agent granting the orchestrator role", async () => {
     const worker = await app.inject({
@@ -474,7 +508,7 @@ describe("POST /auth/device/start hardening", () => {
 });
 
 describe("GET /auth/device/pending/:userCode", () => {
-  const lookup = (userCode: string, headers: Record<string, string> = ADMIN) =>
+  const lookup = (userCode: string, headers: Record<string, string> = DASHBOARD()) =>
     app.inject({ method: "GET", url: `/auth/device/pending/${userCode}`, headers });
 
   it("is not public: the approval screen is behind the service credential", async () => {
@@ -484,7 +518,7 @@ describe("GET /auth/device/pending/:userCode", () => {
 
   it("returns what the client proposed, so the screen can pre-fill", async () => {
     const { data } = await start({ repoName: "front-end-app-v2", runtimes: ["claude", "cursor"] });
-    const res = await lookup(data.userCode);
+    const res = await lookup(data.userCode, DASHBOARD());
     expect(res.statusCode).toBe(200);
     expect(res.json().data.proposed).toEqual({ repoName: "front-end-app-v2", runtimes: ["claude", "cursor"] });
     expect(res.json().data.status).toBe("pending");
@@ -492,7 +526,7 @@ describe("GET /auth/device/pending/:userCode", () => {
 
   it("never hands back anything that would let the caller act as the client", async () => {
     const { data, deviceCode } = await start();
-    const body = JSON.stringify((await lookup(data.userCode)).json());
+    const body = JSON.stringify((await lookup(data.userCode, DASHBOARD())).json());
     expect(body).not.toContain(deviceCode);
     expect(body).not.toContain(hashSecret(deviceCode));
   });
@@ -502,17 +536,17 @@ describe("GET /auth/device/pending/:userCode", () => {
     await db.update(deviceAuthorizations)
       .set({ expiresAt: new Date(Date.now() - 1000) })
       .where(eq(deviceAuthorizations.deviceCodeHash, hashSecret(deviceCode)));
-    const res = await lookup(data.userCode);
+    const res = await lookup(data.userCode, DASHBOARD());
     expect(res.statusCode).toBe(200);
     expect(res.json().data.expired).toBe(true);
   });
 
   it("refuses a code that does not exist", async () => {
-    expect((await lookup("ZZZZ-9999")).statusCode).toBe(404);
+    expect((await lookup("ZZZZ-9999", DASHBOARD())).statusCode).toBe(404);
   });
 
   it("matches the code however the human typed it", async () => {
     const { data } = await start();
-    expect((await lookup(data.userCode.toLowerCase())).statusCode).toBe(200);
+    expect((await lookup(data.userCode.toLowerCase(), DASHBOARD())).statusCode).toBe(200);
   });
 });

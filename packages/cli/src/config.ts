@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 
 export interface Config {
   apiUrl: string;
@@ -37,8 +38,12 @@ export function readConfig(): Config | null {
 export function writeConfig(config: Config): string {
   const file = configPath();
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(config, null, 2), { mode: 0o600 });
-  chmodSync(file, 0o600);
+  // Temp-then-rename, never a direct write: a plain write follows a symlink, and
+  // writeFileSync's mode is ignored when the path already exists. `wx` refuses a
+  // planted temp file rather than following it.
+  const tmp = `${file}.relai-${randomBytes(8).toString("hex")}`;
+  writeFileSync(tmp, JSON.stringify(config, null, 2), { mode: 0o600, flag: "wx" });
+  renameSync(tmp, file);
   return file;
 }
 

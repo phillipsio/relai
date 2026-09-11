@@ -33,11 +33,14 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   // legitimate payloads and sit orders of magnitude below it, while stored text
   // has no other ceiling (the only precedent is the verify executor's 8KB
   // stdout cap). Raise it deliberately if a document-shaped feature lands.
+  // A HOP COUNT, never `true`: trusting the whole chain makes request.ip the
+  // leftmost X-Forwarded-For entry, which the caller writes, so a per-IP limit
+  // becomes opt-out. Unset means the socket peer, correct with no proxy.
+  const hops = Number(process.env.TRUST_PROXY_HOPS);
+  const TRUST_PROXY_HOPS: number = Number.isInteger(hops) && hops > 0 ? hops : 0;
+
   const fastify = Fastify({ logger, bodyLimit: BODY_LIMIT_BYTES,
-    // Off by default: trusting X-Forwarded-For unconditionally lets a caller
-    // spoof its address. On behind a proxy, where request.ip is otherwise the
-    // proxy for everyone and per-IP limits become one global bucket.
-    trustProxy: process.env.TRUST_PROXY === "true",
+    trustProxy: (_address: string, hop: number) => hop < TRUST_PROXY_HOPS,
   });
 
   // Every client we ship sets Content-Type: application/json unconditionally,

@@ -2,7 +2,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command } from "commander";
-import { initCommand } from "./commands/init.js";
 import { tasksCommand, taskUpdateCommand, taskCreateCommand, taskReviewCommand, taskCommitCommand, taskArchiveCommand } from "./commands/tasks.js";
 import { reposListCommand, repoShowCommand, repoContextShowCommand, repoContextEditCommand } from "./commands/repos.js";
 import { agentsListCommand } from "./commands/agents.js";
@@ -47,8 +46,9 @@ program
 
 program
   .command("init")
-  .description("Register this machine as an agent and save config to ~/.config/relai/config.json")
-  .action(initCommand);
+  .description("Alias for `join`, kept so existing docs keep working")
+  .option("--api <url>", "relai API base URL (defaults to the hosted one)")
+  .action(joinCommand);
 
 // ── status ───────────────────────────────────────────────────────────────────
 

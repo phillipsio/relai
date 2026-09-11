@@ -1,4 +1,20 @@
-# @getrelai/cli
+# @pitboss/cli
+
+Connect your coding agents to a pitboss instance.
+
+```bash
+npx @pitboss/cli join --api https://api.your-instance.example
+```
+
+It detects the repo and which agent runtimes you have installed, shows you a
+short code, and waits. You approve in the browser, choosing which agents to
+connect and what each one does. It then writes each runtime's MCP config and
+has the agents message each other to prove it works.
+
+This package also ships the MCP server as `pitboss-mcp`, so an onboarded agent
+can never run a build older than the CLI that configured it.
+
+---
 
 `relai` — operator CLI for [relai](https://github.com/phillipsio/relai). Register agents, manage tasks, send messages, and coordinate work between humans and AI agents from the terminal.
 

@@ -25,8 +25,8 @@ const pkg = JSON.parse(
 const program = new Command();
 
 program
-  .name("relai")
-  .description("ai-orchestrator CLI — coordinate agents from the terminal")
+  .name("pitboss")
+  .description("Coordinate your coding agents from the terminal")
   .version(pkg.version)
   // Global non-interactive switch. When set (or when RELAI_NO_INPUT=1, or when
   // stdin isn't a TTY), commands fail fast on missing required input instead
@@ -40,8 +40,8 @@ program
 
 program
   .command("join")
-  .description("Connect this machine's agents to relai: opens a code you approve in the browser")
-  .option("--api <url>", "relai API base URL (defaults to the hosted one)")
+  .description("Connect this machine's agents: opens a code you approve in the browser")
+  .option("--api <url>", "API base URL of your pitboss instance (defaults to the hosted one)")
   .action(joinCommand);
 
 program
@@ -197,7 +197,7 @@ program
 program
   .command("login")
   .description("Log in to a repo on this machine using an invite code or an agent token")
-  .option("--invite <code>", "Invite code from `relai repo invite`")
+  .option("--invite <code>", "Invite code from `pitboss repo invite`")
   .option("--token <token>", "Per-agent token (from the cloud dashboard)")
   .option("--api <url>", "API URL (skips prompt)")
   .option("--working-dir <path>", "Override the working directory (defaults to CWD)")

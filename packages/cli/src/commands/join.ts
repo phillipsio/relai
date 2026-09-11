@@ -7,8 +7,8 @@ import chalk from "chalk";
 import { detectRuntimes, mergeMcpServer, runtimeTargets, RUNTIMES, type WorkerType } from "../lib/runtimes.js";
 import { writeConfig, configPath as cliConfigPath } from "../config.js";
 
-const DEFAULT_API = "https://api.relai.dev";
-const MCP_SERVER_PACKAGE = "@getrelai/mcp-server";
+const DEFAULT_API = "https://api.pitboss.dev";
+const MCP_PACKAGE = "@pitboss/cli";
 
 interface StartResponse {
   data: { userCode: string; verificationUri: string; expiresIn: number; interval: number };
@@ -133,7 +133,7 @@ async function run(opts: { api?: string }) {
   const home = homedir();
   const runtimes = detectRuntimes({ home, repo: root });
 
-  console.log(chalk.bold("\nrelai join\n"));
+  console.log(chalk.bold("\npitboss join\n"));
   console.log(`  Repo      ${chalk.cyan(repoName)}${remote ? chalk.dim(`  (${remote})`) : ""}`);
   console.log(`  Detected  ${runtimes.length ? runtimes.join(", ") : chalk.dim("nothing; you can still pick on the next screen")}`);
 
@@ -141,14 +141,14 @@ async function run(opts: { api?: string }) {
   if (started.status !== 201) {
     console.error(chalk.red(started.status === 429
       ? "\n  Too many join requests from your network just now. Wait a minute and try again."
-      : `\n  Could not reach relai at ${api} (HTTP ${started.status})`));
+      : `\n  Could not reach pitboss at ${api} (HTTP ${started.status})`));
     process.exit(1);
   }
   const { data, deviceCode } = started.payload as unknown as StartResponse;
 
   console.log(`\n  Open      ${chalk.bold(data.verificationUri)}`);
   console.log(`  Code      ${chalk.bold(data.userCode)}   ${chalk.dim(`expires in ${Math.round(data.expiresIn / 60)} minutes`)}`);
-  console.log(chalk.dim("\n  Type the code yourself; relai will show you what it is about to grant.\n"));
+  console.log(chalk.dim("\n  Type the code yourself; the approval screen shows what it will grant.\n"));
   console.log(chalk.dim("  Waiting for approval…"));
 
   let interval = data.interval * 1000;
@@ -213,7 +213,7 @@ async function run(opts: { api?: string }) {
           writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
           wroteCliConfig = invite.name;
         } else {
-          writeMcpConfig(dest, { command: "npx", args: ["-y", MCP_SERVER_PACKAGE], env });
+          writeMcpConfig(dest, { command: "npx", args: ["-y", "-p", MCP_PACKAGE, "pitboss-mcp"], env });
         }
         written.push(dest);
         excludeIfUntracked(root, dest);
@@ -262,6 +262,6 @@ async function run(opts: { api?: string }) {
   console.log(`  agents    ${connected.map((c) => c.name).join(", ")}`);
   console.log(`  api       ${api}`);
   if (wrote.length) console.log(`  wrote     ${wrote.map((t) => t.replace(home, "~")).join("\n            ")}`);
-  console.log(chalk.yellow("\n  Restart these sessions before using relai."));
+  console.log(chalk.yellow("\n  Restart these sessions before using pitboss."));
   console.log(chalk.dim("  A running MCP client keeps the tool schema it got at initialize.\n"));
 }

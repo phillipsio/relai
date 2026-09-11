@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 
 export interface Config {
   apiUrl: string;
@@ -32,10 +32,14 @@ export function readConfig(): Config | null {
   }
 }
 
-export function writeConfig(config: Config): void {
+// Returns where it wrote. Callers used to compute that path a second time and
+// chmod it, which silently diverged whenever RELAI_CONFIG_DIR was set.
+export function writeConfig(config: Config): string {
   const file = configPath();
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(config, null, 2));
+  writeFileSync(file, JSON.stringify(config, null, 2), { mode: 0o600 });
+  chmodSync(file, 0o600);
+  return file;
 }
 
 export function requireConfig(): Config {

@@ -100,6 +100,27 @@ fi
 
 grep -q "^\.mcp\.json$" "$WORK/.git/info/exclude" 2>/dev/null && check "repo config is git-excluded" ok || check "repo config is git-excluded" no
 
+# Second run with .mcp.json COMMITTED. A tracked file cannot be git-excluded, so
+# writing a token into it would publish the credential on the next commit.
+git -C "$WORK" add -f .mcp.json >/dev/null 2>&1 || true
+git -C "$WORK" -c user.email=e2e@test -c user.name=e2e commit -qm "track mcp config" >/dev/null 2>&1 || true
+BEFORE=$(md5 -q "$WORK/.mcp.json" 2>/dev/null || md5sum "$WORK/.mcp.json" | cut -d" " -f1)
+( cd "$WORK" && npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join2.log" 2>&1 ) &
+JOIN2_PID=$!
+CODE2=""
+for _ in $(seq 1 30); do
+  CODE2=$(grep -oE '[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}' "$SANDBOX/join2.log" 2>/dev/null | head -1 || true)
+  [ -n "$CODE2" ] && break; sleep 1
+done
+curl -s -o /dev/null -X POST "$API/auth/device/approve" \
+  -H "Authorization: Bearer $ADMIN" -H "X-Owner-Id: $OWNER" -H 'Content-Type: application/json' \
+  -d "{\"userCode\":\"$CODE2\",\"repoId\":\"$REPO\",\"agents\":[{\"name\":\"claude-2\",\"workerType\":\"claude\",\"role\":\"worker\"}]}" || true
+wait $JOIN2_PID 2>/dev/null || true
+AFTER=$(md5 -q "$WORK/.mcp.json" 2>/dev/null || md5sum "$WORK/.mcp.json" | cut -d" " -f1)
+[ "$BEFORE" = "$AFTER" ] && check "a tracked config is left untouched" ok || check "a tracked config is left untouched" no "file changed"
+grep -q "Refused to write a token into a file git tracks" "$SANDBOX/join2.log" && check "join says why it refused" ok || check "join says why it refused" no "$(tail -4 "$SANDBOX/join2.log")"
+if git -C "$WORK" diff --quiet; then check "no token staged for commit" ok; else check "no token staged for commit" no "$(git -C "$WORK" diff --stat | tail -1)"; fi
+
 psql_ "delete from messages where thread_id in (select id from threads where repo_id='$REPO');
        delete from subscriptions where agent_id in (select id from agents where repo_id='$REPO');
        delete from events where repo_id='$REPO';

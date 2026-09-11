@@ -1,11 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-export type WorkerType = "claude" | "copilot" | "cursor" | "windsurf" | "gemini" | "gpt" | "mcp";
+export type WorkerType = "claude" | "copilot" | "cursor" | "windsurf" | "gemini" | "gpt" | "mcp" | "human";
 
 export interface Runtime {
   workerType: WorkerType;
-  label: string;
   /** Paths whose presence means this runtime is in use here. */
   markers: (ctx: Paths) => string[];
 }
@@ -13,13 +12,13 @@ export interface Runtime {
 export interface Paths { home: string; repo: string }
 
 export const RUNTIMES: Runtime[] = [
-  { workerType: "claude",   label: "Claude Code", markers: ({ home, repo }) => [join(repo, ".claude"), join(repo, ".mcp.json"), join(home, ".claude")] },
-  { workerType: "cursor",   label: "Cursor",      markers: ({ home, repo }) => [join(repo, ".cursor"), join(home, ".cursor")] },
-  { workerType: "windsurf", label: "Windsurf",    markers: ({ home })       => [join(home, ".codeium", "windsurf")] },
-  { workerType: "gemini",   label: "Gemini",      markers: ({ home })       => [join(home, ".gemini")] },
-  { workerType: "copilot",  label: "Copilot",     markers: ({ home })       => [join(home, ".config", "github-copilot")] },
-  { workerType: "gpt",      label: "GPT",         markers: ({ home })       => [join(home, ".codex")] },
-  { workerType: "mcp",      label: "Other MCP client", markers: () => [] },
+  { workerType: "claude",   markers: ({ home, repo }) => [join(repo, ".claude"), join(repo, ".mcp.json"), join(home, ".claude")] },
+  { workerType: "cursor",   markers: ({ home, repo }) => [join(repo, ".cursor"), join(home, ".cursor")] },
+  { workerType: "windsurf", markers: ({ home })       => [join(home, ".codeium", "windsurf")] },
+  { workerType: "gemini",   markers: ({ home })       => [join(home, ".gemini")] },
+  { workerType: "copilot",  markers: ({ home })       => [join(home, ".config", "github-copilot")] },
+  { workerType: "gpt",      markers: ({ home })       => [join(home, ".codex")] },
+  { workerType: "mcp",      markers: () => [] },
 ];
 
 // Where each runtime keeps the MCP config it actually reads. A wrong path here
@@ -33,6 +32,8 @@ export function runtimeTargets(workerType: WorkerType, { home, repo }: Paths): s
     case "copilot":  return [join(home, ".config", "github-copilot", "mcp.json")];
     case "gpt":      return [join(home, ".codex", "mcp.json")];
     case "mcp":      return [join(home, ".config", "relai", "config.json")];
+    // A person, not a runtime. Nothing to configure.
+    case "human":    return [];
   }
 }
 

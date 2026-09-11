@@ -125,7 +125,7 @@ export const invites = pgTable("invites", {
 
 // ── Device authorizations ─────────────────────────────────────────────────────
 
-export const deviceAuthStatusEnum = pgEnum("device_auth_status", ["pending", "approved", "denied", "expired"]);
+export const deviceAuthStatusEnum = pgEnum("device_auth_status", ["pending", "approved", "denied"]);
 
 export const deviceAuthorizations = pgTable("device_authorizations", {
   id:             text("id").primaryKey(),
@@ -139,7 +139,9 @@ export const deviceAuthorizations = pgTable("device_authorizations", {
   // code never has to be stored in the clear.
   granted:        jsonb("granted"),
   repoId:         text("repo_id").references(() => repos.id, { onDelete: "cascade" }),
-  approvedBy:     text("approved_by").references(() => users.id, { onDelete: "cascade" }),
+  // The first tenant to look this code up owns it from then on. Without this a
+  // code seen over someone's shoulder can be read or cancelled by any account.
+  claimedBy:      text("claimed_by").references(() => users.id, { onDelete: "cascade" }),
   expiresAt:      timestamp("expires_at",     { withTimezone: true }).notNull(),
   lastPolledAt:   timestamp("last_polled_at", { withTimezone: true }),
   // Set by the first successful poll. Present means the codes are already out.

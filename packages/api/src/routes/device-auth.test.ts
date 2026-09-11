@@ -12,6 +12,9 @@ const SERVICE_TOKEN = "test-service-admin-device-auth";
 process.env.DATABASE_URL        = DB_URL;
 process.env.API_SECRET          = SECRET;
 process.env.SERVICE_ADMIN_TOKEN = SERVICE_TOKEN;
+// The suite starts far more authorizations than a human would; the throttle
+// itself is exercised by its own test below.
+process.env.DEVICE_START_RATE_LIMIT = "100000";
 
 const ownerId    = "usr_devauth_owner_" + Date.now();
 const outsiderId = "usr_devauth_outsider_" + Date.now();
@@ -309,6 +312,79 @@ describe("POST /auth/device/approve", () => {
       body: JSON.stringify({ userCode: data.userCode, repoId: ownedRepoId, agents: [{ name: "x", workerType: "claude", role: "worker" }] }),
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("tenant binding", () => {
+  const asOwner = (id: string) => ({ Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": id, "Content-Type": "application/json" });
+  const lookupAs = (code: string, id: string) =>
+    app.inject({ method: "GET", url: `/auth/device/pending/${code}`, headers: asOwner(id) });
+  const denyAs = (code: string, id: string) =>
+    app.inject({ method: "POST", url: "/auth/device/deny", headers: asOwner(id), body: JSON.stringify({ userCode: code }) });
+
+  it("gives the code to the first tenant that looks it up, and hides it from the next", async () => {
+    const { data } = await start({ repoName: "victim-secret-repo" });
+    expect((await lookupAs(data.userCode, ownerId)).statusCode).toBe(200);
+    const stranger = await lookupAs(data.userCode, outsiderId);
+    expect(stranger.statusCode).toBe(404);
+    // The proposed fields name a private repo; a stranger must not read them.
+    expect(JSON.stringify(stranger.json())).not.toContain("victim-secret-repo");
+  });
+
+  it("refuses a deny from anyone but the tenant holding the code", async () => {
+    const { data, deviceCode } = await start();
+    expect((await lookupAs(data.userCode, ownerId)).statusCode).toBe(200);
+    expect((await denyAs(data.userCode, outsiderId)).statusCode).toBe(404);
+
+    // The victim's client must still be waiting, not cancelled by a stranger.
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.deviceCodeHash, hashSecret(deviceCode)));
+    expect(row.status).toBe("pending");
+    expect((await denyAs(data.userCode, ownerId)).statusCode).toBe(204);
+  });
+
+  it("refuses an approve from a tenant that did not claim the code", async () => {
+    const { data } = await start();
+    expect((await lookupAs(data.userCode, ownerId)).statusCode).toBe(200);
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(outsiderId),
+      body: JSON.stringify({ userCode: data.userCode, repoId: ownedRepoId, agents: [{ name: "x", workerType: "claude", role: "worker" }] }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("POST /auth/device/start hardening", () => {
+  it("refuses a proposed payload with unknown keys, so it cannot be used as storage", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY,
+      body: JSON.stringify({ proposed: { repoName: "ok", junk: "x".repeat(100) } }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("caps the size of every field it does accept", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY,
+      body: JSON.stringify({ proposed: { repoName: "x".repeat(5000) } }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("throttles an unauthenticated caller rather than letting it write rows forever", async () => {
+    const prev = process.env.DEVICE_START_RATE_LIMIT;
+    process.env.DEVICE_START_RATE_LIMIT = "3";
+    try {
+      const codes: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const res = await app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: "{}" });
+        codes.push(res.statusCode);
+      }
+      expect(codes).toContain(429);
+      expect(codes.filter((c) => c === 201).length).toBeLessThanOrEqual(3);
+    } finally {
+      process.env.DEVICE_START_RATE_LIMIT = prev;
+    }
   });
 });
 

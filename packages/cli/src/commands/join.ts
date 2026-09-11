@@ -85,8 +85,13 @@ function writeMcpConfig(target: string, entry: Record<string, unknown>) {
     }
   }
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, JSON.stringify(mergeMcpServer(existing, "relai", entry), null, 2) + "\n");
+  writeFileSync(target, JSON.stringify(mergeMcpServer(existing, "relai", entry), null, 2) + "\n", { mode: 0o600 });
   chmodSync(target, 0o600);
+}
+
+function isTracked(repoRoot: string, target: string): boolean {
+  if (!target.startsWith(repoRoot + "/")) return false;
+  return git(["ls-files", "--error-unmatch", target.slice(repoRoot.length + 1)], repoRoot) !== null;
 }
 
 /** Keeps a token out of git when the file sits inside the repo and is untracked. */
@@ -104,6 +109,15 @@ function excludeIfUntracked(repoRoot: string, target: string) {
 }
 
 export async function joinCommand(opts: { api?: string }) {
+  try {
+    await run(opts);
+  } catch (err) {
+    console.error(chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}`));
+    process.exit(1);
+  }
+}
+
+async function run(opts: { api?: string }) {
   const api = (opts.api ?? DEFAULT_API).replace(/\/+$/, "");
   const cwd = process.cwd();
   const { root, remote, repoName } = describeRepo(cwd);
@@ -153,6 +167,7 @@ export async function joinCommand(opts: { api?: string }) {
   console.log("");
   const connected: { name: string; workerType: WorkerType; targets: string[] }[] = [];
   const team: { name: string; id: string; token: string }[] = [];
+  const skipped: { name: string; target: string }[] = [];
   for (const invite of invites) {
     const accepted = await postJson(`${api}/auth/accept-invite`, {
       code: invite.code, name: invite.name, role: invite.role,
@@ -166,24 +181,38 @@ export async function joinCommand(opts: { api?: string }) {
     const agent = (accepted.payload as { data: { id: string }; token: string });
     const env = { API_URL: api, API_SECRET: agent.token, AGENT_ID: agent.data.id, REPO_ID: repoId };
 
-    const targets = runtimeTargets(invite.workerType, { home, repo: root });
+    const targets = runtimeTargets(invite.workerType, { home, repo: root }) ?? [];
+    const written: string[] = [];
     for (const target of targets) {
-      if (invite.workerType === "mcp") {
-        writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
-        chmodSync(target, 0o600);
-      } else {
-        writeMcpConfig(target, { command: "npx", args: ["-y", MCP_SERVER_PACKAGE], env });
+      if (isTracked(root, target)) {
+        skipped.push({ name: invite.name, target });
+        continue;
       }
+      if (invite.workerType === "mcp") {
+        const written600 = writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
+        written.push(written600);
+        excludeIfUntracked(root, written600);
+        continue;
+      }
+      writeMcpConfig(target, { command: "npx", args: ["-y", MCP_SERVER_PACKAGE], env });
+      written.push(target);
       excludeIfUntracked(root, target);
     }
-    connected.push({ name: invite.name, workerType: invite.workerType, targets });
+    connected.push({ name: invite.name, workerType: invite.workerType, targets: written });
     team.push({ name: invite.name, id: agent.data.id, token: agent.token });
-    console.log(`  ${chalk.green("✓")} ${invite.name} ${chalk.dim(`(${invite.role}${invite.specialization ? `, ${invite.specialization}` : ""})`)}`);
+    const where = written.length ? "" : chalk.yellow("  no config written");
+    console.log(`  ${chalk.green("✓")} ${invite.name} ${chalk.dim(`(${invite.role}${invite.specialization ? `, ${invite.specialization}` : ""})`)}${where}`);
   }
 
   if (connected.length === 0) {
     console.error(chalk.red("\n  Nothing was connected."));
     process.exit(1);
+  }
+
+  if (skipped.length) {
+    console.log(chalk.red("\n  Refused to write a token into a file git tracks:"));
+    for (const s of skipped) console.log(chalk.red(`    ${s.name} -> ${s.target.replace(home, "~")}`));
+    console.log(chalk.dim("    Untrack it (git rm --cached <file>) and run join again, or configure that agent by hand."));
   }
 
   const shook = await handshake(api, repoId, team);

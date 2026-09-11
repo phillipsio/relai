@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lt } from "drizzle-orm";
 import { deviceAuthorizations, invites, repos } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
@@ -10,10 +10,31 @@ import { assertRepoAccess } from "../lib/ownership.js";
 const TTL_SECONDS = 10 * 60;
 const POLL_INTERVAL_SECONDS = 5;
 
+// The API registers no rate-limit plugin, and this is the only route reachable
+// with no credential at all. Per-process is enough on a single-box deploy.
+const recentStarts = new Map<string, number[]>();
+
+// Read per call, not cached, so a test can tighten or loosen it after import.
+const startsPerMinute = () => Number(process.env.DEVICE_START_RATE_LIMIT ?? 10);
+
+function tooManyStarts(ip: string, now: number): boolean {
+  const window = (recentStarts.get(ip) ?? []).filter((t) => now - t < 60_000);
+  window.push(now);
+  recentStarts.set(ip, window);
+  if (recentStarts.size > 5_000) {
+    for (const [k, v] of recentStarts) if (v.every((t) => now - t >= 60_000)) recentStarts.delete(k);
+  }
+  return window.length > startsPerMinute();
+}
+
 const WORKER_TYPES = ["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"] as const;
 
 const startSchema = z.object({
-  proposed: z.record(z.unknown()).default({}),
+  proposed: z.object({
+    repoName: z.string().max(200).optional(),
+    remote:   z.string().max(400).optional(),
+    runtimes: z.array(z.string().max(40)).max(20).optional(),
+  }).strict().default({}),
 });
 
 const grantSchema = z.object({
@@ -43,6 +64,14 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
   fastify.post("/auth/device/start", async (request, reply) => {
     const body = startSchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    const now = Date.now();
+    if (tooManyStarts(request.ip, now)) {
+      return reply.status(429).send({ error: { code: "slow_down", message: "Too many device requests from this address" } });
+    }
+    // Nothing else deletes these, and an abandoned row is worthless the moment
+    // it expires.
+    await db.delete(deviceAuthorizations).where(lt(deviceAuthorizations.expiresAt, new Date(now - 60 * 60 * 1000)));
 
     const deviceCode = generateDeviceCode();
     const [row] = await db.insert(deviceAuthorizations).values({
@@ -133,10 +162,28 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     return reply.status(200).send({ data: { repoId }, invites: minted });
   });
 
+  // The first tenant to look a code up claims it; nobody else may read, approve
+  // or deny it. Without this, a code glimpsed on a screen-share is actionable by
+  // any account on the instance.
+  async function claim(userCode: string, ownerId: string | undefined) {
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.userCode, userCode.trim().toUpperCase()));
+    if (!row) return null;
+    if (!ownerId) return row;
+    if (row.claimedBy && row.claimedBy !== ownerId) return null;
+    if (!row.claimedBy) {
+      const [claimed] = await db.update(deviceAuthorizations)
+        .set({ claimedBy: ownerId })
+        .where(and(eq(deviceAuthorizations.id, row.id), isNull(deviceAuthorizations.claimedBy)))
+        .returning();
+      return claimed ?? null;
+    }
+    return row;
+  }
+
   // Service-admin only: what the approval screen reads to pre-fill itself.
   fastify.get<{ Params: { userCode: string } }>("/auth/device/pending/:userCode", async (request, reply) => {
-    const [row] = await db.select().from(deviceAuthorizations)
-      .where(eq(deviceAuthorizations.userCode, request.params.userCode.trim().toUpperCase()));
+    const row = await claim(request.params.userCode, request.ownerId);
     if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
 
     // Named fields, not the row: deviceCodeHash must never leave the server.
@@ -146,6 +193,7 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
         status:    row.status,
         proposed:  row.proposed,
         expiresAt: row.expiresAt,
+        createdAt: row.createdAt,
         expired:   row.expiresAt.getTime() < Date.now(),
       },
     });
@@ -163,8 +211,7 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     const [repo] = await db.select().from(repos).where(eq(repos.id, body.data.repoId));
     if (!repo) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 
-    const [row] = await db.select().from(deviceAuthorizations)
-      .where(eq(deviceAuthorizations.userCode, body.data.userCode.toUpperCase()));
+    const row = await claim(body.data.userCode, request.ownerId);
     if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
     if (row.status !== "pending") {
       return reply.status(409).send({ error: { code: "already_decided", message: `This request is already ${row.status}` } });
@@ -178,7 +225,6 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
         status:     "approved",
         granted:    body.data.agents,
         repoId:     repo.id,
-        approvedBy: request.ownerId ?? null,
       })
       .where(and(eq(deviceAuthorizations.id, row.id), eq(deviceAuthorizations.status, "pending")))
       .returning();
@@ -191,12 +237,12 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     const body = denySchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    const row = await claim(body.data.userCode, request.ownerId);
+    if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown or already-decided code" } });
+
     const [updated] = await db.update(deviceAuthorizations)
       .set({ status: "denied" })
-      .where(and(
-        eq(deviceAuthorizations.userCode, body.data.userCode.toUpperCase()),
-        eq(deviceAuthorizations.status, "pending"),
-      ))
+      .where(and(eq(deviceAuthorizations.id, row.id), eq(deviceAuthorizations.status, "pending")))
       .returning();
     if (!updated) return reply.status(404).send({ error: { code: "not_found", message: "Unknown or already-decided code" } });
 

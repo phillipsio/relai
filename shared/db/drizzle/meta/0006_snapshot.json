@@ -1,5 +1,5 @@
 {
-  "id": "8c32be03-c553-455f-8785-3c9f145a761a",
+  "id": "e314f3d5-b7f1-42d3-879f-39722c3b04d7",
   "prevId": "10c7b09f-11d8-4aed-bec2-36ba7fdf2ca1",
   "version": "7",
   "dialect": "postgresql",
@@ -469,8 +469,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "approved_by": {
-          "name": "approved_by",
+        "claimed_by": {
+          "name": "claimed_by",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -516,12 +516,12 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "device_authorizations_approved_by_users_id_fk": {
-          "name": "device_authorizations_approved_by_users_id_fk",
+        "device_authorizations_claimed_by_users_id_fk": {
+          "name": "device_authorizations_claimed_by_users_id_fk",
           "tableFrom": "device_authorizations",
           "tableTo": "users",
           "columnsFrom": [
-            "approved_by"
+            "claimed_by"
           ],
           "columnsTo": [
             "id"
@@ -1904,8 +1904,7 @@
       "values": [
         "pending",
         "approved",
-        "denied",
-        "expired"
+        "denied"
       ]
     },
     "public.message_author_kind": {

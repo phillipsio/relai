@@ -421,14 +421,42 @@ describe("the legacy shared secret is not a tenant", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("still allows it on a single-tenant box, where no service token is set", async () => {
+  it("stays refused when SERVICE_ADMIN_TOKEN is absent from the API's own env", async () => {
+    // The guard used to infer "multi-tenant" from this variable, which the
+    // documented deploy sets on the CLOUD and not on the API, so it failed open
+    // on exactly that configuration.
     const prev = process.env.SERVICE_ADMIN_TOKEN;
     delete process.env.SERVICE_ADMIN_TOKEN;
     try {
       const { data } = await start();
-      expect((await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: ADMIN })).statusCode).toBe(200);
+      expect((await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: ADMIN })).statusCode).toBe(404);
     } finally {
       process.env.SERVICE_ADMIN_TOKEN = prev;
+    }
+  });
+
+  it("allows it only when a self-hoster opts in explicitly", async () => {
+    process.env.DEVICE_ALLOW_LEGACY_SECRET = "true";
+    try {
+      const { data } = await start();
+      expect((await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: ADMIN })).statusCode).toBe(200);
+    } finally {
+      delete process.env.DEVICE_ALLOW_LEGACY_SECRET;
+    }
+  });
+
+  it("refuses an exponent or hex rate limit rather than reading it as a huge number", async () => {
+    for (const bad of ["1e9", "0x10", "", "ten", "-1"]) {
+      process.env.DEVICE_START_RATE_LIMIT = bad;
+      try {
+        const codes: number[] = [];
+        for (let i = 0; i < 14; i++) {
+          codes.push((await app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: "{}" })).statusCode);
+        }
+        expect(codes).toContain(429);
+      } finally {
+        process.env.DEVICE_START_RATE_LIMIT = "100000";
+      }
     }
   });
 });

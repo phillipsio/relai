@@ -16,8 +16,8 @@ const recentStarts = new Map<string, number[]>();
 
 // Read per call, not cached, so a test can tighten or loosen it after import.
 const startsPerMinute = () => {
-  const n = Number(process.env.DEVICE_START_RATE_LIMIT);
-  return Number.isInteger(n) && n > 0 ? n : 10;
+  const raw = process.env.DEVICE_START_RATE_LIMIT ?? "";
+  return /^\d+$/.test(raw) && Number(raw) > 0 ? Number(raw) : 10;
 };
 
 function tooManyStarts(ip: string, now: number): boolean {
@@ -200,7 +200,12 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
   // same way. A single-tenant box has no SERVICE_ADMIN_TOKEN and keeps working.
   function refuseNonDashboard(request: FastifyRequest): boolean {
     if (request.agent) return true;
-    return !request.ownerId && Boolean(process.env.SERVICE_ADMIN_TOKEN);
+    if (request.ownerId) return false;
+    // Fail CLOSED. This used to infer "multi-tenant" from SERVICE_ADMIN_TOKEN
+    // being set on the API, and the documented deploy only sets it on the cloud,
+    // so the guard evaluated false on exactly the configuration the docs produce.
+    // A self-hoster opts in explicitly instead of being guessed at.
+    return process.env.DEVICE_ALLOW_LEGACY_SECRET !== "true";
   }
 
   // Service-admin only: what the approval screen reads to pre-fill itself.

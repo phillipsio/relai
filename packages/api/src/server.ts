@@ -36,11 +36,13 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   // A HOP COUNT, never `true`: trusting the whole chain makes request.ip the
   // leftmost X-Forwarded-For entry, which the caller writes, so a per-IP limit
   // becomes opt-out. Unset means the socket peer, correct with no proxy.
-  const hops = Number(process.env.TRUST_PROXY_HOPS);
-  const TRUST_PROXY_HOPS: number = Number.isInteger(hops) && hops > 0 ? hops : 0;
+  const rawHops = process.env.TRUST_PROXY_HOPS ?? "";
+  const TRUST_PROXY_HOPS: number = /^\d+$/.test(rawHops) ? Number(rawHops) : 0;
 
   const fastify = Fastify({ logger, bodyLimit: BODY_LIMIT_BYTES,
-    trustProxy: (_address: string, hop: number) => hop < TRUST_PROXY_HOPS,
+    trustProxy: TRUST_PROXY_HOPS > 0
+      ? (_address: string, hop: number) => hop < TRUST_PROXY_HOPS
+      : false,
   });
 
   // Every client we ship sets Content-Type: application/json unconditionally,

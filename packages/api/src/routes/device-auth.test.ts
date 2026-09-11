@@ -1,15 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
 import type { FastifyInstance } from "fastify";
-import { createDb, deviceAuthorizations, invites } from "@getrelai/db";
+import { createDb, deviceAuthorizations, invites, users } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import { hashSecret } from "../lib/tokens.js";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
 const SECRET = "test-secret-device-auth";
+const SERVICE_TOKEN = "test-service-admin-device-auth";
 
-process.env.DATABASE_URL = DB_URL;
-process.env.API_SECRET   = SECRET;
+process.env.DATABASE_URL        = DB_URL;
+process.env.API_SECRET          = SECRET;
+process.env.SERVICE_ADMIN_TOKEN = SERVICE_TOKEN;
+
+const ownerId    = "usr_devauth_owner_" + Date.now();
+const outsiderId = "usr_devauth_outsider_" + Date.now();
+let ownedRepoId: string;
 
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
 const JSON_ONLY = { "Content-Type": "application/json" };
@@ -64,6 +70,18 @@ beforeAll(async () => {
   });
   expect(repo.statusCode).toBe(201);
   repoId = repo.json().data.id;
+
+  // A second repo with a real tenant owner, so cross-tenant approval can be tested.
+  await db.insert(users).values({ id: ownerId,    email: `${ownerId}@test.local` });
+  await db.insert(users).values({ id: outsiderId, email: `${outsiderId}@test.local` });
+  const owned = await app.inject({
+    method: "POST", url: "/repos",
+    headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": ownerId, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "__test__ device auth owned" }),
+  });
+  expect(owned.statusCode).toBe(201);
+  expect(owned.json().data.ownerId).toBe(ownerId);
+  ownedRepoId = owned.json().data.id;
 });
 
 afterAll(async () => { await app.close(); });
@@ -266,5 +284,74 @@ describe("POST /auth/device/approve", () => {
       body: JSON.stringify({ userCode: data.userCode, repoId, agents: [{ name: "x", workerType: "claude", role: "worker" }] }),
     });
     expect(res.statusCode).toBe(401);
+  });
+
+  it("refuses to mint agents inside a repo the approving tenant does not own", async () => {
+    const { data } = await start();
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve",
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": outsiderId, "Content-Type": "application/json" },
+      body: JSON.stringify({ userCode: data.userCode, repoId: ownedRepoId, agents: [{ name: "x", workerType: "claude", role: "worker" }] }),
+    });
+    expect(res.statusCode).toBe(404);
+
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.userCode, data.userCode));
+    expect(row.status).toBe("pending");
+    expect(row.repoId).toBeNull();
+  });
+
+  it("lets the owning tenant approve its own repo", async () => {
+    const { data } = await start();
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve",
+      headers: { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": ownerId, "Content-Type": "application/json" },
+      body: JSON.stringify({ userCode: data.userCode, repoId: ownedRepoId, agents: [{ name: "x", workerType: "claude", role: "worker" }] }),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("GET /auth/device/pending/:userCode", () => {
+  const lookup = (userCode: string, headers: Record<string, string> = ADMIN) =>
+    app.inject({ method: "GET", url: `/auth/device/pending/${userCode}`, headers });
+
+  it("is not public: the approval screen is behind the service credential", async () => {
+    const { data } = await start();
+    expect((await lookup(data.userCode, JSON_ONLY)).statusCode).toBe(401);
+  });
+
+  it("returns what the client proposed, so the screen can pre-fill", async () => {
+    const { data } = await start({ repoName: "front-end-app-v2", runtimes: ["claude", "cursor"] });
+    const res = await lookup(data.userCode);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.proposed).toEqual({ repoName: "front-end-app-v2", runtimes: ["claude", "cursor"] });
+    expect(res.json().data.status).toBe("pending");
+  });
+
+  it("never hands back anything that would let the caller act as the client", async () => {
+    const { data, deviceCode } = await start();
+    const body = JSON.stringify((await lookup(data.userCode)).json());
+    expect(body).not.toContain(deviceCode);
+    expect(body).not.toContain(hashSecret(deviceCode));
+  });
+
+  it("says expired rather than unknown, so the screen can tell them to re-run", async () => {
+    const { data, deviceCode } = await start();
+    await db.update(deviceAuthorizations)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(deviceAuthorizations.deviceCodeHash, hashSecret(deviceCode)));
+    const res = await lookup(data.userCode);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.expired).toBe(true);
+  });
+
+  it("refuses a code that does not exist", async () => {
+    expect((await lookup("ZZZZ-9999")).statusCode).toBe(404);
+  });
+
+  it("matches the code however the human typed it", async () => {
+    const { data } = await start();
+    expect((await lookup(data.userCode.toLowerCase())).statusCode).toBe(200);
   });
 });

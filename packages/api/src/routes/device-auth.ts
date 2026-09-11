@@ -5,6 +5,7 @@ import { deviceAuthorizations, invites, repos } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateDeviceCode, generateInviteCode, generateUserCode, hashSecret } from "../lib/tokens.js";
+import { assertRepoAccess } from "../lib/ownership.js";
 
 const TTL_SECONDS = 10 * 60;
 const POLL_INTERVAL_SECONDS = 5;
@@ -132,11 +133,33 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     return reply.status(200).send({ data: { repoId }, invites: minted });
   });
 
+  // Service-admin only: what the approval screen reads to pre-fill itself.
+  fastify.get<{ Params: { userCode: string } }>("/auth/device/pending/:userCode", async (request, reply) => {
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.userCode, request.params.userCode.trim().toUpperCase()));
+    if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
+
+    // Named fields, not the row: deviceCodeHash must never leave the server.
+    return reply.status(200).send({
+      data: {
+        userCode:  row.userCode,
+        status:    row.status,
+        proposed:  row.proposed,
+        expiresAt: row.expiresAt,
+        expired:   row.expiresAt.getTime() < Date.now(),
+      },
+    });
+  });
+
   // Service-admin only: relai-cloud calls this once a human has approved.
   fastify.post("/auth/device/approve", async (request, reply) => {
     const body = approveSchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
 
+    // Ownership, not mere existence: approving mints agents inside the repo, so
+    // a signed-in tenant must not be able to name someone else's.
+    const access = await assertRepoAccess(request, db, body.data.repoId);
+    if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
     const [repo] = await db.select().from(repos).where(eq(repos.id, body.data.repoId));
     if (!repo) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 

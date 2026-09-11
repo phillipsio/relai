@@ -213,7 +213,7 @@ async function run(opts: { api?: string }) {
           writeConfig({ apiUrl: api, apiToken: agent.token, agentId: agent.data.id, agentName: invite.name, repoId, specialization: invite.specialization ?? undefined });
           wroteCliConfig = invite.name;
         } else {
-          writeMcpConfig(dest, { command: "npx", args: ["-y", "-p", MCP_PACKAGE, "pitboss-mcp"], env });
+          writeMcpConfig(dest, { command: "npx", args: ["-y", MCP_PACKAGE, "mcp"], env });
         }
         written.push(dest);
         excludeIfUntracked(root, dest);

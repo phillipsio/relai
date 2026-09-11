@@ -1,6 +1,6 @@
 {
   "name": "@pitboss/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Connect your coding agents to a pitboss instance",
   "keywords": [
@@ -26,8 +26,7 @@
     "access": "public"
   },
   "bin": {
-    "pitboss": "dist/cli.js",
-    "pitboss-mcp": "dist/mcp.js"
+    "pitboss": "dist/cli.js"
   },
   "files": [
     "dist",

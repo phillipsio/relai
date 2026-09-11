@@ -13,6 +13,7 @@ import { startCommand } from "./commands/start.js";
 import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
 import { repoInviteCommand, loginCommand } from "./commands/invite.js";
 import { joinCommand } from "./commands/join.js";
+import { mcpCommand } from "./commands/mcp.js";
 import { watchCommand } from "./commands/watch.js";
 
 // Read the version from package.json so `relai --version` always matches the
@@ -37,6 +38,12 @@ program
   });
 
 // ── init ─────────────────────────────────────────────────────────────────────
+
+program
+  .command("mcp", { hidden: true })
+  .description("Run the MCP server on stdio (used by agent config, not by hand)")
+  .allowUnknownOption()
+  .action(mcpCommand);
 
 program
   .command("join")

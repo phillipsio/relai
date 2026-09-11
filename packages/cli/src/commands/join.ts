@@ -46,6 +46,30 @@ async function postJson(url: string, body: unknown, token?: string) {
   return { status: res.status, payload };
 }
 
+async function getJson(url: string, token: string) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  let payload: Record<string, unknown> = {};
+  try { payload = await res.json() as Record<string, unknown>; } catch { /* non-JSON error body */ }
+  return { status: res.status, payload };
+}
+
+// Each agent messages the next and the recipient reads it back. One pass proves
+// every token authenticates, and that threads, delivery and the read path work.
+async function handshake(api: string, repoId: string, team: { name: string; id: string; token: string }[]) {
+  if (team.length < 2) return { attempted: 0, delivered: 0 };
+  let delivered = 0;
+  for (let i = 0; i < team.length; i++) {
+    const from = team[i];
+    const to = team[(i + 1) % team.length];
+    const sent = await postJson(`${api}/agents/${to.id}/messages`, { type: "status", body: "ping from onboarding" }, from.token);
+    if (sent.status !== 201) continue;
+    const inbox = await getJson(`${api}/messages/unread?agentId=${encodeURIComponent(to.id)}&repoId=${encodeURIComponent(repoId)}`, to.token);
+    const rows = (inbox.payload as { data?: { body?: string }[] }).data ?? [];
+    if (inbox.status === 200 && rows.some((m) => m.body === "ping from onboarding")) delivered++;
+  }
+  return { attempted: team.length, delivered };
+}
+
 function writeMcpConfig(target: string, entry: Record<string, unknown>) {
   let existing: Record<string, unknown> | null = null;
   if (existsSync(target)) {
@@ -128,6 +152,7 @@ export async function joinCommand(opts: { api?: string }) {
 
   console.log("");
   const connected: { name: string; workerType: WorkerType; targets: string[] }[] = [];
+  const team: { name: string; id: string; token: string }[] = [];
   for (const invite of invites) {
     const accepted = await postJson(`${api}/auth/accept-invite`, {
       code: invite.code, name: invite.name, role: invite.role,
@@ -152,12 +177,20 @@ export async function joinCommand(opts: { api?: string }) {
       excludeIfUntracked(root, target);
     }
     connected.push({ name: invite.name, workerType: invite.workerType, targets });
+    team.push({ name: invite.name, id: agent.data.id, token: agent.token });
     console.log(`  ${chalk.green("✓")} ${invite.name} ${chalk.dim(`(${invite.role}${invite.specialization ? `, ${invite.specialization}` : ""})`)}`);
   }
 
   if (connected.length === 0) {
     console.error(chalk.red("\n  Nothing was connected."));
     process.exit(1);
+  }
+
+  const shook = await handshake(api, repoId, team);
+  if (shook.attempted > 0) {
+    const ok = shook.delivered === shook.attempted;
+    console.log(`\n  ${ok ? chalk.green("✓") : chalk.yellow("!")} ${shook.delivered}/${shook.attempted} agents exchanged a message`);
+    if (!ok) console.log(chalk.yellow("    They are connected, but messaging did not round-trip. Check the dashboard."));
   }
 
   console.log(chalk.bold("\n  You're in.\n"));

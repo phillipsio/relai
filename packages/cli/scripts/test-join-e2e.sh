@@ -73,6 +73,7 @@ APPROVE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/device/appro
 
 wait $JOIN_PID 2>/dev/null || true
 grep -q "You're in" "$SANDBOX/join.log" && check "join reports success" ok || check "join reports success" no "$(tail -5 "$SANDBOX/join.log")"
+grep -qE "2/2 agents exchanged a message" "$SANDBOX/join.log" && check "the two agents DM each other and read it back" ok || check "the two agents DM each other and read it back" no "$(grep -i 'exchanged' "$SANDBOX/join.log" || echo 'no handshake line')"
 
 python3 - "$WORK" "$HOME" <<'PY' && check "config files are correct" ok || check "config files are correct" no
 import json, os, sys, stat
@@ -99,12 +100,19 @@ fi
 
 grep -q "^\.mcp\.json$" "$WORK/.git/info/exclude" 2>/dev/null && check "repo config is git-excluded" ok || check "repo config is git-excluded" no
 
-psql_ "delete from tokens where agent_id in (select id from agents where repo_id='$REPO');
+psql_ "delete from messages where thread_id in (select id from threads where repo_id='$REPO');
+       delete from subscriptions where agent_id in (select id from agents where repo_id='$REPO');
+       delete from events where repo_id='$REPO';
+       delete from routing_log where task_id in (select id from tasks where repo_id='$REPO');
+       delete from verification_log where task_id in (select id from tasks where repo_id='$REPO');
+       delete from tasks where repo_id='$REPO';
+       delete from threads where repo_id='$REPO';
+       delete from tokens where agent_id in (select id from agents where repo_id='$REPO');
        delete from invites where repo_id='$REPO';
-       delete from agents where repo_id='$REPO';
        delete from device_authorizations where repo_id='$REPO';
+       delete from agents where repo_id='$REPO';
        delete from repos where id='$REPO';
-       delete from users where id='$OWNER';" >/dev/null
+       delete from users where id='$OWNER';" >/dev/null 2>&1 || echo 'WARN: teardown left rows behind'
 
 echo ""
 echo "JOIN E2E: $pass passed, $fail failed"

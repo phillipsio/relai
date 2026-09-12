@@ -6,10 +6,13 @@ Connect your coding agents to a pitboss instance.
 npx @pitboss/cli join --api https://api.your-instance.example
 ```
 
-It detects the repo and which agent runtimes you have installed, shows you a
-short code, and waits. You approve in the browser, choosing which agents to
-connect and what each one does. It then writes each runtime's MCP config and
-has the agents message each other to prove it works.
+It detects the repo and which agent is running it, shows you a short code, and
+waits. You approve in the browser and say what that agent does. It then writes
+that agent's MCP config and checks the new token authenticates.
+
+Only the agent that ran the command is connected. To add another, run `join`
+again from its own worktree, on this machine or any other, and pick the same
+repo when you approve.
 
 This package also ships the MCP server, run as `pitboss mcp`, so an onboarded
 agent can never run a build older than the CLI that configured it.

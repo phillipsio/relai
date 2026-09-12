@@ -68,12 +68,12 @@ grep -qE "Agent +claude" "$SANDBOX/join.log" && check "join names the agent runn
 
 APPROVE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/device/approve" \
   -H "Authorization: Bearer $ADMIN" -H "X-Owner-Id: $OWNER" -H 'Content-Type: application/json' \
-  -d "{\"userCode\":\"$CODE\",\"repoId\":\"$REPO\",\"agents\":[{\"name\":\"claude-code\",\"workerType\":\"claude\",\"role\":\"orchestrator\"},{\"name\":\"cursor\",\"workerType\":\"cursor\",\"role\":\"worker\",\"specialization\":\"reviewer\"}]}")
+  -d "{\"userCode\":\"$CODE\",\"repoId\":\"$REPO\",\"agents\":[{\"name\":\"claude-code\",\"workerType\":\"claude\",\"role\":\"orchestrator\"}]}")
 [ "$APPROVE" = "200" ] && check "approval is accepted" ok || check "approval is accepted" no "HTTP $APPROVE"
 
 wait $JOIN_PID 2>/dev/null || true
 grep -q "You're in" "$SANDBOX/join.log" && check "join reports success" ok || check "join reports success" no "$(tail -5 "$SANDBOX/join.log")"
-grep -qE "2/2 agents exchanged a message" "$SANDBOX/join.log" && check "the two agents DM each other and read it back" ok || check "the two agents DM each other and read it back" no "$(grep -i 'exchanged' "$SANDBOX/join.log" || echo 'no handshake line')"
+grep -q "token authenticates" "$SANDBOX/join.log" && check "the one agent's token is proved against the API" ok || check "the one agent's token is proved against the API" no "$(grep -iE 'authenticates|exchanged' "$SANDBOX/join.log" || echo 'no verification line')"
 
 python3 - "$WORK" "$HOME" <<'PY' && check "config files are correct" ok || check "config files are correct" no
 import json, os, sys, stat
@@ -82,11 +82,9 @@ mcp = json.load(open(os.path.join(work, ".mcp.json")))
 assert mcp["mcpServers"]["playwright"]["command"] == "npx", "sibling server was lost"
 assert mcp["theme"] == "dark", "unrelated top-level key was lost"
 assert mcp["mcpServers"]["relai"]["env"]["API_SECRET"].startswith("aio_"), "no agent token written"
-cur = json.load(open(os.path.join(work, ".cursor", "mcp.json")))
-assert cur["mcpServers"]["relai"]["env"]["AGENT_ID"].startswith("agent_"), "cursor config missing agent"
-assert mcp["mcpServers"]["relai"]["env"]["API_SECRET"] != cur["mcpServers"]["relai"]["env"]["API_SECRET"], "both agents share one token"
-for p in (os.path.join(work, ".mcp.json"), os.path.join(work, ".cursor", "mcp.json")):
-    assert stat.S_IMODE(os.stat(p).st_mode) == 0o600, f"{p} is not 600"
+cursor_cfg = os.path.join(work, ".cursor", "mcp.json")
+assert not os.path.exists(cursor_cfg), "wrote a config for an agent that was never approved"
+assert stat.S_IMODE(os.stat(os.path.join(work, ".mcp.json")).st_mode) == 0o600, ".mcp.json is not 600"
 print(json.dumps({"token": mcp["mcpServers"]["relai"]["env"]["API_SECRET"]}), file=open(os.path.join(home, "token.json"), "w"))
 PY
 

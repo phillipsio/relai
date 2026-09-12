@@ -36,13 +36,12 @@ const startSchema = z.object({
   proposed: z.object({
     repoName: z.string().max(200).optional(),
     remote:   z.string().max(400).optional(),
-    host:     z.string().max(40).optional(),
-    runtimes: z.array(z.string().max(40)).max(20).optional(),
+    host:     z.enum(WORKER_TYPES).optional(),
   }).strict().default({}),
 });
 
 const grantSchema = z.object({
-  name:           z.string().min(1),
+  name:           z.string().min(1).max(80),
   workerType:     z.enum(WORKER_TYPES),
   role:           z.enum(["orchestrator", "worker"]).default("worker"),
   specialization: z.string().min(1).optional(),

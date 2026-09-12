@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
-import { detectHostRuntime, detectRuntimes, mergeMcpServer, runtimeTargets, RUNTIMES, type WorkerType } from "../lib/runtimes.js";
+import { detectHostRuntime, mergeMcpServer, runtimeTargets, type WorkerType } from "../lib/runtimes.js";
 import { writeConfig, configPath as cliConfigPath } from "../config.js";
 import { MCP_SERVER_ENTRY } from "../lib/mcp-entry.js";
 
@@ -58,7 +58,11 @@ async function getJson(url: string, token: string) {
 // Each agent messages the next and the recipient reads it back. One pass proves
 // every token authenticates, and that threads, delivery and the read path work.
 async function handshake(api: string, repoId: string, team: { name: string; id: string; token: string }[]) {
-  if (team.length < 2) return { attempted: 0, delivered: 0 };
+  if (team.length === 1) {
+    const solo = team[0];
+    const probe = await getJson(`${api}/messages/unread?agentId=${encodeURIComponent(solo.id)}&repoId=${encodeURIComponent(repoId)}`, solo.token);
+    return { attempted: 1, delivered: probe.status === 200 ? 1 : 0, solo: true };
+  }
   let delivered = 0;
   for (let i = 0; i < team.length; i++) {
     const from = team[i];
@@ -133,7 +137,6 @@ async function run(opts: { api?: string }) {
   const { root, remote, repoName } = describeRepo(cwd);
   const home = homedir();
   const host = detectHostRuntime();
-  const installed = detectRuntimes({ home, repo: root });
 
   console.log(chalk.bold("\npitboss join\n"));
   console.log(`  Repo      ${chalk.cyan(repoName)}${remote ? chalk.dim(`  (${remote})`) : ""}`);
@@ -141,7 +144,7 @@ async function run(opts: { api?: string }) {
   console.log(chalk.dim("            Add the rest later; they each want their own worktree."));
 
   const started = await postJson(`${api}/auth/device/start`, {
-    proposed: { repoName, remote, host: host ?? undefined, runtimes: installed },
+    proposed: { repoName, remote, host: host ?? undefined },
   });
   if (started.status !== 201) {
     console.error(chalk.red(started.status === 429
@@ -241,7 +244,7 @@ async function run(opts: { api?: string }) {
 
   if (failed.length) {
     console.log(chalk.red("\n  Created but not configured (revoke these if you do not re-run):"));
-    for (const f of failed) console.log(chalk.red(`    ${f.name} (${f.id}) — ${f.why}`));
+    for (const f of failed) console.log(chalk.red(`    ${f.name} (${f.id}): ${f.why}`));
   }
 
   if (skipped.length) {
@@ -253,8 +256,9 @@ async function run(opts: { api?: string }) {
   const shook = await handshake(api, repoId, team);
   if (shook.attempted > 0) {
     const ok = shook.delivered === shook.attempted;
-    console.log(`\n  ${ok ? chalk.green("✓") : chalk.yellow("!")} ${shook.delivered}/${shook.attempted} agents exchanged a message`);
-    if (!ok) console.log(chalk.yellow("    They are connected, but messaging did not round-trip. Check the dashboard."));
+    const what = "solo" in shook ? "token authenticates" : `${shook.delivered}/${shook.attempted} agents exchanged a message`;
+    console.log(`\n  ${ok ? chalk.green("✓") : chalk.yellow("!")} ${what}`);
+    if (!ok) console.log(chalk.yellow("    The agent was created, but its token did not work. Check the dashboard."));
   }
 
   const wrote = [...new Set(connected.flatMap((c) => c.targets))];
@@ -269,8 +273,8 @@ async function run(opts: { api?: string }) {
   if (wrote.length) console.log(`  wrote     ${wrote.map((t) => t.replace(home, "~")).join("\n            ")}`);
   console.log(chalk.yellow("\n  Restart this session before using pitboss."));
   console.log(chalk.dim("  A running MCP client keeps the tool schema it got at initialize."));
-  console.log(chalk.dim("\n  To add another agent:"));
-  console.log(chalk.dim(`    same machine   give it its own worktree, then: pitboss login --invite <code>`));
-  console.log(chalk.dim(`    somewhere else pitboss repo invite, then run that command there`));
+  console.log(chalk.dim("\n  To add another agent, on this machine or any other:"));
+  console.log(chalk.dim("    give it its own worktree, run pitboss join there,"));
+  console.log(chalk.dim(`    and pick ${repoName} on the approval screen.`));
   console.log("");
 }

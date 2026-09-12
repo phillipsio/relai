@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeMcpServer, runtimeTargets, RUNTIMES } from "./runtimes.js";
+import { mergeMcpServer, runtimeTargets, detectHostRuntime, RUNTIMES } from "./runtimes.js";
 
 const ENTRY = {
   command: "npx",
@@ -65,16 +65,39 @@ describe("runtimeTargets", () => {
 
   it("names a target for every runtime it offers, so none can be silently skipped", () => {
     for (const r of RUNTIMES) {
-      expect(runtimeTargets(r.workerType, { home, repo }).length).toBeGreaterThan(0);
+      expect(runtimeTargets(r, { home, repo }).length).toBeGreaterThan(0);
     }
   });
 
   it("never writes outside the repo or the home directory", () => {
     for (const r of RUNTIMES) {
-      for (const t of runtimeTargets(r.workerType, { home, repo })) {
+      for (const t of runtimeTargets(r, { home, repo })) {
         expect(t.startsWith(home) || t.startsWith(repo)).toBe(true);
         expect(t).not.toContain("..");
       }
+    }
+  });
+});
+
+describe("detectHostRuntime", () => {
+  it("names the agent whose environment it is running in", () => {
+    expect(detectHostRuntime({ CLAUDECODE: "1" })).toBe("claude");
+    expect(detectHostRuntime({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("claude");
+    expect(detectHostRuntime({ CURSOR_INVOKED_AS: "agent" })).toBe("cursor");
+  });
+
+  it("returns null rather than guessing when nothing identifies itself", () => {
+    expect(detectHostRuntime({})).toBeNull();
+    expect(detectHostRuntime({ TERM_PROGRAM: "Apple_Terminal", SHELL: "/bin/zsh" })).toBeNull();
+  });
+
+  it("ignores a marker set to the empty string", () => {
+    expect(detectHostRuntime({ CLAUDECODE: "" })).toBeNull();
+  });
+
+  it("does not claim a runtime it cannot actually detect", () => {
+    for (const env of [{ WINDSURF_SESSION_ID: "1" }, { GEMINI_CLI: "1" }, { CODEX_SESSION_ID: "1" }, { COPILOT_AGENT_ID: "1" }]) {
+      expect(detectHostRuntime(env)).toBeNull();
     }
   });
 });

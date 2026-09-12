@@ -48,7 +48,7 @@ export async function repoInviteCommand(opts: { name?: string; specialization?: 
     console.log(`
 ${chalk.bold("Send this to the new agent:")}
 
-  ${chalk.cyan(`relai login --invite ${code}`)}
+  ${chalk.cyan(`pitboss login --invite ${code}`)}
 
 ${chalk.dim("expires:")}     ${invite.expiresAt}
 ${chalk.dim("invite id:")}   ${invite.id}

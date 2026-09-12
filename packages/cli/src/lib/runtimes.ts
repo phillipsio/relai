@@ -1,25 +1,10 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export type WorkerType = "claude" | "copilot" | "cursor" | "windsurf" | "gemini" | "gpt" | "mcp" | "human";
 
-export interface Runtime {
-  workerType: WorkerType;
-  /** Paths whose presence means this runtime is in use here. */
-  markers: (ctx: Paths) => string[];
-}
-
 export interface Paths { home: string; repo: string }
 
-export const RUNTIMES: Runtime[] = [
-  { workerType: "claude",   markers: ({ home, repo }) => [join(repo, ".claude"), join(repo, ".mcp.json"), join(home, ".claude")] },
-  { workerType: "cursor",   markers: ({ home, repo }) => [join(repo, ".cursor"), join(home, ".cursor")] },
-  { workerType: "windsurf", markers: ({ home })       => [join(home, ".codeium", "windsurf")] },
-  { workerType: "gemini",   markers: ({ home })       => [join(home, ".gemini")] },
-  { workerType: "copilot",  markers: ({ home })       => [join(home, ".config", "github-copilot")] },
-  { workerType: "gpt",      markers: ({ home })       => [join(home, ".codex")] },
-  { workerType: "mcp",      markers: () => [] },
-];
+export const RUNTIMES: WorkerType[] = ["claude", "cursor", "windsurf", "gemini", "copilot", "gpt", "mcp"];
 
 // Where each runtime keeps the MCP config it actually reads. A wrong path here
 // fails silently: the agent is minted and simply never appears.
@@ -37,17 +22,11 @@ export function runtimeTargets(workerType: WorkerType, { home, repo }: Paths): s
   }
 }
 
-// Which agent is running THIS process, from its own environment. Dotfiles only
-// say a runtime is installed, which is why join used to offer an agent to every
-// tool the machine had ever seen. Returns null when nothing identifies itself;
-// the human picks on the approval screen rather than the CLI guessing.
+// Only entries measured against a live process. A guess and an absent entry both
+// return null, but a guess also looks like coverage.
 const HOST_MARKERS: [WorkerType, string[]][] = [
-  ["claude",   ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"]],
-  ["cursor",   ["CURSOR_TRACE_ID", "CURSOR_SESSION_ID"]],
-  ["windsurf", ["WINDSURF_SESSION_ID", "CODEIUM_SESSION_ID"]],
-  ["gemini",   ["GEMINI_CLI", "GEMINI_SESSION_ID"]],
-  ["gpt",      ["CODEX_SESSION_ID", "CODEX_SANDBOX"]],
-  ["copilot",  ["COPILOT_AGENT_ID"]],
+  ["claude", ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"]],
+  ["cursor", ["CURSOR_INVOKED_AS"]],
 ];
 
 export function detectHostRuntime(env: NodeJS.ProcessEnv = process.env): WorkerType | null {
@@ -55,10 +34,6 @@ export function detectHostRuntime(env: NodeJS.ProcessEnv = process.env): WorkerT
     if (keys.some((k) => env[k])) return worker;
   }
   return null;
-}
-
-export function detectRuntimes(paths: Paths): WorkerType[] {
-  return RUNTIMES.filter((r) => r.markers(paths).some((m) => existsSync(m))).map((r) => r.workerType);
 }
 
 type Json = Record<string, unknown>;

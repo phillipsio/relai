@@ -1,3 +1,4 @@
+import { agentRosterLine, oneLine, promptList } from "./roster.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentRow, TaskRow, RoutingResult } from "./rules.js";
 
@@ -25,19 +26,16 @@ const ROUTING_TOOL = {
 };
 
 function buildMessage(task: TaskRow, agents: AgentRow[]): string {
-  const agentList = agents.map((a) => {
-    const age = Date.now() - new Date(a.lastSeenAt).getTime();
-    const online = age < 10 * 60 * 1000;
-    return `- id: ${a.id}  name: ${a.name}  specialization: ${a.specialization ?? "none"}  domains: [${a.domains.join(", ")}]  online: ${online}`;
-  }).join("\n");
+  const now = Date.now();
+  const agentList = agents.map((a) => agentRosterLine(a, now)).join("\n");
 
 
   return `Task to assign:
   id: ${task.id}
   title: ${task.title}
   description: ${task.description}
-  domains: [${task.domains.join(", ")}]
-  specialization: ${task.specialization ?? "none"}
+  domains: [${promptList(task.domains)}]
+  specialization: ${task.specialization ? oneLine(task.specialization) : "none"}
   priority: ${task.priority}
 
 Available agents:

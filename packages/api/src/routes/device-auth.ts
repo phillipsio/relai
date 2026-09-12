@@ -1,3 +1,4 @@
+import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { and, eq, isNull, lt } from "drizzle-orm";
@@ -47,8 +48,8 @@ const grantSchema = z.object({
   name:           z.string().min(1).max(80),
   workerType:     z.enum(WORKER_TYPES),
   role:           z.enum(["orchestrator", "worker"]).default("worker"),
-  specialization: z.string().min(1).optional(),
-  domains:        z.array(z.string()).default([]),
+  specialization: promptSafeText.min(1).optional(),
+  domains:        promptSafeDomains.default([]),
 });
 
 const approveSchema = z.object({

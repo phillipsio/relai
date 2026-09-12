@@ -1,3 +1,4 @@
+import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray, asc, desc, isNull, count } from "drizzle-orm";
@@ -109,7 +110,7 @@ const createSchema = z.object({
   status:         z.enum(["pending", "assigned", "in_progress", "completed", "blocked", "cancelled"]).optional(),
   // Either an agent ID or the literal "@auto" (defer to routing scheduler).
   assignedTo:     z.string().optional(),
-  domains:        z.array(z.string()).default([]),
+  domains:        promptSafeDomains.default([]),
   specialization: z.string().optional(),
   // Parent Epic (a "plan" thread) this Issue is spawned from. Optional.
   epicId:         z.string().optional(),
@@ -156,7 +157,7 @@ const updateSchema = z.object({
   status:         z.enum(["pending", "assigned", "in_progress", "pending_verification", "completed", "blocked", "cancelled"]).optional(),
   priority:       z.enum(["low", "normal", "high", "urgent"]).optional(),
   assignedTo:     z.string().nullable().optional(),
-  domains:        z.array(z.string()).optional(),
+  domains:        promptSafeDomains.optional(),
   epicId:         z.string().nullable().optional(),
   threadId:       z.string().nullable().optional(),
   metadata:       z.record(z.unknown()).optional(),
@@ -749,7 +750,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     title:          z.string().min(1).optional(),
     description:    z.string().min(1).optional(),
     priority:       z.enum(["low", "normal", "high", "urgent"]).optional(),
-    domains:        z.array(z.string()).optional(),
+    domains:        promptSafeDomains.optional(),
     specialization: z.string().optional(),
     verifyKind:       z.enum(["shell", "file_exists", "thread_concluded", "reviewer_agent", "git_pushed"]).optional(),
     verifyCommand:    z.string().min(1).optional(),

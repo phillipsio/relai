@@ -1,3 +1,4 @@
+import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -11,7 +12,7 @@ const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
 const createSchema = z.object({
   suggestedName: z.string().min(1).optional(),
-  suggestedSpecialization: z.string().min(1).optional(),
+  suggestedSpecialization: promptSafeText.min(1).optional(),
   ttlSeconds: z.number().int().positive().optional(),
   // Pinned onto the invite row. Defaults to worker so an unqualified invite can
   // never hand out the privileged role.
@@ -28,7 +29,7 @@ const acceptSchema = z.object({
   role:           z.enum(["orchestrator", "worker"]).optional(),
   specialization: z.string().min(1).max(80).regex(/^[^\r\n]+$/).optional(),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
-  domains:        z.array(z.string()).default([]),
+  domains:        promptSafeDomains.default([]),
 });
 
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {

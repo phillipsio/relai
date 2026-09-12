@@ -116,6 +116,17 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
       continue;
     }
 
+    // The Claude arm returns whatever the model names, and the roster it reads is
+    // built from agent-controlled text. Only a real candidate may be assigned.
+    if (!workers.some((w) => w.id === result.agentId)) {
+      logOnce(
+        `route-offroster:${task.id}`,
+        `[scheduler] Task ${task.id} routed to ${result.agentId}, which was not a candidate — skipping`,
+        console.warn,
+      );
+      continue;
+    }
+
     resetRouteLogs(task.id);
     await db.update(tasks).set({ status: "assigned", assignedTo: result.agentId }).where(eq(tasks.id, task.id));
     await db.insert(routingLog).values({

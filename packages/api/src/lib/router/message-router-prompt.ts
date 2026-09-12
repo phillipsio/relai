@@ -1,3 +1,4 @@
+import { agentRosterLine } from "./roster.js";
 // Prompt + tool schema used by the in-API message loop when classifying
 // handoff/question/finding messages with Claude. Ported from the standalone
 // orchestrator daemon. Kept verbatim where possible so the routing behaviour
@@ -29,17 +30,9 @@ Rules:
 - Never assign UNROUTABLE — always choose the best available option.
 - Be brief in messageBody and taskDescription — one to three sentences.`;
 
-// One agent per line, so a newline in a stored name would forge roster entries.
-const oneLine = (v: string) => v.replace(/[\r\n]+/g, " ").slice(0, 80);
-
 export function buildMessageRoutingContext(msg: PromptMessage, agents: PromptAgent[]): string {
   const now = Date.now();
-  const agentList = agents
-    .map((a) => {
-      const online = now - new Date(a.lastSeenAt).getTime() < 10 * 60 * 1000;
-      return `- id: ${a.id}  name: ${oneLine(a.name)}  specialization: ${a.specialization ? oneLine(a.specialization) : "none"}  domains: [${a.domains.map(oneLine).join(", ")}]  online: ${online}`;
-    })
-    .join("\n");
+  const agentList = agents.map((a) => agentRosterLine(a, now)).join("\n");
 
   return `Incoming message:
   type: ${msg.type}

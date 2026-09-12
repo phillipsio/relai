@@ -1,3 +1,4 @@
+import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray } from "drizzle-orm";
@@ -13,7 +14,7 @@ const registerSchema = z.object({
   role:           z.enum(["orchestrator", "worker"]),
   specialization: z.string().max(80).regex(/^[^\r\n]+$/).optional(),
   tier:           z.number().int().min(1).max(2).optional(),
-  domains:        z.array(z.string()).default([]),
+  domains:        promptSafeDomains.default([]),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
   repoPath:       z.string().optional(),
 });

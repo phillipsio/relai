@@ -73,7 +73,7 @@ APPROVE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/device/appro
 
 wait $JOIN_PID 2>/dev/null || true
 grep -q "You're in" "$SANDBOX/join.log" && check "join reports success" ok || check "join reports success" no "$(tail -5 "$SANDBOX/join.log")"
-grep -q "token authenticates" "$SANDBOX/join.log" && check "the one agent's token is proved against the API" ok || check "the one agent's token is proved against the API" no "$(grep -iE 'authenticates|exchanged' "$SANDBOX/join.log" || echo 'no verification line')"
+grep -qE "✓ token authenticates" "$SANDBOX/join.log" && check "the one agent's token is proved against the API" ok || check "the one agent's token is proved against the API" no "$(grep -iE 'authenticates|exchanged' "$SANDBOX/join.log" || echo 'no verification line')"
 
 python3 - "$WORK" "$HOME" <<'PY' && check "config files are correct" ok || check "config files are correct" no
 import json, os, sys, stat

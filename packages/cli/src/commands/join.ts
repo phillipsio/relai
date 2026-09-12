@@ -256,9 +256,14 @@ async function run(opts: { api?: string }) {
   const shook = await handshake(api, repoId, team);
   if (shook.attempted > 0) {
     const ok = shook.delivered === shook.attempted;
-    const what = "solo" in shook ? "token authenticates" : `${shook.delivered}/${shook.attempted} agents exchanged a message`;
+    const solo = "solo" in shook;
+    const what = solo
+      ? (ok ? "token authenticates" : "token was refused by the API")
+      : `${shook.delivered}/${shook.attempted} agents exchanged a message`;
     console.log(`\n  ${ok ? chalk.green("✓") : chalk.yellow("!")} ${what}`);
-    if (!ok) console.log(chalk.yellow("    The agent was created, but its token did not work. Check the dashboard."));
+    if (!ok) console.log(chalk.yellow(solo
+      ? "    The agent was created, but its token did not work. Check the dashboard."
+      : "    They are connected, but messaging did not round-trip. Check the dashboard."));
   }
 
   const wrote = [...new Set(connected.flatMap((c) => c.targets))];

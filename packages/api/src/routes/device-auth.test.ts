@@ -315,13 +315,13 @@ describe("POST /auth/device/approve", () => {
     });
     expect(res.statusCode).toBe(200);
   });
-});
 
   it("refuses an agent name longer than the grant schema allows", async () => {
     const { data } = await start();
     const res = await approve(data.userCode, [{ name: "x".repeat(81), workerType: "claude", role: "worker" }]);
     expect(res.statusCode).toBe(400);
   });
+});
 
 describe("tenant binding", () => {
   const asOwner = (id: string) => ({ Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": id, "Content-Type": "application/json" });
@@ -546,7 +546,15 @@ describe("POST /auth/device/start hardening", () => {
       process.env.DEVICE_START_RATE_LIMIT = prev;
     }
   });
-});
+
+  it("still accepts the runtimes field every published CLI sends", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/start",
+      headers: JSON_ONLY,
+      body: JSON.stringify({ proposed: { repoName: "r", remote: "git@github.com:a/b.git", runtimes: ["claude", "cursor"] } }),
+    });
+    expect(res.statusCode).toBe(201);
+  });
 
   it("refuses a host that is not a worker type, so it cannot become an agent name", async () => {
     const res = await app.inject({
@@ -556,6 +564,7 @@ describe("POST /auth/device/start hardening", () => {
     });
     expect(res.statusCode).toBe(400);
   });
+});
 
 describe("GET /auth/device/pending/:userCode", () => {
   const lookup = (userCode: string, headers: Record<string, string> = DASHBOARD()) =>

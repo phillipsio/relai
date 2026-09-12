@@ -20,13 +20,13 @@ const createSchema = z.object({
 
 const acceptSchema = z.object({
   code:           z.string().min(1),
-  name:           z.string().min(1),
+  name:           z.string().min(1).max(80).regex(/^[^\r\n]+$/),
   // Advisory only: the granted role comes from the invite. Kept so existing
   // clients keep working, and cross-checked below so a mismatch is refused
   // rather than silently downgraded. Must NOT default, or omitting it would
   // conflict with an orchestrator invite.
   role:           z.enum(["orchestrator", "worker"]).optional(),
-  specialization: z.string().min(1).optional(),
+  specialization: z.string().min(1).max(80).regex(/^[^\r\n]+$/).optional(),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
   domains:        z.array(z.string()).default([]),
 });

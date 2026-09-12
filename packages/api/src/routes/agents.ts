@@ -9,9 +9,9 @@ import type { Db } from "@getrelai/db";
 
 const registerSchema = z.object({
   repoId:      z.string(),
-  name:           z.string().min(1),
+  name:           z.string().min(1).max(80).regex(/^[^\r\n]+$/),
   role:           z.enum(["orchestrator", "worker"]),
-  specialization: z.string().optional(),
+  specialization: z.string().max(80).regex(/^[^\r\n]+$/).optional(),
   tier:           z.number().int().min(1).max(2).optional(),
   domains:        z.array(z.string()).default([]),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),

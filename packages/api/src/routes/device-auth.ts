@@ -37,6 +37,9 @@ const startSchema = z.object({
     repoName: z.string().max(200).optional(),
     remote:   z.string().max(400).optional(),
     host:     z.enum(WORKER_TYPES).optional(),
+    // Every published CLI sends this. Accepted and ignored so .strict() does not
+    // 400 them; join reports a 400 as an unreachable API.
+    runtimes: z.array(z.string().max(40)).max(20).optional(),
   }).strict().default({}),
 });
 

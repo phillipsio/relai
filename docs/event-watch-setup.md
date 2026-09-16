@@ -4,7 +4,7 @@ Make an already-running Claude Code agent listen for relai events (new tasks
 assigned to it, messages) while it works normally, and auto-start that listener
 on every session. Zero idle model cost: the watcher blocks as a background
 process and the harness re-invokes the agent when that process ends. A real event
-is one way it ends; an external kill is the other (see Two kinds of wake below).
+is one way it ends; an external kill is the other (see Three kinds of wake below).
 
 This is "Mode 2" from `docs/plan-event-driven-agent-watch.md`. For a standalone
 headless daemon with no interactive session, use the `event-worker` package instead.
@@ -70,19 +70,35 @@ $HOME/github/relai/scripts/relai-watch.sh
 ```
 
 When it ends, read the background output before anything else, then follow
-**Two kinds of wake** below.
+**Three kinds of wake** below.
 
-## Two kinds of wake
+## Three kinds of wake
 
-The harness re-invokes the agent whenever the background task ends, and two very
+The harness re-invokes the agent whenever the background task ends, and three very
 different things end it. Telling them apart is worth a full turn.
 
 | Output | What happened | What to do |
 |---|---|---|
 | contains relai event JSON | a real event | call `session_start`, handle what's new, relaunch |
-| no event JSON | the background task was killed | relaunch and resume; do **not** call `session_start` |
+| no event JSON, and contains `RELAI-CONFIG-REFUSED` | a config the watcher cannot use | do **not** relaunch; tell the operator and stop |
+| neither | the background task was killed | relaunch and resume; do **not** call `session_start` |
 
-Decide on the event JSON alone, never on the exact shape of a kill. A reap usually
+Decide on the event JSON FIRST, and only when there is none look for the marker.
+That order matters: event payloads carry peer-authored message bodies and task titles,
+so a task named after the marker would otherwise read as a refusal and silence a real
+wake. The watcher refuses before it opens the stream, so it never prints both.
+
+The watcher emits the marker for any config it cannot use: an unusable `API_URL`, a
+control character or bad shape in a credential, credentials it could not resolve at
+all, or `GET /agents/:id` answering 401, 403 or 404 (wrong id, revoked token, deleted
+agent). None of those clears on a retry, so relaunching loops forever at one model turn
+per cycle. That is the only case where a watcher that is not running is correct.
+
+A passing check does NOT prove the token belongs to that `AGENT_ID`: `GET /agents/:id`
+answers 200 for any agent in the same repo, so a sibling's id pasted into the config
+still passes. It proves the id exists and the token works, nothing more.
+
+Between the other two, decide on the event JSON alone, never on the exact shape of a kill. A reap usually
 leaves `[killed]` and nothing else, but a child dying on a signal also leaves a shell
 job-status line (`Abort trap: 6` was seen on 2026-08-28, 212 bytes instead of 10). That
 is still a kill. Matching "empty or `[killed]`" leaves that output in neither case.

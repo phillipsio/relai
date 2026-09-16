@@ -37,7 +37,11 @@ CASE 1 — the output contains relai event JSON. A real event arrived (a task as
 
 CASE 2 — the output contains no event JSON. Something killed the watcher; nothing happened in relai. Do NOT call session_start and do NOT reconcile: relaunch $watcher in the background and resume exactly what you were doing. Claude Code reaps background tasks on a recurring timer, so this is routine and carries no information. Reconciling here costs a full turn and finds nothing.
 
-Decide on the event JSON alone. A kill usually leaves "[killed]" and nothing else, but it can also leave a shell job-status line such as "Abort trap: 6" when the child dies on a signal, and that is still CASE 2. Anything that is not event JSON is CASE 2.
+CASE 3 — there is NO event JSON and the output contains RELAI-CONFIG-REFUSED. The watcher refused a config it cannot use: a wrong AGENT_ID, a revoked token, a deleted agent, an unusable API_URL. Do NOT relaunch: the answer is the same every time, so relaunching loops forever at one turn per cycle. Tell the operator what the line says and stop watching for this session. This is the one case where a watcher that is not running is the correct state.
+
+Decide CASE 1 on the event JSON FIRST, and only when there is none look for the marker. That order matters: event payloads carry peer-authored message bodies and task titles, so a task titled after this very marker would otherwise read as a refusal and silence a real wake. The watcher refuses before it ever opens the stream, so it can never print both.
+
+Between 2 and 3, a kill usually leaves "[killed]" and nothing else, but it can also leave a shell job-status line such as "Abort trap: 6" when the child dies on a signal, and that is still CASE 2. Output that is neither event JSON nor the marker is CASE 2.
 
 Repeat for the whole session.
 EOF

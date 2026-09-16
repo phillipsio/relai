@@ -118,10 +118,31 @@ fi
 
 API_URL="${API_URL:-http://localhost:3010}"
 
+# Every refusal that a relaunch cannot clear goes through here. The marker is
+# the whole point: the SessionStart hook otherwise reads a non-JSON exit as a
+# reap and tells the agent to relaunch, so a bad config loops at one model turn
+# per cycle. Operational failures that CAN clear (lock timeout, a replace that
+# lost a race) keep exiting 1 quietly and are deliberately not routed here.
+refuse() {
+  echo "relai-watch: RELAI-CONFIG-REFUSED $1" >&2
+  shift
+  for _line in "$@"; do echo "  $_line" >&2; done
+  exit 1
+}
+
 case "$API_URL" in
   http://*|https://*) ;;
-  *) echo "relai-watch: refusing a non-http(s) API_URL from config: $API_URL" >&2; exit 1 ;;
+  *) refuse "refusing a non-http(s) API_URL from config: $API_URL" ;;
 esac
+
+# Strip every trailing slash, once, here. relai-stream-wait.sh builds
+# "$API_URL/events" and "$API_URL/subscriptions" by concatenation, so a URL
+# ending in a slash yields //events, which Fastify does not route: the watcher
+# reconnects forever and never delivers. Normalising at each use instead would
+# let one caller disagree with another, which is worse than not normalising at
+# all, because the disagreeing caller reports healthy. The child receives the
+# normalized value as $1, not through the environment.
+API_URL="${API_URL%"${API_URL##*[!/]}"}"
 
 # A control character (newline in particular) in any of these reaches curl's
 # -K config file downstream (relai-stream-wait.sh) and injects config-file
@@ -131,8 +152,7 @@ for _n in API_URL API_SECRET AGENT_ID; do
   eval "_v=\${$_n:-}"
   case "$_v" in
     *[![:print:]]*)
-      echo "relai-watch: $_n from config contains a control character — refusing" >&2
-      exit 1
+      refuse "$_n from config contains a control character"
       ;;
   esac
 done
@@ -145,17 +165,16 @@ case "$AGENT_ID" in
   "") ;;
   agent_*)
     case "$AGENT_ID" in
-      *[![:alnum:]_-]*) echo "relai-watch: AGENT_ID '$AGENT_ID' contains a character outside [A-Za-z0-9_-] — refusing" >&2; exit 1 ;;
+      *[![:alnum:]_-]*) refuse "AGENT_ID '$AGENT_ID' contains a character outside [A-Za-z0-9_-]" ;;
     esac
     ;;
-  *) echo "relai-watch: AGENT_ID '$AGENT_ID' doesn't look like an agent id (expected agent_*)" >&2; exit 1 ;;
+  *) refuse "AGENT_ID '$AGENT_ID' doesn't look like an agent id (expected agent_*)" ;;
 esac
 
 if [ -z "${API_SECRET:-}" ] || [ -z "${AGENT_ID:-}" ]; then
-  echo "relai-watch: could not resolve API_SECRET / AGENT_ID." >&2
-  echo "  Searched .mcp.json in --repo-path, \$CLAUDE_PROJECT_DIR, and \$PWD up to the enclosing git root." >&2
-  echo "  Pass the repo dir explicitly (relai-watch.sh --repo-path /path/to/repo) or set the vars in env." >&2
-  exit 1
+  refuse "could not resolve API_SECRET / AGENT_ID." \
+    "Searched .mcp.json in --repo-path, \$CLAUDE_PROJECT_DIR, and \$PWD up to the enclosing git root." \
+    "Pass the repo dir explicitly (relai-watch.sh --repo-path /path/to/repo) or set the vars in env."
 fi
 
 # Tracking, so a watcher that dies is distinguishable from one with nothing to
@@ -181,6 +200,41 @@ on_signal() {
 trap 'on_signal TERM' TERM
 trap 'on_signal INT'  INT
 trap 'on_signal HUP'  HUP
+
+# The shape check above accepts a truncated id, and the pidfile below is keyed
+# on AGENT_ID, so a typo gets its own pidfile and streams beside the real
+# watcher. Both failures are silent.
+#
+# 401, 403 and 404 refuse: each is the API answering about this credential, and
+# none of them clears on a retry. 401 carries the deleted-agent case, because
+# tokens cascade on agent delete, so a deleted agent never reaches the 404 this
+# was written for. Everything else proceeds, since a timeout or a 5xx is not
+# evidence the id is wrong and refusing on a blip is worse than the bug.
+#
+# What this does NOT establish: that the token belongs to this agent. The route
+# answers 200 for any agent the caller can see, so a sibling's id pasted into
+# this config passes. GET /session/start would catch it, since it returns the
+# CALLER's own agent id, but it builds a multi-KB bundle to answer one field and
+# this runs on every relaunch.
+#
+# -K from a process substitution, not -H, which would put the token in ps.
+validate_agent_id() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+            -K <(printf 'header = "Authorization: Bearer %s"\n' "$API_SECRET") \
+            "$API_URL/agents/$AGENT_ID" 2>/dev/null)" || code=""
+  case "$code" in
+    401|403|404)
+      wlog "agent-validate refusing reason=$code"
+      refuse "the API rejected AGENT_ID '$AGENT_ID' with $code." \
+        "Fix the id or the token in .mcp.json. Relaunching will not clear this."
+      ;;
+    *)
+      wlog "agent-validate proceeding reason=${code:-unreachable}"
+      ;;
+  esac
+}
+validate_agent_id
 
 # At most one live watcher per agent. Not derived from RELAI_WATCH_LOG's
 # directory — that breaks when the log is silenced to /dev/null.

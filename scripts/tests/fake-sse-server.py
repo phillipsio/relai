@@ -8,6 +8,10 @@ EMIT_AFTER = float(sys.argv[1]) if len(sys.argv) > 1 else -1  # <0 = pings only
 # The real API pings every 25s. A tight interval here makes an orphaned curl
 # die of SIGPIPE on its own, which hides exactly the leak the tests check for.
 PING_EVERY = float(sys.argv[2]) if len(sys.argv) > 2 else 0.25
+# Status for GET /agents/<id>, so a test can stand in for "this id does not
+# exist" (404) or "this token is not scoped to it" (403). 200 by default, which
+# is what every pre-existing caller expects.
+AGENTS_STATUS = int(sys.argv[3]) if len(sys.argv) > 3 else 200
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -17,6 +21,14 @@ class H(BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(b"{}")
 
     def do_GET(self):
+        if self.path.startswith("/agents/"):
+            # 0 means accept the connection and never answer, which is what an
+            # egress filter that drops rather than resets looks like. Only a
+            # client-side timeout ends it.
+            if AGENTS_STATUS == 0:
+                time.sleep(120); return
+            self.send_response(AGENTS_STATUS); self.send_header("Content-Length", "2")
+            self.end_headers(); self.wfile.write(b"{}"); return
         if not self.path.startswith("/events"):
             self.send_response(200); self.send_header("Content-Length", "2")
             self.end_headers(); self.wfile.write(b"{}"); return

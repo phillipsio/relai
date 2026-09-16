@@ -63,7 +63,7 @@ The fix is a **background** listener (Claude Code Bash `run_in_background: true`
   background tasks on a recurring timer, and that exit wakes the agent with no event to
   show. The wake is unavoidable while a background-task exit is the only thing that can
   start a turn; what the hook can do is make that wake cheap. See
-  `docs/event-watch-setup.md`, "Two kinds of wake".
+  `docs/event-watch-setup.md`, "Three kinds of wake".
 
 ## Work items
 

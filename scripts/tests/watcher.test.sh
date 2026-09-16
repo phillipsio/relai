@@ -37,9 +37,9 @@ bad()  { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected '$3', got '$2')"; fi; }
 
 start_server() {
-  local emit="${1:--1}" ping="${2:-0.25}" out
+  local emit="${1:--1}" ping="${2:-0.25}" agents="${3:-200}" out
   out="$(mktemp)"
-  python3 "$HERE/fake-sse-server.py" "$emit" "$ping" >"$out" 2>/dev/null &
+  python3 "$HERE/fake-sse-server.py" "$emit" "$ping" "$agents" >"$out" 2>/dev/null &
   SRV_PID=$!
   for _ in $(seq 1 40); do
     PORT="$(head -1 "$out" 2>/dev/null)"
@@ -672,6 +672,218 @@ case "$ctx_reload" in
     ok "hook decides on the presence of event JSON, so unexpected output still classifies" ;;
   *) bad "hook gives no rule for output that is neither empty nor a bare [killed]" ;;
 esac
+
+# The watcher can now exit deliberately on a config the API rejects. Without a
+# rule for it the hook's own "anything else is CASE 2" sends the agent to
+# relaunch a permanent failure, once per turn, forever.
+# One LINE must carry both the marker and the instruction. Grepping the whole
+# text for either alone passes after the rule is deleted, because the marker
+# survives in the tie-breaking sentence and "relaunch" survives in CASE 2.
+if printf '%s' "$ctx_reload" | grep -qi 'RELAI-CONFIG-REFUSED.*not relaunch'; then
+  ok "hook's config-refusal rule names the marker and says not to relaunch"
+else
+  bad "hook has no single rule pairing RELAI-CONFIG-REFUSED with not relaunching, so a rejected AGENT_ID loops"
+fi
+
+# The marker appears in peer-authored event payloads (message bodies, task
+# titles), so a rule that outranks the event-JSON check turns a real wake into a
+# false refusal. The rule must be subordinate: no event JSON, THEN the marker.
+if printf '%s' "$ctx_reload" | grep -qi 'no event JSON and the output contains RELAI-CONFIG-REFUSED'; then
+  ok "hook's refusal rule is subordinate to the event-JSON check"
+else
+  bad "hook's refusal rule does not require the absence of event JSON, so a task titled after the marker silences a real event"
+fi
+case "$ctx_reload" in
+  *'event JSON FIRST'*|*'event JSON first'*) ok "…and the hook states that ordering explicitly" ;;
+  *) bad "hook does not tell the agent to decide the event JSON before the marker" ;;
+esac
+
+
+# --- AGENT_ID must RESOLVE, not merely look well formed -----------------------
+# The shape check above passes a truncated id, because a truncated agent id is
+# still a well-formed one. The watcher then subscribes to an agent that does not
+# exist, and a subscription to nobody looks exactly like a quiet one, which is
+# how a live Cursor worker was diagnosed as broken. The pidfile is keyed on
+# AGENT_ID too, so the single-instance guard cannot notice: the typo'd watcher
+# gets its own pidfile and runs happily beside the real one.
+
+# Bounded: before the check exists the watcher proceeds to the stream and never
+# returns, and macOS has no `timeout`. exec so $! is the leaf, not the subshell.
+watch_until_exit() { # outfile, agent, api_url [, logfile] -> RC = exit, or "running"
+  local out="$1" agent="$2" url="$3" log="${4:-/dev/null}" pid i
+  ( API_URL="$url" API_SECRET=t AGENT_ID="$agent" RELAI_WATCH_LOG="$log" \
+      exec bash "$SCRIPTS/relai-watch.sh" >"$out" 2>&1 ) &
+  pid=$!
+  for i in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || { wait "$pid"; RC=$?; return; }
+    sleep 0.1
+  done
+  kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  RC=running
+}
+
+# 401 carries the deleted-agent case: tokens cascade on agent delete, so a
+# deleted agent 401s at the auth plugin and never reaches the 404 this check was
+# written for. All three are the API answering about this credential.
+for status in 401 403 404; do
+  if start_server -1 0.25 "$status"; then
+    vout="$(mktemp)"; vlog="$(mktemp)"
+    watch_until_exit "$vout" agent_ghostid "http://127.0.0.1:$PORT" "$vlog"
+    stop_server
+    case "$RC" in
+      running) bad "a $status from GET /agents/:id did not stop the watcher" ;;
+      1)       ok  "a $status from GET /agents/:id refuses to start" ;;
+      *)       bad "a $status refused with rc=$RC, expected 1 like every other config guard" ;;
+    esac
+    # Ordering, asserted on the log, not the pidfile. Under the wrong ordering
+    # the pidfile IS created and then removed by the EXIT trap on the way out,
+    # so its absence afterwards looks identical either way. watcher-start is
+    # logged only once the pidfile is held, so its absence separates them.
+    if grep -q "agent-validate refusing reason=$status" "$vlog"; then
+      ok "a refused $status start records the refusal in the log"
+    else
+      bad "no agent-validate refusal logged for $status (log='$(tr '\n' ' ' < "$vlog" | head -c 120)')"
+    fi
+    if grep -q 'watcher-start' "$vlog"; then
+      bad "a refused $status start still reached watcher-start, so it ran after the pidfile was taken"
+    else
+      ok "a refused $status start never reaches watcher-start, so it runs before the pidfile is taken"
+    fi
+    rm -f "$vout" "$vlog"
+  fi
+done
+
+# The refusal must carry the marker the SessionStart hook keys CASE 3 on, or the
+# consumer is told by its own instructions to relaunch a permanent failure.
+if start_server -1 0.25 404; then
+  vout="$(mktemp)"
+  watch_until_exit "$vout" agent_ghostid "http://127.0.0.1:$PORT"
+  stop_server
+  grep -q 'RELAI-CONFIG-REFUSED' "$vout" \
+    && ok "the refusal carries the RELAI-CONFIG-REFUSED marker the hook matches" \
+    || bad "refusal lacks RELAI-CONFIG-REFUSED (out='$(head -c 120 "$vout" | tr '\n' ' ')')"
+  grep -q 'agent_ghostid' "$vout" \
+    && ok "…and names the agent id" \
+    || bad "the refusal does not name the agent id"
+  rm -f "$vout"
+fi
+
+# The marker belongs to the whole config-refusal class, not just the API check.
+# Attaching it to one of several permanent exits leaves the commonest failure,
+# a repo with a relai block but no AGENT_ID yet, looping on relaunch forever.
+mdir="$(mktemp -d)"
+cat > "$mdir/.mcp.json" <<'MCPEOF'
+{"mcpServers":{"relai":{"env":{"API_URL":"http://127.0.0.1:1"}}}}
+MCPEOF
+mout="$(mktemp)"
+( cd "$mdir" && API_URL= API_SECRET= AGENT_ID= RELAI_WATCH_LOG=/dev/null \
+    bash "$SCRIPTS/relai-watch.sh" >"$mout" 2>&1 )
+mrc=$?
+[ "$mrc" -eq 1 ] && ok "unresolved credentials refuse with the config-guard exit code" \
+  || bad "unresolved credentials exited $mrc, expected 1"
+grep -q 'RELAI-CONFIG-REFUSED' "$mout" \
+  && ok "…and carry the marker, so the hook does not tell the agent to relaunch it" \
+  || bad "unresolved credentials refuse WITHOUT the marker, so the hook loops on it (out='$(head -c 100 "$mout" | tr '\n' ' ')')"
+rm -rf "$mdir" "$mout"
+
+# Fail OPEN on anything inconclusive, and prove the check actually RAN rather
+# than just that the process stayed alive: "still running after 5s" is equally
+# true of a deleted validate_agent_id.
+vout="$(mktemp)"; vlog="$(mktemp)"
+watch_until_exit "$vout" agent_unreachable "http://127.0.0.1:1" "$vlog"
+case "$RC" in
+  running) ok "an unreachable API does not refuse the agent id" ;;
+  *)       bad "an unreachable API refused the agent id (rc=$RC)" ;;
+esac
+grep -q 'agent-validate proceeding reason=' "$vlog" \
+  && ok "…and the check ran and logged a verdict rather than being skipped" \
+  || bad "no agent-validate verdict logged on the unreachable path"
+rm -f "$vout" "$vlog"
+
+if start_server -1 0.25 200; then
+  vout="$(mktemp)"; vlog="$(mktemp)"
+  watch_until_exit "$vout" agent_realid "http://127.0.0.1:$PORT" "$vlog"
+  stop_server
+  case "$RC" in
+    running) ok "a 200 from GET /agents/:id lets the watcher proceed" ;;
+    *)       bad "a 200 from GET /agents/:id stopped the watcher (rc=$RC)" ;;
+  esac
+  grep -q 'agent-validate proceeding reason=200' "$vlog" \
+    && ok "…and logs the 200 verdict, so the check is not being skipped" \
+    || bad "no agent-validate reason=200 logged"
+  rm -f "$vout" "$vlog"
+fi
+
+# A server that accepts and never answers. Without --max-time the watcher hangs
+# here forever with the suite green; with it, curl gives up and the watcher
+# proceeds to watcher-start. Asserted on reaching watcher-start, not on elapsed
+# time, so a loaded machine cannot flake it.
+if start_server -1 0.25 0; then
+  vout="$(mktemp)"; vlog="$(mktemp)"
+  ( API_URL="http://127.0.0.1:$PORT" API_SECRET=t AGENT_ID=agent_stalled RELAI_WATCH_LOG="$vlog" \
+      exec bash "$SCRIPTS/relai-watch.sh" >"$vout" 2>&1 ) &
+  spid=$!
+  reached=1
+  for _ in $(seq 1 200); do
+    grep -q 'watcher-start' "$vlog" 2>/dev/null && { reached=0; break; }
+    sleep 0.1
+  done
+  kill -TERM "$spid" 2>/dev/null; wait "$spid" 2>/dev/null
+  stop_server
+  [ "$reached" -eq 0 ] \
+    && ok "a stalled /agents/:id is bounded by --max-time and the watcher still starts" \
+    || bad "the watcher never reached watcher-start against a stalled endpoint: the validate curl is unbounded"
+  rm -f "$vout" "$vlog"
+fi
+
+# A trailing slash in API_URL must not produce a green check on a watcher that
+# cannot deliver: relai-stream-wait.sh concatenates "$API_URL/events", so an
+# unstripped slash yields //events, which the API does not route.
+if start_server -1 0.25 200; then
+  vout="$(mktemp)"; vlog="$(mktemp)"
+  watch_until_exit "$vout" agent_realid "http://127.0.0.1:$PORT//" "$vlog"
+  stop_server
+  # api= is followed by more fields, so match slash-then-space. Anchoring on end
+  # of line matches nothing and would pass unconditionally.
+  startline="$(grep -o 'watcher-start api=[^ ]*' "$vlog" | head -1)"
+  if [ -z "$startline" ]; then
+    bad "no watcher-start line to check for a trailing slash (control failed)"
+  elif printf '%s' "$startline" | grep -qE '/$'; then
+    bad "a trailing slash survived into the watch path ($startline)"
+  else
+    ok "trailing slashes are stripped from API_URL before the check and the stream ($startline)"
+  fi
+  rm -f "$vout" "$vlog"
+fi
+
+
+# --- the token must never reach argv, including on short-lived calls ----------
+# The runtime argv checks above can only catch a call that stays open long
+# enough to appear in ps. The agent-id validation is a sub-second request, so
+# polling for it would be a race; assert the property in the source instead,
+# which also covers whatever curl someone adds next.
+wake_scripts="$SCRIPTS/relai-watch.sh $SCRIPTS/relai-stream-wait.sh"
+hdr_offenders=""
+kcfg_seen=0
+for f in $wake_scripts; do
+  # Control: these files must actually be readable and use -K, or a clean
+  # negative below would only mean the grep matched nothing at all.
+  grep -q -- '-K' "$f" && kcfg_seen=$((kcfg_seen+1))
+  # Both spellings: --header is the same leak as -H and would otherwise pass.
+  if grep -qE -- '(-H|--header)[[:space:]]*"?Authorization' "$f"; then
+    hdr_offenders="$hdr_offenders ${f##*/}"
+  fi
+done
+if [ "$kcfg_seen" -eq 2 ]; then
+  ok "control: both wake-path scripts were read and use a -K config file"
+else
+  bad "control failed: expected 2 wake-path scripts using -K, saw $kcfg_seen"
+fi
+if [ -z "$hdr_offenders" ]; then
+  ok "no wake-path curl passes the token with -H, which would put it in ps"
+else
+  bad "Authorization passed via -H (token lands in argv):$hdr_offenders"
+fi
 
 
 # --- the suite must not outlive its own watchers -----------------------------

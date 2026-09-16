@@ -34,6 +34,31 @@ export const PEER_BOUNDARY =
 // toolsets so "online" means one thing everywhere.
 const ONLINE_WINDOW_MS = 10 * 60 * 1000;
 
+// Resolve an agent reference (id or name) against a candidate list the CALLER
+// has already scoped. Shared so the id path and the name path get the same
+// existence check: an unresolved id used to skip resolution entirely and reach
+// the assigned_to foreign key, which surfaces as a bare 500.
+type AgentRef = { id: string; name: string; repoId?: string };
+function resolveAgentRef(candidates: AgentRef[], ref: string, scope: string):
+  { id: string } | { error: string } {
+  if (ref.startsWith("agent_")) {
+    const hit = candidates.find((a) => a.id === ref);
+    return hit ? { id: hit.id } : { error: `Agent ${ref} is not in ${scope}.` };
+  }
+  const needle = ref.toLowerCase();
+  const matches = candidates.filter((a) => a.name.toLowerCase() === needle);
+  if (matches.length === 0) {
+    const names = candidates.map((a) => a.name).join(", ");
+    return { error: `No agent named "${ref}" in ${scope}.${names ? ` Available: ${names}` : ""}` };
+  }
+  // Names are not unique, so picking one would assign the wrong agent and look
+  // like it worked.
+  if (matches.length > 1) {
+    return { error: `Multiple agents named "${ref}" in ${scope}. Use the agent id: ${matches.map((a) => a.id).join(", ")}` };
+  }
+  return { id: matches[0].id };
+}
+
 export function buildTools(client: ApiClient, agentId: string, repoId: string) {
   return [
     {
@@ -727,6 +752,63 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
       },
     },
+
+    {
+      name: "assign_task",
+      description:
+        "Give an existing task an assignee, or move it to a different agent. This is the only way " +
+        "to set an assignee after creation: update_task_status carries the states a worker owns " +
+        "(in_progress, completed, blocked, cancelled) and not 'assigned', and commit_task acts only " +
+        "on a worker's 'proposed' task. Takes an agent ID or an agent name, and resolves either " +
+        "against agents in YOUR project only, so a same-named agent in a sibling repo is never " +
+        "picked. Status defaults to 'assigned'; pass 'in_progress' to move a running task to a " +
+        "different agent without resetting it. A task still in 'proposed' is refused: committing a " +
+        "proposal is an orchestrator act and belongs to commit_task.",
+      inputSchema: z.object({
+        taskId:     z.string().describe("The task to assign."),
+        assignedTo: z.string().describe("Agent ID (agent_*) or agent name in this project. '@auto' is not accepted here."),
+        status:     z
+          .enum(["assigned", "in_progress"])
+          .optional()
+          .describe("Defaults to 'assigned'. Use 'in_progress' to reassign a running task in place."),
+      }),
+      handler: async (input: { taskId: string; assignedTo: string; status?: "assigned" | "in_progress" }) => {
+        const say = (text: string) => ({ content: [{ type: "text" as const, text }] });
+
+        // Not a style choice: tasks.assigned_to is a foreign key to agents.id,
+        // and PUT /tasks/:id never sets autoAssign, so "@auto" here would be a
+        // constraint violation rather than router assignment.
+        if (input.assignedTo === "@auto") {
+          return say("assign_task assigns to a specific agent. Router assignment ('@auto') is set at creation: use create_task, or commit_task for a proposed task.");
+        }
+
+        // GET /agents ignores repoId for an agent token and returns the whole
+        // owner fleet, so the scoping has to happen here. Without it a name or
+        // id can resolve to a sibling-repo agent, and PUT /tasks/:id does not
+        // check that the assignee shares the task's repo the way it checks
+        // verifyReviewerId, so the task would be assigned to someone whose own
+        // get_my_tasks cannot see it.
+        const fleet = await client.listAgents(repoId) as AgentRef[];
+        const mine = fleet.filter((a) => a.repoId === repoId);
+        const resolved = resolveAgentRef(mine, input.assignedTo, "this project");
+        if ("error" in resolved) return say(resolved.error);
+
+        // PUT /tasks/:id has no status guard, so without this a worker could
+        // move its own proposal into the lifecycle, bypassing the orchestrator
+        // gate that POST /tasks/:id/commit exists to enforce, leaving no
+        // metadata.commit and emitting no task.committed.
+        const existing = await client.getTask(input.taskId) as { status?: string } | null;
+        if (existing?.status === "proposed") {
+          return say(`Task ${input.taskId} is still 'proposed'. Committing a proposal is an orchestrator act: use commit_task, which records who committed it and notifies the proposer.`);
+        }
+
+        const task = await client.updateTask(input.taskId, {
+          assignedTo: resolved.id,
+          status: input.status ?? "assigned",
+        });
+        return say(JSON.stringify(task, null, 2));
+      },
+    },
   ];
 }
 
@@ -735,7 +817,7 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
 // owner's projects: the API scopes by the X-Owner-Id the client sends, and each
 // resource is addressed by its own id, so no repoId argument is needed. The
 // human (you, e.g. from a phone) drives these to triage and unblock work
-// remotely. Keep this set small — it's a different surface from the 13 agent
+// remotely. Keep this set small — it's a different surface from the agent
 // tools, not an extension of them.
 export function buildOperatorTools(client: ApiClient, ownerId?: string) {
   return [
@@ -1071,7 +1153,8 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
             }],
           };
         }
-        // Resolve an agent name to an ID, scoped to the task's own repo.
+        // Resolve against the task's own repo. Owner mode's GET /agents DOES
+        // honour repoId, so the route has already scoped this list.
         let resolvedAssignedTo = input.assignedTo;
         if (!resolvedAssignedTo.startsWith("agent_")) {
           const existing = await client.getTask(input.taskId) as { repoId?: string } | null;
@@ -1079,28 +1162,12 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
           if (!repoId) {
             return { content: [{ type: "text" as const, text: `Task ${input.taskId} not found.` }] };
           }
-          const rawAgents = await client.listAgents(repoId);
-          const needle = resolvedAssignedTo.toLowerCase();
-          const matches = (rawAgents as Array<{ id: string; name: string }>)
-            .filter((a) => a.name.toLowerCase() === needle);
-          if (matches.length === 0) {
-            const names = (rawAgents as Array<{ name: string }>).map((a) => a.name).join(", ");
-            return {
-              content: [{
-                type: "text" as const,
-                text: `No agent named "${input.assignedTo}" in repo ${repoId}.${names ? ` Available: ${names}` : ""}`,
-              }],
-            };
+          const rawAgents = await client.listAgents(repoId) as AgentRef[];
+          const resolved = resolveAgentRef(rawAgents, resolvedAssignedTo, `repo ${repoId}`);
+          if ("error" in resolved) {
+            return { content: [{ type: "text" as const, text: resolved.error }] };
           }
-          if (matches.length > 1) {
-            return {
-              content: [{
-                type: "text" as const,
-                text: `Multiple agents named "${input.assignedTo}". Use the agent id instead: ${matches.map((a) => a.id).join(", ")}`,
-              }],
-            };
-          }
-          resolvedAssignedTo = matches[0].id;
+          resolvedAssignedTo = resolved.id;
         }
 
         const task = await client.updateTask(input.taskId, {

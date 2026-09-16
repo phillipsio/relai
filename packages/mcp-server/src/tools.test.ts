@@ -56,9 +56,9 @@ function getHandler(tools: Array<{ name: string; handler: (input: any) => any }>
 }
 
 describe("buildTools", () => {
-  it("returns all 23 tools", () => {
+  it("returns all 24 tools", () => {
     const tools = buildTools(mockClient(), AGENT_ID, REPO_ID);
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(24);
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_task");
     expect(names).toContain("commit_task");
@@ -78,6 +78,7 @@ describe("buildTools", () => {
     expect(names).toContain("get_task_comments");
     expect(names).toContain("add_task_comment");
     expect(names).toContain("report_relai_issue");
+    expect(names).toContain("assign_task");
   });
 });
 
@@ -1087,3 +1088,103 @@ describe("the operator console can read a thread before answering it", () => {
     expect(out.peerBoundary).toBeTruthy();
   });
 });
+
+describe("assign_task", () => {
+  // Every mocked agent carries a repoId, because the scoping is the thing under
+  // test: GET /agents ignores repoId for an agent token and returns the whole
+  // owner fleet, so the tool must filter client-side.
+  const FLEET = [
+    { id: "agent_mine",    name: "cursor-jim", repoId: REPO_ID },
+    { id: "agent_foreign", name: "cursor-jim", repoId: "repo_other" },
+    { id: "agent_only_there", name: "elsewhere", repoId: "repo_other" },
+  ];
+  const ready = { getTask: vi.fn().mockResolvedValue({ id: "task_7", status: "pending", repoId: REPO_ID }) };
+
+  it("assigns by agent id and defaults the status to assigned", async () => {
+    const updateTask = vi.fn().mockResolvedValue({ id: "task_7", assignedTo: "agent_mine", status: "assigned" });
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "agent_mine" });
+    expect(updateTask).toHaveBeenCalledWith("task_7", { assignedTo: "agent_mine", status: "assigned" });
+  });
+
+  it("honours an explicit status so a live task can be reassigned without resetting it", async () => {
+    const updateTask = vi.fn().mockResolvedValue({ id: "task_7", status: "in_progress" });
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "agent_mine", status: "in_progress" });
+    expect(updateTask).toHaveBeenCalledWith("task_7", { assignedTo: "agent_mine", status: "in_progress" });
+  });
+
+  // assigned_to is an FK to agents.id and PUT /tasks/:id never sets autoAssign,
+  // so "@auto" here would be a constraint violation, not router assignment.
+  it("refuses @auto instead of writing it, and says where routing lives", async () => {
+    const updateTask = vi.fn();
+    const tools = buildTools(mockClient({ ...ready, updateTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "@auto" });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/create_task|commit_task/);
+  });
+
+  // The name exists twice across the fleet but once in this repo. Without the
+  // filter this is an ambiguity refusal; with it, an unambiguous assignment.
+  it("resolves a name to the agent in THIS repo, ignoring a same-named sibling elsewhere", async () => {
+    const updateTask = vi.fn().mockResolvedValue({ id: "task_7", assignedTo: "agent_mine" });
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "Cursor-Jim" });
+    expect(updateTask).toHaveBeenCalledWith("task_7", { assignedTo: "agent_mine", status: "assigned" });
+  });
+
+  it("refuses a name that exists only in another repo, rather than orphaning the task there", async () => {
+    const updateTask = vi.fn();
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "elsewhere" });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("elsewhere");
+  });
+
+  // An id skipped resolution entirely, so a foreign id took the cross-repo path
+  // and a typo reached the FK and surfaced as a bare 500.
+  it("refuses an agent id belonging to another repo", async () => {
+    const updateTask = vi.fn();
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "agent_foreign" });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/not in this project|No agent/i);
+  });
+
+  it("refuses an agent id that does not exist, instead of letting the FK raise a 500", async () => {
+    const updateTask = vi.fn();
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "agent_doesnotexist" });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/not in this project|No agent/i);
+  });
+
+  it("refuses an ambiguous name within this repo and lists those ids only", async () => {
+    const twins = [
+      { id: "agent_aaa", name: "twin", repoId: REPO_ID },
+      { id: "agent_bbb", name: "twin", repoId: REPO_ID },
+      { id: "agent_ccc", name: "twin", repoId: "repo_other" },
+    ];
+    const updateTask = vi.fn();
+    const tools = buildTools(mockClient({ ...ready, listAgents: vi.fn().mockResolvedValue(twins), updateTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "twin" });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("agent_aaa");
+    expect(result.content[0].text).toContain("agent_bbb");
+    expect(result.content[0].text).not.toContain("agent_ccc");
+  });
+
+  // Committing a proposal is an orchestrator act gated by POST /tasks/:id/commit.
+  // PUT /tasks/:id has no status guard, so without this the tool is a bypass:
+  // a worker could assign its own proposal into the lifecycle with no
+  // metadata.commit and no task.committed event.
+  it("refuses a task still in 'proposed' and points at the commit path", async () => {
+    const updateTask = vi.fn();
+    const getTask = vi.fn().mockResolvedValue({ id: "task_7", status: "proposed", repoId: REPO_ID });
+    const tools = buildTools(mockClient({ getTask, listAgents: vi.fn().mockResolvedValue(FLEET), updateTask }), AGENT_ID, REPO_ID);
+    const result = await getHandler(tools, "assign_task")({ taskId: "task_7", assignedTo: "agent_mine" });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("commit_task");
+  });
+});
+

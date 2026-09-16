@@ -5,7 +5,8 @@ import { messages, threads, tasks, agents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
 import { assertRepoAccess, peerRepoIds, loadThreadScoped } from "../lib/ownership.js";
-import { ensureDmThread, dmThreadFilter } from "../lib/dm.js";
+import { ensureDmThread } from "../lib/dm.js";
+import { unreadFilter } from "../lib/unread.js";
 import { clip, clipMetadata } from "../lib/payload.js";
 import type { Db } from "@getrelai/db";
 
@@ -233,7 +234,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     const access = await assertRepoAccess(request, db, repoId);
     if (!access.ok) return reply.status(access.status).send({ error: { code: access.status === 403 ? "forbidden" : "not_found", message: "Repo not found" } });
 
-    const where = sql`(${threads.repoId} = ${repoId} OR ${dmThreadFilter(agentId)}) AND NOT (${messages.readBy} @> ARRAY[${agentId}]::text[])`;
+    const where = unreadFilter({ agentId, repoId });
 
     const [{ value: total }] = await db
       .select({ value: count() })

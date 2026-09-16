@@ -1468,13 +1468,24 @@ describe("GET /threads/:id/messages", () => {
 
 describe("GET /messages/unread", () => {
   it("returns unread messages scoped to the project", async () => {
+    // Every other message in this file's fixture is posted as agentId, and an
+    // agent's own messages are not its own unread, so without a message from
+    // someone else the feed is empty and the every() below passes vacuously.
+    await app.inject({
+      method: "POST", url: `/threads/${threadId}/messages`,
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ fromAgent: "human", type: "question", body: "unread-positive-probe" }),
+    });
+
     const res = await app.inject({
       method: "GET", url: `/messages/unread?agentId=${agentId}&repoId=${repoId}`,
       headers: AUTH,
     });
     expect(res.statusCode).toBe(200);
-    const data = res.json().data as Array<{ readBy: string[] }>;
+    const data = res.json().data as Array<{ readBy: string[]; fromAgent: string; body: string }>;
+    expect(data.some((m) => m.body === "unread-positive-probe")).toBe(true);
     expect(data.every((m) => !m.readBy.includes(agentId))).toBe(true);
+    expect(data.every((m) => m.fromAgent !== agentId)).toBe(true);
   });
 
   it("requires agentId query param", async () => {

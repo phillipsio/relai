@@ -89,8 +89,11 @@ beforeAll(async () => {
   await app.inject({
     method: "POST", url: `/threads/${threadId}/messages`,
     headers: { ...ADMIN, "Content-Type": "application/json" },
+    // From someone else, not from this agent. An agent's own outbound message
+    // is never its own unread, so a self-addressed message would assert
+    // nothing about the inbox.
     body: JSON.stringify({
-      fromAgent: agentId, toAgent: agentId,
+      fromAgent: "human", toAgent: agentId,
       type: "status", body: "hello",
     }),
   });
@@ -124,7 +127,7 @@ describe("GET /session/start", () => {
     expect(data.tasks[0].title).toBe("running task");
     expect(data.tasks[0].humanLabel).toBe("Running");
 
-    // Posting the message auto-subscribed the sender → thread shows up.
+    // Posting the message auto-subscribed the recipient → thread shows up.
     expect(data.openThreads.length).toBe(1);
     expect(data.openThreads[0].id).toBe(threadId);
 

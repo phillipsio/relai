@@ -6,8 +6,9 @@ import {
   type Db,
 } from "@getrelai/db";
 import { humanizeTaskStatus } from "@getrelai/types";
-import { dmThreadFilter, dmEventFilter } from "../lib/dm.js";
+import { dmEventFilter } from "../lib/dm.js";
 import { clip, clipMetadata } from "../lib/payload.js";
+import { unreadFilter } from "../lib/unread.js";
 
 // How many recent events the snapshot carries. Kept small (and each event
 // trimmed to a one-line summary, below) because this is the dominant
@@ -105,7 +106,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
     });
 
     // Unread messages addressed to my project (any thread I can see).
-    const unreadWhere = sql`(${threads.repoId} = ${repoId} OR ${dmThreadFilter(agent.id)}) AND NOT (${messages.readBy} @> ARRAY[${agent.id}]::text[])`;
+    const unreadWhere = unreadFilter({ agentId: agent.id, repoId });
 
     const [{ value: unreadCount }] = await db
       .select({ value: count() })

@@ -436,13 +436,19 @@ export async function runMessageLoopCycle(deps: MessageLoopDeps, repoId: string)
   const orchestrator = await findOrchestratorAgent(deps.db, repoId);
   if (!orchestrator) return;
 
-  // Fetch unread messages for the orchestrator across the whole project,
-  // matching the GET /messages/unread route's filter.
+  // Fetch unread messages for the orchestrator across the whole project. This
+  // deliberately does NOT use unreadFilter: that ORs in DM threads, and
+  // widening the loop to act on direct messages is a product decision nobody
+  // has taken. It does share the sender exclusion, because handleMessage
+  // already drops the orchestrator's own messages and without it every tick
+  // re-fetched a set that only grows.
   const rows = await deps.db
     .select({ messages: messagesTable })
     .from(messagesTable)
     .innerJoin(threadsTable, eq(messagesTable.threadId, threadsTable.id))
-    .where(sql`${threadsTable.repoId} = ${repoId} AND NOT (${messagesTable.readBy} @> ARRAY[${orchestrator.id}]::text[])`);
+    .where(sql`${threadsTable.repoId} = ${repoId}
+      AND ${messagesTable.fromAgent} <> ${orchestrator.id}
+      AND NOT (${messagesTable.readBy} @> ARRAY[${orchestrator.id}]::text[])`);
 
   const inbox = rows.map((r) => r.messages);
   if (inbox.length === 0) return;

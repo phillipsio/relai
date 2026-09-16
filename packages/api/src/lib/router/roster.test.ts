@@ -47,11 +47,20 @@ describe("prompt-safe schemas", () => {
 // first fix missed. This fails when a new one appears rather than waiting for
 // someone to notice it.
 describe("every routing prompt builds its roster through the shared helper", () => {
-  const dir = new URL(".", import.meta.url).pathname;
+  // __dirname, not import.meta.url: this package has no "type": "module", so
+  // NodeNext typechecks it as CommonJS and tsc rejects import.meta. Not
+  // process.cwd() either, which is the repo root under the workspace runner and
+  // the package root under the filtered one.
+  const dir = __dirname;
 
   it("has no hand-rolled agent roster line outside roster.ts", () => {
+    const scanned = readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "roster.ts");
+    // A wrong directory would still yield .ts files and pass while checking the
+    // wrong ones, so pin the identity of the scan rather than its size.
+    expect(scanned).toContain("claude.ts");
+
     const offenders: string[] = [];
-    for (const f of readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "roster.ts")) {
+    for (const f of scanned) {
       const src = readFileSync(join(dir, f), "utf8");
       for (const [i, line] of src.split("\n").entries()) {
         if (/`?-\s*id:\s*\$\{/.test(line)) offenders.push(`${f}:${i + 1}`);

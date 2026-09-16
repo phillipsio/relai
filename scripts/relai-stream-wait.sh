@@ -35,8 +35,25 @@ esac
 # attacker-chosen file), and one in AGENT_ID breaks out of the JSON string.
 # Caller (relai-watch.sh) already validates its own sources, but this script
 # is callable directly, so it validates again rather than trusting a caller.
+# API_URL reaches curl as an argument, and curl accepts an attached short-option
+# value, so a value beginning "-K" makes it read an attacker-chosen config file.
+# The shipped caller checks the scheme first, but this script's whole contract is
+# that it re-validates rather than trusting a caller.
+case "$API_URL" in
+  http://*|https://*) ;;
+  *) echo "relai-stream-wait.sh: API_URL must be http(s) — refusing" >&2; exit 2 ;;
+esac
+case "$API_URL" in
+  *\\*|*\"*) echo "relai-stream-wait.sh: API_URL contains a backslash or quote — refusing" >&2; exit 2 ;;
+esac
+
 case "$TOKEN" in
   *[![:print:]]*) echo "relai-stream-wait.sh: RELAI_TOKEN contains a control character — refusing" >&2; exit 2 ;;
+  # Printable is not sufficient: curl expands backslash escapes inside a quoted
+  # config value, so a literal \n survives this guard and becomes a real newline
+  # in the -K file, which is a header break plus a pipelined request. A real
+  # token is aio_ + base64url, so neither character is ever legitimate.
+  *\\*|*\"*) echo "relai-stream-wait.sh: RELAI_TOKEN contains a backslash or quote — refusing" >&2; exit 2 ;;
 esac
 # `agent_*` alone only checks the prefix — a value with an embedded quote
 # still matches it, since `*` matches any remaining characters. AGENT_ID is

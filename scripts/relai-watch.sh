@@ -154,6 +154,17 @@ for _n in API_URL API_SECRET AGENT_ID; do
     *[![:print:]]*)
       refuse "$_n from config contains a control character"
       ;;
+    # A backslash is NOT enough to be printable-safe. curl expands escapes
+    # inside a quoted config value, so the two printable characters \ and n
+    # become a real newline AFTER this guard passes, which is a header break
+    # plus a pipelined request on every call the wake path makes. Measured
+    # against a raw socket: the injected DELETE arrived on the validate, the
+    # subscribe and the stream, and repeated on each reconnect. The quote
+    # terminates the value rather than opening a directive, so it only
+    # truncates a token, but neither character is legitimate in any of these.
+    *\\*|*\"*)
+      refuse "$_n from config contains a backslash or quote"
+      ;;
   esac
 done
 unset _n _v

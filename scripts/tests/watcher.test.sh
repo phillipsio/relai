@@ -92,6 +92,30 @@ out="$(printf 'x' | RELAI_TOKEN="$(printf 'tok\nmalicious')" bash "$SCRIPTS/rela
 [ "$?" -ne 0 ] && ok "a token containing a newline is rejected before reaching curl" \
   || bad "newline-bearing token was accepted"
 
+# curl's config parser expands backslash escapes inside a QUOTED value, so the
+# two PRINTABLE characters \ and n become a real newline after the [:print:]
+# guard has passed the value. Measured: the header break plus a pipelined
+# request reached the server on all three calls (validate, subscribe, stream).
+# A real token is aio_ + base64url, so neither character is ever legitimate.
+out="$(RELAI_TOKEN='tok\r\nX-Injected: 1' bash "$SCRIPTS/relai-stream-wait.sh" http://127.0.0.1:1 agent_x 1 2>&1)"
+[ "$?" -ne 0 ] && ok "a token containing a backslash escape is rejected (curl expands it to a newline)" \
+  || bad "backslash-bearing token was accepted: curl will expand \\r\\n into a real header break"
+
+out="$(RELAI_TOKEN='tok" user-agent "PWNED' bash "$SCRIPTS/relai-stream-wait.sh" http://127.0.0.1:1 agent_x 1 2>&1)"
+[ "$?" -ne 0 ] && ok "a token containing a double quote is rejected (it terminates the config value)" \
+  || bad "quote-bearing token was accepted"
+
+# Do not over-reject: the real token charset must still pass. aio_ + base64url.
+# Assert it got PAST the guard, not that a particular refusal string is absent:
+# rewording the refusal would otherwise make this pass while every real token is
+# rejected. A connection failure to port 1 only happens after curl is reached.
+out="$(RELAI_TOKEN='aio_AbC-123_xyzAbC-123_xyz' bash "$SCRIPTS/relai-stream-wait.sh" http://127.0.0.1:1 agent_x 1 2>&1)"
+case "$out" in
+  *"Failed to connect"*|*"Connection refused"*|*"couldn't connect"*)
+    ok "a legitimate aio_ token reaches curl, so the guard does not over-reject" ;;
+  *) bad "a legitimate aio_ token never reached curl (out='${out:0:100}')" ;;
+esac
+
 # --- the event path -----------------------------------------------------------
 
 if start_server 1; then
@@ -228,9 +252,29 @@ bpid=$!
 sleep 1
 kill -TERM "$bpid" 2>/dev/null; wait "$bpid" 2>/dev/null
 out="$(cat "$badout")"; rm -f "$badout"
+# The credential guard now runs first and catches the quote, so either refusal
+# is correct here; the property is that relai-watch.sh refuses it at all.
 case "$out" in
-  *"doesn't look like an agent id"*|*"outside [A-Za-z0-9_-]"*) ok "relai-watch.sh itself rejects a malformed AGENT_ID from .mcp.json" ;;
+  *"doesn't look like an agent id"*|*"outside [A-Za-z0-9_-]"*|*"backslash or quote"*)
+    ok "relai-watch.sh itself rejects a malformed AGENT_ID from .mcp.json" ;;
   *) bad "malformed AGENT_ID from .mcp.json was not rejected by relai-watch.sh (out='${out:0:100}')" ;;
+esac
+
+# A charset offender with NO quote or backslash, so the AGENT_ID guard itself is
+# still exercised rather than shadowed by the credential guard above it.
+mcpdir2="$(mktemp -d)"
+cat >"$mcpdir2/.mcp.json" <<'JSON'
+{"mcpServers":{"relai":{"env":{"API_URL":"http://127.0.0.1:1","AGENT_ID":"agent_x;evil","API_SECRET":"t"}}}}
+JSON
+badout2="$(mktemp)"
+( API_URL= API_SECRET= AGENT_ID= bash "$SCRIPTS/relai-watch.sh" --repo-path "$mcpdir2" >"$badout2" 2>&1 ) &
+bpid2=$!
+sleep 1
+kill -TERM "$bpid2" 2>/dev/null; wait "$bpid2" 2>/dev/null
+out2="$(cat "$badout2")"; rm -f "$badout2"; rm -rf "$mcpdir2"
+case "$out2" in
+  *"outside [A-Za-z0-9_-]"*) ok "the AGENT_ID charset guard still fires on an offender with no quote" ;;
+  *) bad "AGENT_ID charset guard did not fire on 'agent_x;evil' (out='${out2:0:100}')" ;;
 esac
 rm -rf "$mcpdir"
 
@@ -767,6 +811,59 @@ if start_server -1 0.25 404; then
     || bad "the refusal does not name the agent id"
   rm -f "$vout"
 fi
+
+# relai-watch.sh validates its own sources before ever calling the child, so the
+# same escape has to be refused here too, with the marker.
+# Bounded: before the guard exists these values are ACCEPTED and the watcher
+# goes into its reconnect loop forever, which hangs the whole suite.
+cred_refused() { # payload -> RC ("running" if it never exited), output in $CRED_OUT
+  local payload="$1" pid i
+  CRED_OUT="$(mktemp)"
+  CRED_LOG="$(mktemp)"; rm -f "$CRED_LOG"   # must STAY absent if we refuse early
+  ( API_URL=http://127.0.0.1:1 API_SECRET="$payload" AGENT_ID=agent_x \
+      RELAI_WATCH_LOG="$CRED_LOG" exec bash "$SCRIPTS/relai-watch.sh" >"$CRED_OUT" 2>&1 ) &
+  pid=$!
+  for i in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || { wait "$pid"; RC=$?; return; }
+    sleep 0.1
+  done
+  kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  RC=running
+}
+
+for payload in 'tok\r\nX-Injected: 1' 'tok" user-agent "PWNED'; do
+  cred_refused "$payload"
+  label="$(printf '%s' "$payload" | cut -c1-9)"
+  case "$RC" in
+    running|0) bad "relai-watch accepted a credential containing '$label' that curl re-expands" ;;
+    *)         ok "relai-watch refuses a credential containing '$label' before any request" ;;
+  esac
+  if grep -q 'RELAI-CONFIG-REFUSED' "$CRED_OUT"; then
+    ok "…and marks it so the hook does not relaunch it"
+  else
+    bad "credential refusal for '$label' lacks the marker"
+  fi
+  # Ordering: the log is set up AFTER the credential guards, so if the refusal
+  # came first the file was never created. Without this, moving the guard below
+  # validate_agent_id keeps every assertion above green while the split header
+  # goes out on the first request.
+  if [ -e "$CRED_LOG" ]; then
+    bad "credential refusal for '$label' happened after logging started, so a request may already have gone out"
+  else
+    ok "…and refuses before the watcher does anything else"
+  fi
+  rm -f "$CRED_OUT" "$CRED_LOG"
+done
+
+# The guard covers all three config values, not just API_SECRET. Without this,
+# hoisting the AGENT_ID charset guard above the credential loop would go unnoticed.
+uout="$(API_URL='https://example.com/a\b' API_SECRET=t AGENT_ID=agent_x \
+          RELAI_WATCH_LOG=/dev/null bash "$SCRIPTS/relai-watch.sh" 2>&1)"
+case "$uout" in
+  *"API_URL from config contains a backslash or quote"*)
+    ok "the credential guard covers API_URL, not only API_SECRET" ;;
+  *) bad "a backslash in API_URL was not refused by name (out='${uout:0:100}')" ;;
+esac
 
 # The marker belongs to the whole config-refusal class, not just the API check.
 # Attaching it to one of several permanent exits leaves the commonest failure,

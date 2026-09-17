@@ -1,0 +1,1 @@
+ALTER TABLE "tasks" ADD CONSTRAINT "tasks_reviewer_not_assignee" CHECK ("tasks"."assigned_to" IS NULL OR "tasks"."verify_reviewer_id" IS NULL OR "tasks"."assigned_to" <> "tasks"."verify_reviewer_id");

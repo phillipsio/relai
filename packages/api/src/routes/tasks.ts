@@ -132,6 +132,31 @@ async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
 
 const PROPOSAL_DECIDED_MSG = "this proposal was already committed or rejected";
 
+const REVIEWER_IS_ASSIGNEE_MSG =
+  "verifyReviewerId must not be the task's assignee: a review by the agent doing the work is not a review";
+
+// Returns an error string, or null when the pair is acceptable. Takes the
+// EFFECTIVE assignee rather than reading the row, because every caller resolves
+// that differently (create and commit from the caller's value or the project
+// default, update from the patch) and the rule has to hold against the value
+// that is about to be written, not the one already there.
+async function reviewerPairError(
+  db: Db,
+  reviewerId: string,
+  repoId: string,
+  assignedTo: string | null | undefined,
+): Promise<string | null> {
+  const [reviewer] = await db
+    .select({ id: agents.id, repoId: agents.repoId })
+    .from(agents)
+    .where(eq(agents.id, reviewerId));
+  if (!reviewer || reviewer.repoId !== repoId) {
+    return "verifyReviewerId must reference an agent in the same project";
+  }
+  if (assignedTo && assignedTo === reviewerId) return REVIEWER_IS_ASSIGNEE_MSG;
+  return null;
+}
+
 const VERIFY_MISMATCH_MSG =
   "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId, git_pushed=verifyPath) and fields cannot cross kinds";
 
@@ -256,20 +281,6 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       });
     }
 
-    // Reviewer-agent kind: confirm the named reviewer is an agent in the same
-    // project. Catches typos and prevents pointing at agents from other tenants.
-    if (body.data.verifyKind === "reviewer_agent") {
-      const [reviewer] = await db
-        .select({ id: agents.id, repoId: agents.repoId })
-        .from(agents)
-        .where(eq(agents.id, body.data.verifyReviewerId!));
-      if (!reviewer || reviewer.repoId !== body.data.repoId) {
-        return reply.status(400).send({
-          error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" },
-        });
-      }
-    }
-
     // Resolve effective assignee: explicit value wins, else the project's default.
     let effective = body.data.assignedTo;
     if (effective === undefined) {
@@ -327,6 +338,18 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
           return reply.status(400).send({ error: { code: "validation_error", message: `Dependency task ${id} belongs to a different project` } });
         }
       }
+    }
+
+    // Checked here rather than with the other verify validation above, because it
+    // needs the RESOLVED assignee: a reviewer that equals the project default
+    // assignee is a self-review the caller never named explicitly.
+    if (body.data.verifyKind === "reviewer_agent") {
+      const problem = await reviewerPairError(
+        db, body.data.verifyReviewerId!, body.data.repoId,
+        // A proposal has no assignee yet, so the pair is judged at commit.
+        status === "proposed" ? null : assignedTo,
+      );
+      if (problem) return reply.status(400).send({ error: { code: "validation_error", message: problem } });
     }
 
     const { addBlockedBy, addBlocks, ...insertData } = body.data;
@@ -544,14 +567,39 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       if (authorsRestrictedKind && request.agent && request.agent.role !== "orchestrator") {
         return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may author shell or git_pushed verify predicates." } });
       }
-      if (merged.verifyKind === "reviewer_agent") {
-        const [reviewer] = await db
-          .select({ id: agents.id, repoId: agents.repoId })
-          .from(agents)
-          .where(eq(agents.id, merged.verifyReviewerId!));
-        if (!reviewer || reviewer.repoId !== existing.repoId) {
-          return reply.status(400).send({ error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" } });
-        }
+      // Orchestrator-only, the same trust tier as the shell-predicate gate above
+      // but for a different reason: that one guards command execution in the API
+      // process, this one guards who may sign work off. Without it the assignee
+      // named itself and approved, defeating the gate by satisfying it rather
+      // than bypassing it. The value rule below is separate and applies to
+      // everyone, because choosing a friendlier reviewer is the same integrity
+      // break as choosing yourself.
+      if (
+        body.data.verifyReviewerId !== undefined &&
+        body.data.verifyReviewerId !== existing.verifyReviewerId &&
+        request.agent && request.agent.role !== "orchestrator"
+      ) {
+        return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may change a task's reviewer." } });
+      }
+    }
+
+    // Deliberately OUTSIDE the touchesVerify block above. That block only runs
+    // when a verify field is in the body, so a request changing nothing but
+    // assignedTo skipped it entirely — and moving the assignee onto the existing
+    // reviewer produces exactly the self-review this guards against, from the
+    // other direction.
+    {
+      const mergedKind = body.data.verifyKind ?? scope.task.verifyKind;
+      const mergedReviewer = body.data.verifyReviewerId ?? scope.task.verifyReviewerId;
+      const mergedAssignee =
+        body.data.assignedTo !== undefined ? body.data.assignedTo : scope.task.assignedTo;
+      const pairTouched =
+        body.data.verifyReviewerId !== undefined ||
+        body.data.verifyKind !== undefined ||
+        body.data.assignedTo !== undefined;
+      if (mergedKind === "reviewer_agent" && mergedReviewer && pairTouched) {
+        const problem = await reviewerPairError(db, mergedReviewer, scope.task.repoId, mergedAssignee);
+        if (problem) return reply.status(400).send({ error: { code: "validation_error", message: problem } });
       }
     }
 
@@ -888,15 +936,6 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       if (!verifyConfigConsistent(merged)) {
         return reply.status(400).send({ error: { code: "validation_error", message: VERIFY_MISMATCH_MSG } });
       }
-      if (merged.verifyKind === "reviewer_agent") {
-        const [reviewer] = await db
-          .select({ id: agents.id, repoId: agents.repoId })
-          .from(agents)
-          .where(eq(agents.id, merged.verifyReviewerId!));
-        if (!reviewer || reviewer.repoId !== task.repoId) {
-          return reply.status(400).send({ error: { code: "validation_error", message: "verifyReviewerId must reference an agent in the same project" } });
-        }
-      }
     }
 
     // Resolve the effective assignee: explicit wins, else the project default.
@@ -913,6 +952,16 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // the @auto arm inheriting whatever assignee was already on the row.
     const assignedTo = autoAssign ? null : effective ?? null;
     const status = assignedTo ? "assigned" : "pending";
+
+    // After the assignee is resolved, not with the other verify validation above:
+    // committing is where a proposal's reviewer and its new owner first meet, and
+    // an unnamed assignee can arrive from the project default.
+    const committedReviewer = body.data.verifyReviewerId ?? task.verifyReviewerId;
+    const committedKind = body.data.verifyKind ?? task.verifyKind;
+    if (committedKind === "reviewer_agent" && committedReviewer) {
+      const problem = await reviewerPairError(db, committedReviewer, task.repoId, assignedTo);
+      if (problem) return reply.status(400).send({ error: { code: "validation_error", message: problem } });
+    }
 
     // Editable fields the orchestrator may ratify (omit assignment/decision/note).
     const { decision: _d, assignedTo: _a, note: _n, ...edits } = body.data;

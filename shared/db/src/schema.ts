@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, pgEnum, primaryKey, integer, boolean, index, uniqueIndex, check } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const agentRoleEnum = pgEnum("agent_role", ["orchestrator", "worker"]);
 
@@ -316,6 +317,18 @@ export const tasks = pgTable("tasks", {
   repoStatus: index("tasks_repo_status_idx").on(t.repoId, t.status),
   // GET /tasks?assignedTo= and every worker's own queue.
   assignee:   index("tasks_assigned_idx").on(t.assignedTo),
+  // A review by the agent doing the work is not a review. This lives in the
+  // database because the routes are not the only writers: the routing scheduler
+  // fills a null assignee on an @auto task, the stall reaper and the
+  // DELETE /agents/:id cascade both re-queue rows back into that routing, and
+  // two concurrent PUTs can each move one half of the pair while both validate
+  // against the same pre-update row. Route-level checks caught none of those,
+  // and a fourth one would not either — the invariant belongs where the writes
+  // land. Nullable on both sides, so it only constrains rows that have both.
+  reviewerNotAssignee: check(
+    "tasks_reviewer_not_assignee",
+    sql`${t.assignedTo} IS NULL OR ${t.verifyReviewerId} IS NULL OR ${t.assignedTo} <> ${t.verifyReviewerId}`,
+  ),
 }));
 
 // ── Subscriptions ─────────────────────────────────────────────────────────────

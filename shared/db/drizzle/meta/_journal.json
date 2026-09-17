@@ -50,6 +50,13 @@
       "when": 1789144673729,
       "tag": "0006_clammy_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789677173381,
+      "tag": "0007_calm_jazinda",
+      "breakpoints": true
     }
   ]
 }

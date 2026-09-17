@@ -457,12 +457,22 @@ describe("ownership: owner action attribution", () => {
   });
 
   it("records review submittedBy as the owner id (not 'admin') on the service-admin review path", async () => {
+    // A second agent in the same project, because the reviewer may not be the
+    // assignee (a review by the agent doing the work is not a review). This
+    // fixture used to name agentA for both, which the route now refuses; the
+    // subject of the test is the attribution, not the pairing.
+    const reviewer = await app.inject({
+      method: "POST", url: "/agents", headers: adminHeaders(),
+      body: JSON.stringify({ repoId: projectAId, name: "agent-A-reviewer", role: "worker" }),
+    });
+    const reviewerId = reviewer.json().data.id;
+
     // reviewer_agent gate is unrestricted, so admin can author it.
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: adminHeaders(),
       body: JSON.stringify({
         repoId: projectAId, createdBy: agentAId, title: "owner-review", description: "x",
-        assignedTo: agentAId, verifyKind: "reviewer_agent", verifyReviewerId: agentAId,
+        assignedTo: agentAId, verifyKind: "reviewer_agent", verifyReviewerId: reviewerId,
       }),
     });
     expect(create.statusCode).toBe(201);

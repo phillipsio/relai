@@ -87,7 +87,30 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
 
   for (const task of pending) {
     const taskRow = { ...task, metadata: (task.metadata ?? {}) as Record<string, unknown> };
-    let result = tryRulesRouting(taskRow, workers, taskCounts);
+
+    // A reviewer-gated task may not be routed to its own reviewer: that is the
+    // self-review the route guards refuse, arriving with no caller at all. The
+    // database refuses it too (tasks_reviewer_not_assignee), but a constraint
+    // violation here would surface as a scheduler exception rather than a
+    // routing decision, so the reviewer comes out of the candidate set instead.
+    const candidates = task.verifyReviewerId
+      ? workers.filter((w) => w.id !== task.verifyReviewerId)
+      : workers;
+    // Diagnostic, not a safety guard: with an empty candidate set the rules arm
+    // returns null and the roster check below refuses any name the Claude arm
+    // invents, so the task stays pending either way. Without this line, though,
+    // a gated task in a project whose only worker IS its reviewer just never
+    // routes and nothing says why.
+    if (candidates.length === 0) {
+      logOnce(
+        `route-reviewer-only:${task.id}`,
+        `[scheduler] Task ${task.id} has no candidate but its own reviewer ${task.verifyReviewerId} — leaving pending`,
+        console.warn,
+      );
+      continue;
+    }
+
+    let result = tryRulesRouting(taskRow, candidates, taskCounts);
 
     if (!result) {
       if (!ai) {
@@ -98,7 +121,7 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
         continue;
       }
       try {
-        result = await claudeRouting(taskRow, workers, ai, model);
+        result = await claudeRouting(taskRow, candidates, ai, model);
       } catch (err) {
         console.error(`[scheduler] Claude routing failed for task ${task.id}:`, err);
         continue;
@@ -118,7 +141,7 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
 
     // The Claude arm returns whatever the model names, and the roster it reads is
     // built from agent-controlled text. Only a real candidate may be assigned.
-    if (!workers.some((w) => w.id === result.agentId)) {
+    if (!candidates.some((w) => w.id === result.agentId)) {
       logOnce(
         `route-offroster:${task.id}`,
         `[scheduler] Task ${task.id} routed to ${result.agentId}, which was not a candidate — skipping`,

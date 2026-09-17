@@ -98,6 +98,8 @@ async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
   return thread;
 }
 
+const PROPOSAL_DECIDED_MSG = "this proposal was already committed or rejected";
+
 const VERIFY_MISMATCH_MSG =
   "verify config mismatch: each kind requires its own field (shell=verifyCommand, file_exists=verifyPath, thread_concluded=verifyThreadId, reviewer_agent=verifyReviewerId, git_pushed=verifyPath) and fields cannot cross kinds";
 
@@ -296,6 +298,11 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     const [task] = await db.insert(tasks).values({
       id: newId("task"),
       ...insertData,
+      // From the token, not the body: a proposer may withdraw its own proposal,
+      // which makes this an authorization input and not just attribution. The
+      // agentless admin and owner paths keep the body value, which the
+      // subscription block below already validates against the project.
+      createdBy: request.agent?.id ?? insertData.createdBy,
       assignedTo,
       autoAssign,
       status,
@@ -462,6 +469,19 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
 
     const scope = await loadTaskScoped(request, db, request.params.id);
     if (!scope.ok) return reply.status(scope.status).send({ error: { code: "not_found", message: "Task not found" } });
+
+    // A proposal leaves "proposed" only through POST /tasks/:id/commit, which is
+    // role-gated and records who committed it. This route is open to every member
+    // of the project, so without this refusal a worker could put its own proposal
+    // into the lifecycle with a bare status write. Orchestrators and the admin path
+    // are refused too, so the commit record is unconditional rather than a thing
+    // some callers leave behind. The assignee is refused alongside the status
+    // because picking who does the work is half of what committing means; a
+    // proposer's preference belongs in metadata.proposal.suggestedAssignee, which
+    // POST /tasks already records.
+    if (scope.task.status === "proposed" && (body.data.status !== undefined || body.data.assignedTo !== undefined)) {
+      return reply.status(409).send({ error: { code: "wrong_state", message: "task is proposed; it must be committed or rejected before its status or assignee can change" } });
+    }
 
     // If this update edits the verification predicate, validate the RESULTING
     // (existing + patch) config exactly like create, and re-apply the
@@ -775,9 +795,14 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     }
 
     // Commit is an orchestrator act; the admin-secret path stands in for one.
-    const canCommit = !request.agent || request.agent.role === "orchestrator";
-    if (!canCommit) {
-      return reply.status(403).send({ error: { code: "forbidden", message: "only an orchestrator may commit a proposed task" } });
+    // Rejecting your own proposal is a withdrawal, not an orchestrator's decision,
+    // so the proposer may do that much: refusing the PUT status write left a worker
+    // that filed a duplicate with no way to retract it, and an uncommitted proposal
+    // goes on to page the project's orchestrators when it ages out.
+    const isOrchestrator = !request.agent || request.agent.role === "orchestrator";
+    const isWithdrawal = body.data.decision === "reject" && request.agent?.id === task.createdBy;
+    if (!isOrchestrator && !isWithdrawal) {
+      return reply.status(403).send({ error: { code: "forbidden", message: "only an orchestrator may commit a proposed task, or its proposer withdraw it" } });
     }
 
     // Prefer the agent id, then the owner id (operator ingress), falling back to
@@ -793,8 +818,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
           metadata: { ...meta, proposal: { ...proposal, rejectedBy: committedBy, rejectedAt: new Date().toISOString(), ...(body.data.note ? { note: body.data.note } : {}) } },
           updatedAt: new Date(),
         })
-        .where(eq(tasks.id, task.id))
+        .where(and(eq(tasks.id, task.id), eq(tasks.status, "proposed")))
         .returning();
+      if (!rejected) return reply.status(409).send({ error: { code: "wrong_state", message: PROPOSAL_DECIDED_MSG } });
       await publish(db, {
         id:         newId("evt"),
         kind:       "task.proposal_rejected",
@@ -848,7 +874,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       effective = project?.defaultAssignee ?? undefined;
     }
     const autoAssign = effective === "@auto";
-    const assignedTo = autoAssign ? undefined : effective ?? null;
+    // null, not undefined: drizzle omits an undefined key from .set(), which left
+    // the @auto arm inheriting whatever assignee was already on the row.
+    const assignedTo = autoAssign ? null : effective ?? null;
     const status = assignedTo ? "assigned" : "pending";
 
     // Editable fields the orchestrator may ratify (omit assignment/decision/note).
@@ -863,8 +891,9 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         metadata: { ...meta, commit: { committedBy, committedAt: new Date().toISOString() } },
         updatedAt: new Date(),
       })
-      .where(eq(tasks.id, task.id))
+      .where(and(eq(tasks.id, task.id), eq(tasks.status, "proposed")))
       .returning();
+    if (!committed) return reply.status(409).send({ error: { code: "wrong_state", message: PROPOSAL_DECIDED_MSG } });
 
     if (committed.assignedTo) await ensureSubscription(db, committed.assignedTo, "task", committed.id);
     await publish(db, {

@@ -141,7 +141,7 @@ task
 
 task
   .command("commit <id>")
-  .description("Commit a worker's proposed task into the lifecycle, or reject it (orchestrators only)")
+  .description("Commit a worker's proposed task into the lifecycle, or reject it (orchestrators; a proposer may reject its own to withdraw it)")
   .option("--to <agent>", "Assign to an agent (id or name) or '@auto'; omit for the project default")
   .option("-t, --title <title>", "Ratify a new title as you commit")
   .option("-p, --priority <priority>", "Ratify priority: low|normal|high|urgent")

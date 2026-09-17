@@ -713,7 +713,9 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
     {
       name: "commit_task",
       description:
-        "Orchestrator-only: act on a worker's proposed task (a task in status 'proposed'). 'commit' " +
+        "Act on a proposed task (a task in status 'proposed'). Committing is orchestrator-only; a task's own " +
+        "proposer may call this with decision 'reject' to withdraw what it filed, which is the only way to " +
+        "retract a proposal — update_task_status cannot move a proposed task. 'commit' " +
         "(the default) gives it an owner and moves it into the lifecycle — set assignedTo to an agent ID, " +
         "'@auto' to let the router pick, or omit for the project default. 'reject' cancels the proposal " +
         "and notifies the proposer (include a note). You may ratify edits in the same call (title, " +
@@ -793,10 +795,8 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         const resolved = resolveAgentRef(mine, input.assignedTo, "this project");
         if ("error" in resolved) return say(resolved.error);
 
-        // PUT /tasks/:id has no status guard, so without this a worker could
-        // move its own proposal into the lifecycle, bypassing the orchestrator
-        // gate that POST /tasks/:id/commit exists to enforce, leaving no
-        // metadata.commit and emitting no task.committed.
+        // The API refuses this too, with a message of its own. The check stays
+        // only because that message cannot name a tool.
         const existing = await client.getTask(input.taskId) as { status?: string } | null;
         if (existing?.status === "proposed") {
           return say(`Task ${input.taskId} is still 'proposed'. Committing a proposal is an orchestrator act: use commit_task, which records who committed it and notifies the proposer.`);

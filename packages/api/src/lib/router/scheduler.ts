@@ -395,9 +395,15 @@ export async function watchProposedTasks(db: Db, repoId: string): Promise<void> 
     if (meta.proposedOverdueNotifiedAt) continue;
 
     const awaitingMs = Date.now() - new Date(task.createdAt).getTime();
-    await db.update(tasks)
+    // Carry the state in the write, as both commit arms do: this reads a batch
+    // and then writes each row, so a commit or withdrawal landing in between
+    // would be overwritten at the metadata level, dropping metadata.commit and
+    // stamping a row that is no longer a proposal.
+    const [stamped] = await db.update(tasks)
       .set({ metadata: { ...meta, proposedOverdueNotifiedAt: new Date().toISOString() } })
-      .where(eq(tasks.id, task.id));
+      .where(and(eq(tasks.id, task.id), eq(tasks.status, "proposed")))
+      .returning({ id: tasks.id });
+    if (!stamped) continue;
 
     for (const o of orchestrators) await ensureSubscription(db, o.id, "task", task.id);
     await publish(db, {

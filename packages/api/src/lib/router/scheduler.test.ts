@@ -209,6 +209,38 @@ describe("watchProposedTasks", () => {
     const [row] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     expect((row.metadata as Record<string, unknown>).proposedOverdueNotifiedAt).toBeUndefined();
   });
+
+  // The watcher reads a batch and then writes each row, so a decision landing
+  // inside that window would otherwise be overwritten at the metadata level:
+  // the row keeps its new status but loses metadata.commit and gains an
+  // overdue stamp it never earned. The target is committed late in the batch,
+  // where the window is widest.
+  it("does not clobber a commit that landed while the batch was in flight", async () => {
+    process.env.PROPOSED_OVERDUE_MS = "1000";
+    const ids: string[] = [];
+    // The window for the Nth row spans the N-1 writes before it, so the target
+    // goes last in a wide batch.
+    for (let i = 0; i < 20; i++) ids.push(await makeOverdueProposal(5_000));
+    const target = ids[ids.length - 1];
+
+    const [, commit] = await Promise.all([
+      watchProposedTasks(db, repoId),
+      app.inject({
+        method: "POST", url: `/tasks/${target}/commit`, headers: ADMIN,
+        body: JSON.stringify({ assignedTo: orchId }),
+      }),
+    ]);
+    expect(commit.statusCode).toBe(200);
+
+    // Asserted every run, not behind a condition: the commit always lands, so
+    // its record must survive whichever way the two interleaved. The overdue
+    // stamp is deliberately not asserted — a watcher that stamped before the
+    // commit read the row is a legitimate ordering, and the commit carries the
+    // stamp forward.
+    const [row] = await db.select().from(tasks).where(eq(tasks.id, target));
+    expect(row.status).toBe("assigned");
+    expect((row.metadata as Record<string, unknown>).commit).toBeDefined();
+  });
 });
 
 describe("watchBlockedTasks (operator unblock path)", () => {

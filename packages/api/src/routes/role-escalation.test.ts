@@ -284,8 +284,11 @@ describe("a worker cannot revoke another agent's token", () => {
     const victimToken = o.json().token;
 
     // GET /agents does not expose a token id; mint one this caller can target.
+    // keepExisting, because the assertion below is that the victim can still
+    // authenticate, and a plain rotate would retire its original itself.
     const minted = await app.inject({
       method: "POST", url: `/agents/${victimId}/tokens`, headers: asAgent(victimToken),
+      body: JSON.stringify({ keepExisting: true }),
     });
     const tokenId = minted.json().data.id as string;
 
@@ -307,6 +310,7 @@ describe("a worker cannot revoke another agent's token", () => {
     const selfToken = w.json().token;
     const minted = await app.inject({
       method: "POST", url: `/agents/${selfId}/tokens`, headers: asAgent(selfToken),
+      body: JSON.stringify({ keepExisting: true }),
     });
 
     const selfRevoke = await app.inject({
@@ -316,6 +320,7 @@ describe("a worker cannot revoke another agent's token", () => {
 
     const minted2 = await app.inject({
       method: "POST", url: `/agents/${selfId}/tokens`, headers: asAgent(orchToken),
+      body: JSON.stringify({ keepExisting: true }),
     });
     const orchRevoke = await app.inject({
       method: "DELETE", url: `/tokens/${minted2.json().data.id}`, headers: asAgent(orchToken),

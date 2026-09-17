@@ -32,7 +32,7 @@ PUT  /projects/:id
 DELETE /projects/:id
 
 POST /agents                                   → returns one-time plaintext token
-POST /agents/:id/tokens                        (rotate)
+POST /agents/:id/tokens                        (rotate: mints one, revokes the rest)
 DELETE /tokens/:id                             (revoke)
 PUT  /agents/:id/heartbeat
 GET  /agents?projectId=

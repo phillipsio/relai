@@ -1,7 +1,7 @@
 import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
@@ -18,6 +18,12 @@ const registerSchema = z.object({
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
   repoPath:       z.string().optional(),
 });
+
+// Rotation retires what it replaces. keepExisting opts out for the rare case
+// that genuinely needs two live credentials at once, such as moving an agent
+// between machines; it is how the pile in task_o6BhrRbJndRhyMdvnctAy formed, so
+// it is opt-in rather than the default.
+const rotateSchema = z.object({ keepExisting: z.boolean().optional() }).strict();
 
 export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.post("/agents", async (request, reply) => {
@@ -61,26 +67,51 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
   });
 
   fastify.post<{ Params: { id: string } }>("/agents/:id/tokens", async (request, reply) => {
+    const body = rotateSchema.safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
     const agent = check.agent;
 
     // Repo membership alone let any worker mint another agent's token; see
-    // callerMayActOnAgent.
+    // callerMayActOnAgent. Same gate as DELETE /tokens/:id, so revoking below
+    // adds no authority.
     if (!callerMayActOnAgent(request, agent.id)) {
       return reply.status(403).send({
         error: { code: "forbidden", message: "Only the agent itself or an orchestrator may rotate this token." },
       });
     }
 
-    const plaintext = generateToken();
-    const [row] = await db.insert(tokens).values({
-      id:        newId("tok"),
-      agentId:   agent.id,
-      tokenHash: hashToken(plaintext),
-    }).returning();
+    if (body.data.keepExisting) {
+      request.log.warn({ agentId: agent.id }, "keepExisting: agent will hold more than one live token");
+    }
 
-    return reply.status(201).send({ data: row, token: plaintext });
+    const plaintext = generateToken();
+    const { row, revoked } = await db.transaction(async (tx) => {
+      // The lock serialises rotations of one agent: under READ COMMITTED a
+      // second one would otherwise revoke what it can see and miss the row the
+      // first just inserted, leaving two live. Revoke precedes insert so no
+      // moment has two, and the transaction stops a failed insert leaving none.
+      await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, agent.id)).for("update");
+      const retired = body.data.keepExisting
+        ? []
+        : await tx
+            .update(tokens)
+            .set({ revokedAt: new Date() })
+            .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt)))
+            .returning({ id: tokens.id });
+
+      const [inserted] = await tx.insert(tokens).values({
+        id:        newId("tok"),
+        agentId:   agent.id,
+        tokenHash: hashToken(plaintext),
+      }).returning();
+
+      return { row: inserted, revoked: retired.map((r) => r.id) };
+    });
+
+    return reply.status(201).send({ data: row, token: plaintext, revoked });
   });
 
   fastify.put<{ Params: { id: string } }>("/agents/:id/heartbeat", async (request, reply) => {

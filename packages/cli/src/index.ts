@@ -249,7 +249,7 @@ const token = program.command("token").description("Manage your agent's API toke
 
 token
   .command("rotate")
-  .description("Issue a new token for your agent and save it to config (old token remains valid until revoked)")
+  .description("Issue a new token, revoke the old one, and list the configs that still hold it")
   .action(tokenRotateCommand);
 
 token

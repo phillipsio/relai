@@ -121,11 +121,14 @@ describe("auth: token rotate + revoke", () => {
   let secondToken: string;
   let secondTokenId: string;
 
-  it("POST /agents/:id/tokens issues an additional token", async () => {
+  // keepExisting is the point of this block, not incidental: it is asserting
+  // that revoking one token leaves its siblings alone, which needs two live at
+  // once. A plain rotate now retires the original (token-rotation.test.ts).
+  it("POST /agents/:id/tokens issues an additional token when asked to keep the old one", async () => {
     const res = await app.inject({
       method: "POST", url: `/agents/${agentId}/tokens`,
       headers: { ...ADMIN, "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ keepExisting: true }),
     });
     expect(res.statusCode).toBe(201);
     secondToken = res.json().token;

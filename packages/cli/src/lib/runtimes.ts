@@ -56,3 +56,40 @@ export function mergeMcpServer(existing: Json | null, name: string, entry: Json)
     mcpServers: { ...(servers as Record<string, unknown> | undefined), [name]: entry },
   };
 }
+
+// Every path this agent's token might sit in. Deliberately wider than
+// runtimeTargets, which is what `join` WRITES: ~/.claude.json is somewhere the
+// invite snippet and AGENTS.md tell people to put the entry by hand, so rotation
+// must look there even though join never writes it. Scanning a path costs
+// nothing; missing one leaves a client holding a revoked token.
+export function allRuntimeTargets({ home, repo }: Paths): string[] {
+  const fromRuntimes = RUNTIMES.flatMap((w) => runtimeTargets(w, { home, repo }));
+  return [...new Set([...fromRuntimes, join(home, ".claude.json")])];
+}
+
+/**
+ * Does this config hold that exact token for relai? Checks the top-level
+ * mcpServers and ~/.claude.json's per-project scopes. Never throws: it is run
+ * across every known runtime path, most of which belong to other tools.
+ */
+export function holdsRelaiToken(existing: unknown, token: string): boolean {
+  if (typeof token !== "string" || token === "") return false;
+  if (typeof existing !== "object" || existing === null || Array.isArray(existing)) return false;
+
+  const scopes: unknown[] = [existing];
+  const projects = (existing as Json).projects;
+  if (typeof projects === "object" && projects !== null && !Array.isArray(projects)) {
+    scopes.push(...Object.values(projects as Json));
+  }
+
+  return scopes.some((scope) => {
+    if (typeof scope !== "object" || scope === null || Array.isArray(scope)) return false;
+    const servers = (scope as Json).mcpServers;
+    if (typeof servers !== "object" || servers === null || Array.isArray(servers)) return false;
+    const relai = (servers as Json).relai;
+    if (typeof relai !== "object" || relai === null || Array.isArray(relai)) return false;
+    const env = (relai as Json).env;
+    if (typeof env !== "object" || env === null || Array.isArray(env)) return false;
+    return (env as Json).API_SECRET === token;
+  });
+}

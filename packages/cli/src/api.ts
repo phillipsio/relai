@@ -27,6 +27,22 @@ export class CliApiClient {
     return json;
   }
 
+  /**
+   * Is this credential accepted? "unknown" is a distinct answer and the caller
+   * must treat it as such: an unreachable API is not a revoked token, and
+   * conflating them makes a rotate abort at the one moment its output is the
+   * only copy of the new credential.
+   */
+  async checkToken(): Promise<"ok" | "rejected" | "unknown"> {
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, { method: "GET", headers: this.headers });
+      if (res.ok) return "ok";
+      return res.status === 401 ? "rejected" : "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
   createRepo(body: { name: string; description?: string }) {
     return this.request<{ id: string; name: string }>("POST", "/repos", body);
   }
@@ -71,8 +87,10 @@ export class CliApiClient {
   }
 
   async rotateToken(agentId: string) {
-    const res = await this.requestRaw<{ data: { id: string }; token: string }>("POST", `/agents/${agentId}/tokens`, {});
-    return { tokenId: res.data.id, token: res.token };
+    const res = await this.requestRaw<{ data: { id: string }; token: string; revoked?: string[] }>(
+      "POST", `/agents/${agentId}/tokens`, {},
+    );
+    return { tokenId: res.data.id, token: res.token, revoked: res.revoked ?? [] };
   }
 
   revokeToken(tokenId: string) {

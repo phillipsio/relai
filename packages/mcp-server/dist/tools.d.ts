@@ -521,6 +521,32 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
             text: string;
         }[];
     }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        taskId: z.ZodString;
+        assignedTo: z.ZodString;
+        status: z.ZodOptional<z.ZodEnum<["assigned", "in_progress"]>>;
+    }, "strip", z.ZodTypeAny, {
+        assignedTo: string;
+        taskId: string;
+        status?: "assigned" | "in_progress" | undefined;
+    }, {
+        assignedTo: string;
+        taskId: string;
+        status?: "assigned" | "in_progress" | undefined;
+    }>;
+    handler: (input: {
+        taskId: string;
+        assignedTo: string;
+        status?: "assigned" | "in_progress";
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
 })[];
 export declare function buildOperatorTools(client: ApiClient, ownerId?: string): ({
     name: string;

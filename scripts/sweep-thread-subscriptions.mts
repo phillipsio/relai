@@ -23,6 +23,14 @@
 //
 // Also swept: rows whose thread no longer exists.
 //
+// UNEXERCISED BY REAL DATA: the `plan` branch. A plan thread (an Epic) is treated
+// as ordinary here, so the repo-match rule applies to it, which is right in that
+// an Epic is repo-readable like any other non-DM thread. But production on
+// 2026-09-17 held 3 plan threads and ZERO subscriptions pointing at one, so that
+// rule has never been exercised against real rows. "No plan rows were affected"
+// and "the plan rule is correct" are different claims and only the first has
+// evidence.
+//
 // Nothing legitimate creates what this deletes. POST /subscriptions resolves the
 // target and refuses a cross-repo one; ensureSubscription is the server-side
 // exception, but its only cross-repo case is a TASK target (POST /relai-feedback
@@ -97,6 +105,11 @@ for (const r of doomed) {
 
 if (!apply) {
   console.log(`\nDRY RUN. Re-run with --apply to delete these ${doomed.length} rows.`);
+  // A snapshot, not a contract. The table moves: two counts eight minutes apart
+  // on 2026-09-17 read 137 then 138. A later --apply re-runs the query and acts
+  // on whatever it finds THEN, so read its output as a fresh decision rather
+  // than as executing a list approved earlier.
+  console.log("This is a snapshot. --apply re-queries and acts on what it finds at that moment.");
   await db.$client.end();
   process.exit(0);
 }

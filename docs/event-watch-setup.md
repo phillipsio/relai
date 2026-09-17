@@ -17,13 +17,15 @@ headless daemon with no interactive session, use the `event-worker` package inst
 - `scripts/relai-watch.sh` — wake-loop wrapper: resolves config, reconnects across
   heartbeats/timeouts/drops, and never ends itself for less than a genuine event.
   This is what the agent launches.
-- `scripts/relai-watch-hook.sh` — SessionStart hook: injects the instruction to
-  launch the watcher (a hook can't issue a tool call itself).
+- `scripts/relai-watch-hook.sh` — the hook, serving **both** SessionStart and Stop:
+  injects the instruction to launch the watcher (a hook can't issue a tool call
+  itself). On SessionStart it always injects; on Stop it injects only when no
+  watcher is live for this agent, via `relai-watch.sh --check`.
 
 ## Install into a consumer repo
 
-The consumer repo (the one whose agent should listen) needs one settings entry.
-Add to its `.claude/settings.json`:
+The consumer repo (the one whose agent should listen) needs two settings entries,
+the same script on both events. Add to its `.claude/settings.json`:
 
 ```json
 {
@@ -31,7 +33,14 @@ Add to its `.claude/settings.json`:
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "$HOME/github/relai/scripts/relai-watch-hook.sh" }
+          { "type": "command", "command": "$HOME/github/relai/scripts/relai-watch-hook.sh --event=SessionStart" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/github/relai/scripts/relai-watch-hook.sh --event=Stop" }
         ]
       }
     ]
@@ -39,9 +48,50 @@ Add to its `.claude/settings.json`:
 }
 ```
 
-That's it. On every session start the hook checks the repo has a `relai` server
-in its `.mcp.json`; if so it tells the agent to launch `relai-watch.sh` in the
+On every session start the hook checks the repo has a `relai` server in its
+`.mcp.json`; if so it tells the agent to launch `relai-watch.sh` in the
 background and follow the wake loop.
+
+**Wire Stop as well as SessionStart, or the watcher runs once and stops.** This is
+not belt-and-braces. The watcher exits on every successful wake by design, and
+Claude Code also reaps background tasks on a timer, so SessionStart alone covers
+exactly the first launch of a session and every relaunch after it depends on the
+agent remembering to do so at the moment it has just been handed new work. That
+failed in practice on 2026-09-17: two orchestrators lost 11 and 14 hours of wake
+coverage, each unaware, because a dead watcher is indistinguishable from a quiet
+period from inside the session. The Stop hook turns the worst case into one turn
+of blindness.
+
+**Pass `--event` explicitly.** The hook used to infer the event by parsing the
+payload on stdin, which failed silently: bash 3.2 discards partial input when a
+timed read expires, so the event fell back to `SessionStart`, and Claude Code
+DROPS a `hookSpecificOutput` whose `hookEventName` does not match the event it
+fired. An argument cannot be half-delivered. A repo wired without `--event`
+still behaves as it did before 2026-09-17, defaulting to SessionStart.
+
+**What Stop decides on: this session's `background_tasks`, not the pidfile.**
+The Stop payload lists in-flight background work with each task's `command`, so
+a watcher registers there the instant the Bash call is made. The pidfile is the
+wrong signal in three measured ways: it is written only after
+`validate_agent_id`'s `curl --max-time 5`, so a relaunch against a slow or
+unreachable API stays invisible for up to 6 seconds while the hook asks again
+and each new watcher TERMs the last; it is keyed on `AGENT_ID` rather than the
+session, so two sessions in one repo share a watcher and the second silences the
+first's check permanently; and it says nothing about a config the API refuses.
+It is still the fallback when no payload can be read, because a late signal beats
+asserting a watcher is gone on no evidence.
+
+**The hook honours `stop_hook_active`.** While that is true the previous
+injection is already being acted on, so the hook returns success. Without it any
+state that stays "gone" across a continuation multiplies by
+`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` (8) and ends in a user-visible "a hook blocked
+the turn from ending 8 consecutive times": a revoked token, a denied background
+Bash call, a failed pidfile write.
+
+Cost when nothing is wrong: one `node` parse of a payload already on stdin, and
+no subprocess beyond it. When it does speak, `additionalContext` on Stop
+continues the conversation, so it costs one extra model turn — which is the
+point, and why it must stay silent otherwise.
 
 **The relai repo itself is a consumer and needs this too.** It was the last one
 wired up (2026-08-25), which meant relai's own orchestrator was the only agent in

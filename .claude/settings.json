@@ -3,7 +3,20 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "$HOME/github/relai/scripts/relai-watch-hook.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/github/relai/scripts/relai-watch-hook.sh --event=SessionStart"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/github/relai/scripts/relai-watch-hook.sh --event=Stop"
+          }
         ]
       }
     ]

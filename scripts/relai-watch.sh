@@ -27,20 +27,38 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Optional explicit repo root: --repo-path <dir> or a bare first positional arg.
+# --check is a liveness probe that composes with either, because Cursor passes
+# --repo-path and the Stop hook has to be able to ask about that same watcher.
+# A loop rather than a case on $1 alone for exactly that reason; the first
+# positional still wins as the repo path, as it always did.
 repo_path=""
-case "${1:-}" in
-  --repo-path)
-    repo_path="${2:-}"
-    ;;
-  --repo-path=*)
-    repo_path="${1#--repo-path=}"
-    ;;
-  -*)
-    ;;
-  ?*)
-    repo_path="$1"
-    ;;
-esac
+check_only=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check)
+      check_only=1
+      ;;
+    --repo-path)
+      # Only consume the next argument when it is actually a value. Taking it
+      # blindly made `--repo-path --check` swallow the flag, so check_only stayed
+      # 0 and the probe STARTED a watcher — which then replaced the operator's
+      # live one through the single-instance path below. Observed 2026-09-17.
+      case "${2:-}" in
+        ""|-*) ;;
+        *) [ -z "$repo_path" ] && repo_path="$2"; shift ;;
+      esac
+      ;;
+    --repo-path=*)
+      [ -z "$repo_path" ] && repo_path="${1#--repo-path=}"
+      ;;
+    -*)
+      ;;
+    ?*)
+      [ -z "$repo_path" ] && repo_path="$1"
+      ;;
+  esac
+  shift
+done
 
 API_URL="${API_URL:-}"
 API_SECRET="${API_SECRET:-}"
@@ -245,8 +263,6 @@ validate_agent_id() {
       ;;
   esac
 }
-validate_agent_id
-
 # At most one live watcher per agent. Not derived from RELAI_WATCH_LOG's
 # directory — that breaks when the log is silenced to /dev/null.
 pidfile_dir="${RELAI_WATCH_PIDFILE_DIR:-$HOME/.relai}"
@@ -259,6 +275,29 @@ lockdir="$pidfile.lock"
 is_our_watcher() {
   kill -0 "$1" 2>/dev/null && ps -p "$1" -o command= 2>/dev/null | grep -q 'relai-watch\.sh'
 }
+
+# --check answers "is a watcher live for THIS agent" and exits: 0 yes, 1 no.
+# It is the Stop hook's liveness probe, so it runs every turn and must be cheap:
+# no network call and no lock, deliberately placed before validate_agent_id for
+# that reason. Not side-effect-free — the log and pidfile directories are
+# mkdir -p'd above — but idempotent. It READS the pidfile and never writes it:
+# the start path below owns that file under a lock, and a second writer would
+# race it. Keyed on AGENT_ID via the pidfile rather than a process-name match,
+# since several agents' watchers run on one machine and a name match finds a
+# peer's.
+if [ "$check_only" -eq 1 ]; then
+  if [ -s "$pidfile" ]; then
+    check_pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if [ -n "$check_pid" ] && is_our_watcher "$check_pid"; then
+      echo "relai-watch: alive pid=$check_pid agent=$AGENT_ID"
+      exit 0
+    fi
+  fi
+  echo "relai-watch: not running agent=$AGENT_ID"
+  exit 1
+fi
+
+validate_agent_id
 
 # mkdir is atomic across processes: without a lock, two racing instances
 # could both replace the incumbent and both write, leaking the loser.

@@ -640,7 +640,19 @@ fi
 # pure waste — measured at 5 spurious wakes in one session on 2026-08-27.
 
 hookdir="$(mktemp -d)"
-hook_ctx() { RELAI_DIR="$SCRIPTS/.." CLAUDE_PROJECT_DIR="$1" bash "$SCRIPTS/relai-watch-hook.sh" 2>/dev/null; }
+hook_ctx() { RELAI_DIR="$SCRIPTS/.." CLAUDE_PROJECT_DIR="$1" env API_URL= API_SECRET= AGENT_ID= bash "$SCRIPTS/relai-watch-hook.sh" --event=SessionStart </dev/null 2>/dev/null; }
+# A Stop call with a payload on stdin, the shape Claude Code actually sends
+# (captured from a live Stop on 2026-09-17: session_id, stop_hook_active,
+# background_tasks[{id,type,status,description,command}], …).
+hook_stop_ctx() { printf '%s' "$2" | RELAI_DIR="$SCRIPTS/.." CLAUDE_PROJECT_DIR="$1" env API_URL= API_SECRET= AGENT_ID= bash "$SCRIPTS/relai-watch-hook.sh" --event=Stop 2>/dev/null; }
+stop_payload() { # $1 = stop_hook_active, $2 = a task command ("" for none)
+  if [ -n "$2" ]; then
+    printf '{"hook_event_name":"Stop","stop_hook_active":%s,"background_tasks":[{"id":"t","type":"shell","status":"running","command":"%s"}]}' "$1" "$2"
+  else
+    printf '{"hook_event_name":"Stop","stop_hook_active":%s,"background_tasks":[]}' "$1"
+  fi
+}
+hook_field() { printf '%s' "$1" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).hookSpecificOutput[process.argv[1]]))}catch(e){process.stdout.write("unparseable")}})' "$2"; }
 
 out="$(hook_ctx "$hookdir")"
 check "no .mcp.json means the hook injects nothing" "${out:-empty}" "empty"
@@ -981,6 +993,176 @@ if [ -z "$hdr_offenders" ]; then
 else
   bad "Authorization passed via -H (token lands in argv):$hdr_offenders"
 fi
+
+
+# --- --check: the Stop hook's liveness probe ---------------------------------
+# SessionStart fires once per session, but the watcher exits on EVERY successful
+# wake by design, so relaunching used to depend on the agent remembering at the
+# moment it had just been handed new work. Two orchestrators lost 11 and 14
+# hours of coverage to that on 2026-09-17. The Stop hook closes it, and these
+# cover the probe it decides on.
+
+# Every invocation below scrubs API_URL/API_SECRET/AGENT_ID, because the watcher
+# prefers env over .mcp.json by design and a dev checkout's .env exports two of
+# them: inherited, they rename the pidfile these fixtures write and make the
+# unresolvable-config case resolve. `probe` exists so no call can forget.
+probe() { env API_URL= API_SECRET= AGENT_ID= "$@"; }
+
+checkdir="$(mktemp -d)"
+# 10.255.255.1 is unroutable, so a call that DID reach the API would pay the full
+# --max-time. 127.0.0.1:1 refuses instantly and cannot tell the two apart.
+printf '{"mcpServers":{"relai":{"env":{"API_URL":"http://10.255.255.1:3010","API_SECRET":"aio_test","AGENT_ID":"agent_checkprobe"}}}}' > "$checkdir/.mcp.json"
+
+# No pidfile at all: the answer is "not running", and it must not start one.
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" probe bash "$SCRIPTS/relai-watch.sh" --check --repo-path "$checkdir" 2>&1)"
+check "--check reports not-running for the agent it resolved" "$out" "relai-watch: not running agent=agent_checkprobe"
+
+# A pidfile naming a live process that is NOT a watcher must not read as alive:
+# pids get reused, so the check confirms the process is really ours.
+probe_dir="$(mktemp -d)"
+sleep 30 & impostor=$!
+echo "$impostor" > "$probe_dir/watch-agent_checkprobe.pid"
+out="$(RELAI_WATCH_PIDFILE_DIR="$probe_dir" probe bash "$SCRIPTS/relai-watch.sh" --check --repo-path "$checkdir" 2>&1)"
+check "--check rejects a pidfile pointing at some other live process" "$out" "relai-watch: not running agent=agent_checkprobe"
+kill "$impostor" 2>/dev/null
+
+# A stale pidfile (dead pid) is "not running", and --check must leave it alone:
+# the start path owns that file under a lock, so a second writer would race it.
+echo "999999" > "$probe_dir/watch-agent_checkprobe.pid"
+out="$(RELAI_WATCH_PIDFILE_DIR="$probe_dir" probe bash "$SCRIPTS/relai-watch.sh" --check --repo-path "$checkdir" 2>&1)"
+check "--check reports not-running on a stale pidfile" "$out" "relai-watch: not running agent=agent_checkprobe"
+check "--check does not delete the stale pidfile it read" "$(cat "$probe_dir/watch-agent_checkprobe.pid" 2>/dev/null)" "999999"
+
+# The probe must cost nothing: no request, so a dead API cannot make it hang or
+# change its answer. The .mcp.json above points at a closed port on purpose.
+probe_log="$(mktemp)"
+probe_start=$(date +%s)
+RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" RELAI_WATCH_LOG="$probe_log" \
+  probe bash "$SCRIPTS/relai-watch.sh" --check --repo-path "$checkdir" >/dev/null 2>&1
+probe_elapsed=$(( $(date +%s) - probe_start ))
+if [ "$probe_elapsed" -le 2 ]; then
+  ok "--check answers fast against an unroutable API (${probe_elapsed}s)"
+else
+  bad "--check took ${probe_elapsed}s — it is making a network call"
+fi
+if grep -q "agent-validate" "$probe_log" 2>/dev/null; then
+  bad "--check logged an agent-validate line, so it did call the API"
+else
+  ok "…and logged no agent-validate line, so the call never happened"
+fi
+
+# --check composes with --repo-path, because Cursor passes the latter and the
+# hook has to be able to ask about that same watcher.
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" probe bash "$SCRIPTS/relai-watch.sh" --repo-path "$checkdir" --check 2>&1)"
+check "--check works in either order with --repo-path" "$out" "relai-watch: not running agent=agent_checkprobe"
+
+# `--repo-path` immediately followed by another flag must not eat it. This one
+# was live: a `--repo-path --check` invocation took "--check" as the path, left
+# check_only at 0, and STARTED a watcher, which then replaced the operator's
+# running one through the single-instance path. A probe that starts a process is
+# worse than a probe that answers wrong.
+# Bounded, because the regression does not fail — it HANGS. With the guard
+# removed, `--check` is consumed as the path value, check_only stays 0, and the
+# script enters the wake loop and never returns, so an unbounded call turns a red
+# test into a stuck suite (which is exactly what happened to three mutation runs
+# on 2026-09-17 before this bound existed). Demonstrated on a mutated copy: it
+# logged agent-validate + watcher-start and wrote watch-agent_mutprobe.pid.
+probe_started_dir="$(mktemp -d)"
+( RELAI_WATCH_PIDFILE_DIR="$probe_started_dir" CLAUDE_PROJECT_DIR="$checkdir" \
+  probe bash "$SCRIPTS/relai-watch.sh" --repo-path --check >/dev/null 2>&1 ) &
+probe_pp=$!
+for _ in $(seq 1 50); do kill -0 "$probe_pp" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$probe_pp" 2>/dev/null; then
+  kill -TERM "$probe_pp" 2>/dev/null
+  bad "--repo-path --check never returned: it swallowed the flag and started a watcher"
+else
+  wait "$probe_pp"; probe_rc=$?
+  check "--repo-path does not swallow a following --check" "$probe_rc" "1"
+fi
+if [ -z "$(ls -A "$probe_started_dir" 2>/dev/null)" ]; then
+  ok "…and that form starts no watcher (no pidfile written)"
+else
+  bad "--repo-path --check started a watcher: $(ls -A "$probe_started_dir")"
+fi
+
+# A trailing --repo-path with no value at all must not crash or consume a phantom.
+RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" CLAUDE_PROJECT_DIR="$checkdir" \
+  probe bash "$SCRIPTS/relai-watch.sh" --check --repo-path >/dev/null 2>&1
+check "a valueless trailing --repo-path still probes" "$?" "1"
+
+# An unresolvable config refuses rather than answering "not running": a refusal
+# is CASE 3, and reporting "not running" would have the hook relaunch forever.
+# A relai server with NO env, so API_SECRET/AGENT_ID cannot resolve. Note a dir
+# with no .mcp.json at all would NOT isolate this: the candidate list falls
+# through to $CLAUDE_PROJECT_DIR and then the git root of $PWD, which is relai
+# itself, and the probe would answer about the real agent.
+emptydir="$(mktemp -d)"
+printf '{"mcpServers":{"relai":{"command":"tsx"}}}' > "$emptydir/.mcp.json"
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" CLAUDE_PROJECT_DIR="$emptydir" probe bash "$SCRIPTS/relai-watch.sh" --check --repo-path "$emptydir" 2>&1)"
+case "$out" in
+  *RELAI-CONFIG-REFUSED*) ok "--check refuses an unresolvable config instead of reporting not-running" ;;
+  *) bad "--check on an unresolvable config said: ${out:-nothing}" ;;
+esac
+
+# --- the Stop hook: silent when healthy, loud only when the watcher is gone ---
+# The liveness signal is this session's background_tasks, NOT the pidfile. The
+# pidfile is written only after validate_agent_id's curl, so against a slow API
+# it stays invisible for up to 6s (measured) while the hook keeps asking and
+# each new watcher TERMs the last. background_tasks registers at launch.
+
+stopdir="$(mktemp -d)"
+printf '{"mcpServers":{"relai":{"env":{"API_URL":"http://10.255.255.1:3010","API_SECRET":"aio_test","AGENT_ID":"agent_stopprobe"}}}}' > "$stopdir/.mcp.json"
+
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" hook_stop_ctx "$stopdir" "$(stop_payload false "")")"
+check "Stop with no watcher task injects Stop-scoped JSON" "$(hook_field "$out" hookEventName)" "Stop"
+case "$(hook_field "$out" additionalContext)" in
+  *"NOT RUNNING"*) ok "…and the text says the watcher is not running" ;;
+  *) bad "Stop context does not say the watcher is down" ;;
+esac
+
+# The common case, and the one that matters most: a per-turn hook that speaks
+# when nothing is wrong costs a model turn every turn.
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" hook_stop_ctx "$stopdir" "$(stop_payload false "/x/scripts/relai-watch.sh")")"
+check "Stop is silent while a watcher task is running" "${out:-empty}" "empty"
+
+# It must key on the watcher, not on "any background work exists".
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" hook_stop_ctx "$stopdir" "$(stop_payload false "pnpm test")")"
+check "an unrelated background task does not count as a watcher" "$(hook_field "$out" hookEventName)" "Stop"
+
+# stop_hook_active is the documented bound. Without honouring it, any state that
+# stays "gone" across a continuation multiplies by CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
+# (8): a revoked token, a denied Bash call, a failed pidfile write.
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" hook_stop_ctx "$stopdir" "$(stop_payload true "")")"
+check "Stop is silent while stop_hook_active is true, even with no watcher" "${out:-empty}" "empty"
+
+# No readable payload means no signal; fall back to the pidfile rather than
+# asserting a watcher is gone on no evidence.
+fallback_dir="$(mktemp -d)"
+stub_dir="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$stub_dir/relai-watch.sh"
+bash "$stub_dir/relai-watch.sh" & stub_watcher=$!
+echo "$stub_watcher" > "$fallback_dir/watch-agent_stopprobe.pid"
+out="$(RELAI_WATCH_PIDFILE_DIR="$fallback_dir" hook_stop_ctx "$stopdir" 'not json')"
+check "an unreadable payload falls back to the pidfile and stays silent" "${out:-empty}" "empty"
+kill "$stub_watcher" 2>/dev/null
+
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" hook_stop_ctx "$stopdir" 'not json')"
+check "…and injects when that fallback also finds nothing" "$(hook_field "$out" hookEventName)" "Stop"
+
+# The event comes from an argument now. Deriving it from the payload meant a
+# partial read fell back to SessionStart, and Claude Code DROPS a
+# hookSpecificOutput whose event name does not match the event it fired, so the
+# original bug came back silently.
+out="$(hook_ctx "$stopdir")"
+check "SessionStart still injects unconditionally" "$(hook_field "$out" hookEventName)" "SessionStart"
+out="$(printf '%s' "$(stop_payload false "")" | RELAI_DIR="$SCRIPTS/.." CLAUDE_PROJECT_DIR="$stopdir" RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" env API_URL= API_SECRET= AGENT_ID= bash "$SCRIPTS/relai-watch-hook.sh" 2>/dev/null)"
+check "no --event argument defaults to SessionStart, as before this change" "$(hook_field "$out" hookEventName)" "SessionStart"
+
+# A repo not wired to relai gets nothing on Stop either.
+unwired="$(mktemp -d)"
+printf '{"mcpServers":{"other":{}}}' > "$unwired/.mcp.json"
+out="$(RELAI_WATCH_PIDFILE_DIR="$(mktemp -d)" hook_stop_ctx "$unwired" "$(stop_payload false "")")"
+check "Stop injects nothing for a repo not wired to relai" "${out:-empty}" "empty"
 
 
 # --- the suite must not outlive its own watchers -----------------------------

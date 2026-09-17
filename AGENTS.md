@@ -418,13 +418,24 @@ Outward-facing work stays Jim's, because the local `gh` cannot touch `phillipsio
 
 ## Deploy
 
-The repo ships a production `Dockerfile` + `render.yaml` targeting Render. The image runs the API from TypeScript source under `tsx` (the shared `db` and `types` packages export `src/` directly, so there's no monorepo build step). See `docs/deploy-render.md`.
+Production runs on a **DigitalOcean VPS**, not a PaaS. Read off the box on 2026-09-17 by the relai-cloud agent; I have no access to it, so treat the specifics as its reading rather than mine:
 
-**Nothing applies the schema on deploy.** Render's free plan has no pre-deploy command, so migrations are applied by hand against the database's external URL: `DATABASE_URL='<external-url>' pnpm --filter @getrelai/db db:migrate`. Do this before the first deploy (or the API boots against an empty database) and after any schema change.
+- Two systemd units, both `User=jim`: `relai-api.service` and `relai-cloud.service`.
+- The API runs TypeScript source under `tsx` with **no build step**: `WorkingDirectory=/opt/relai/app/packages/api`, `ExecStart=.../node_modules/.bin/tsx src/index.ts`, `EnvironmentFile=/etc/relai/api.env`.
+- A deploy is therefore `git pull` + `pnpm install` + `systemctl restart relai-api`.
+- Postgres is a container on the same box (`relai-postgres`, `postgres:16-alpine`) bound to `127.0.0.1:5432`. **There is no external database URL**, so any instruction that hands one to a local command is wrong.
+
+**Nothing applies the schema on deploy** — no CI, no release command, no pre-deploy hook — so migrations are applied by hand ON THE BOX, with `DATABASE_URL` from `/etc/relai/api.env` (the repo's `.env` is dev). Do it before the first deploy of a schema change, or the API boots against a schema it does not match.
+
+**Before applying any migration, check the data it constrains.** An `ALTER ... ADD CONSTRAINT` aborts on a single violating row, and a failed migration mid-deploy is worse than the defect it closes. Migration 0007 is the worked example: run its count query first, and if it returns non-zero decide what to do with those rows before touching the schema.
+
+**Read `drizzle.__drizzle_migrations` rather than assuming which migrations are pending.** Prod can be several commits behind `origin/main` (it was 12 behind on 2026-09-17), so more than one may be outstanding.
+
+`render.yaml` and `docs/deploy-render.md` were **deleted** on 2026-09-17. Not merely because production moved: that doc instructed `pnpm db:push` twice as the way to apply the cloud schema, which this file's own Critical rules forbid in a deploy step, and which the relai-cloud agent measured on 2026-09-09 as proposing `CREATE TABLE "users"` plus `DROP TYPE` for nine relai enums against a real database. It also documented a 3-agent free-tier limit removed the same day. A stale deploy doc reads as current and gets followed; this one destroyed schema if followed. relai-cloud's own README carries the VPS deploy written up correctly and is the model to copy from.
 
 The Fly config was removed on 2026-08-20. It was never deployed, and its `[deploy] release_command` ran `db:push` **from the deployed image**, so rolling back to an older image would have diffed newer tables as deletions and dropped them with their data. If Fly is revisited, the release command must run `db:migrate`, never `push`.
 
-`/health` is auth-gated, so a health probe needs either a token or an unauthenticated `/livez` route. The web dashboard isn't deployed by this config — host it separately or skip for CLI/MCP-only setups.
+`/health` is auth-gated, so a health probe needs either a token or an unauthenticated `/livez` route. The web dashboard is hosted separately by relai-cloud.
 
 ## Critical rules
 

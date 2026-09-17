@@ -409,8 +409,13 @@ describe("agent tokens are not the dashboard", () => {
 
 describe("the legacy shared secret is not a tenant", () => {
   // API_SECRET sets neither agent nor ownerId, so it used to fall through every
-  // tenant check and could read or approve any tenant's code. render.yaml
-  // provisions it on the hosted service, so this is not a self-host-only path.
+  // tenant check and could read or approve any tenant's code. The path exists in
+  // the code whether or not a given deployment provisions the variable, which is
+  // why the tenant check has to hold for it rather than being argued away as
+  // self-host-only. (This comment used to cite render.yaml as proof the hosted
+  // service sets it; production moved to a VPS on an unknown date and that file
+  // is gone, so the justification now rests on the code instead of on a
+  // deployment detail no test can see.)
   it("refuses a lookup carrying only API_SECRET", async () => {
     const { data } = await start({ repoName: "victim-secret-repo" });
     const res = await app.inject({ method: "GET", url: `/auth/device/pending/${data.userCode}`, headers: ADMIN });

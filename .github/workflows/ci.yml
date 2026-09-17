@@ -56,9 +56,24 @@ jobs:
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
 
+      # The join e2e boots a real API against a real database, and it targets the
+      # plain `relai` one because that is what the script defaults to locally.
+      - name: Apply migrations (join e2e database)
+        run: pnpm --filter @getrelai/db db:migrate
+        env:
+          DATABASE_URL: postgresql://relai:relai@localhost:5432/relai
+
       - run: pnpm typecheck
 
-      - run: pnpm test
+      # `pnpm test` split into its two halves so DATABASE_URL reaches only the one
+      # that needs it. Handing it to the vitest step would give every project a live
+      # pointer at a database nothing truncates; only packages/api pins its own URL,
+      # so the next project to open a connection would quietly write to `relai`.
+      - run: pnpm exec vitest run
+
+      - run: pnpm test:shell
+        env:
+          DATABASE_URL: postgresql://relai:relai@localhost:5432/relai
 
       # dist is tracked on purpose (.gitignore un-ignores it so a consumer can
       # run the server straight from git), so it drifts silently. It did, by

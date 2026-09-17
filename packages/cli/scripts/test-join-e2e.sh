@@ -15,6 +15,14 @@ API="http://127.0.0.1:${PORT}"
 ADMIN="e2e-service-admin-$$"
 DB="${DATABASE_URL:-postgres://relai:relai@127.0.0.1:5433/relai}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# Each package declares tsx, so a frozen install always leaves one here. `npx tsx`
+# resolved nothing on a CI runner, where tsx is no root dependency, so the API
+# never booted and the failure surfaced as "API did not start".
+TSX_API="$ROOT/packages/api/node_modules/.bin/tsx"
+TSX_CLI="$ROOT/packages/cli/node_modules/.bin/tsx"
+for t in "$TSX_API" "$TSX_CLI"; do
+  [ -x "$t" ] || { echo "missing $t - run pnpm install"; exit 1; }
+done
 SANDBOX="$(mktemp -d)"
 API_PID=""
 pass=0; fail=0
@@ -30,18 +38,32 @@ check() { # name, condition-already-evaluated as $2 == "ok"
   else fail=$((fail+1)); echo "FAIL  $1${3:+  ($3)}"; fi
 }
 
-if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "port $PORT is in use; set API_PORT to something free"; exit 1
+# `command -v` first: a missing lsof exits 127, which an `if` reads as "port is
+# free", so the check would silently pass on a runner that has no lsof.
+if command -v lsof >/dev/null 2>&1; then
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "port $PORT is in use; set API_PORT to something free"; exit 1
+  fi
+else
+  echo "note: no lsof, skipping the port-in-use check"
 fi
 
 DATABASE_URL="$DB" SERVICE_ADMIN_TOKEN="$ADMIN" API_SECRET="e2e-secret-$$" API_PORT="$PORT" \
-  npx tsx "$ROOT/packages/api/src/index.ts" > "$SANDBOX/api.log" 2>&1 &
+  "$TSX_API" "$ROOT/packages/api/src/index.ts" > "$SANDBOX/api.log" 2>&1 &
 API_PID=$!
 for _ in $(seq 1 30); do curl -sf --max-time 2 "$API/livez" >/dev/null 2>&1 && break; sleep 1; done
 curl -sf --max-time 2 "$API/livez" >/dev/null 2>&1 || { echo "API did not start"; tail -20 "$SANDBOX/api.log"; exit 1; }
 
 OWNER="usr_e2e_$$"
-psql_() { docker exec -e PGPASSWORD=relai relai-postgres-1 psql -U relai -d "${DB##*/}" -tA -c "$1" </dev/null; }
+# A runner has psql and no compose container; this dev box has the container and
+# no psql. Try both rather than assuming either is present.
+if command -v psql >/dev/null 2>&1; then
+  psql_() { psql -w -tA -d "$DB" -c "$1" </dev/null; }
+elif docker exec relai-postgres-1 true >/dev/null 2>&1; then
+  psql_() { docker exec -e PGPASSWORD=relai relai-postgres-1 psql -U relai -d "${DB##*/}" -tA -c "$1" </dev/null; }
+else
+  echo "no way to reach Postgres: install psql, or start the compose container"; exit 1
+fi
 psql_ "insert into users (id, email) values ('$OWNER', '$OWNER@test.local') on conflict do nothing;" >/dev/null
 REPO=$(curl -s -X POST "$API/repos" -H "Authorization: Bearer $ADMIN" -H "X-Owner-Id: $OWNER" \
   -H 'Content-Type: application/json' -d '{"name":"__e2e__ join"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["id"])')
@@ -54,7 +76,7 @@ git -C "$WORK" remote add origin "git@github.com:someone/e2e-widget.git"
 printf '%s\n' '{"mcpServers":{"playwright":{"command":"npx","args":["playwright"]}},"theme":"dark"}' > "$WORK/.mcp.json"
 
 export HOME="$SANDBOX/home"; mkdir -p "$HOME"
-( cd "$WORK" && CLAUDECODE=1 npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join.log" 2>&1 ) &
+( cd "$WORK" && CLAUDECODE=1 "$TSX_CLI" "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join.log" 2>&1 ) &
 JOIN_PID=$!
 
 CODE=""
@@ -103,7 +125,7 @@ grep -q "^\.mcp\.json$" "$WORK/.git/info/exclude" 2>/dev/null && check "repo con
 git -C "$WORK" add -f .mcp.json >/dev/null 2>&1 || true
 git -C "$WORK" -c user.email=e2e@test -c user.name=e2e commit -qm "track mcp config" >/dev/null 2>&1 || true
 BEFORE=$(md5 -q "$WORK/.mcp.json" 2>/dev/null || md5sum "$WORK/.mcp.json" | cut -d" " -f1)
-( cd "$WORK" && CLAUDECODE=1 npx tsx "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join2.log" 2>&1 ) &
+( cd "$WORK" && CLAUDECODE=1 "$TSX_CLI" "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join2.log" 2>&1 ) &
 JOIN2_PID=$!
 CODE2=""
 for _ in $(seq 1 30); do

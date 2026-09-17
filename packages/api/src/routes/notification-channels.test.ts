@@ -825,12 +825,17 @@ describe("delivery refuses a channel whose hostname resolves privately", () => {
       targetId:   rebindThreadId,
       payload:    { hello: "world" },
       createdAt:  new Date().toISOString(),
-    }, { retries: 2, baseDelayMs: 50 });
+    }, { retries: 2, baseDelayMs: 500 });
     const elapsed = Date.now() - started;
 
     expect(fetchMock).not.toHaveBeenCalled();
-    // 50 * 4^0 + 50 * 4^1 = 250ms of mandated sleep if it retries at all.
-    expect(elapsed).toBeLessThan(200);
+    // A retry would sleep 500 * 4^0 + 500 * 4^1 = 2500ms, so anything under a
+    // second means it did not. The delay is deliberately large to separate the
+    // signal from the work: with baseDelayMs 50 the bound was 200ms and the
+    // refusal path's own DNS + queries measured 243ms on a loaded CI runner, so
+    // the test failed while the behaviour it checks was correct. Nothing sleeps
+    // on the passing path, so the bigger delay costs nothing.
+    expect(elapsed).toBeLessThan(1000);
     const [after] = await db.select().from(notificationChannels).where(eq(notificationChannels.id, rebindChannelId));
     expect(after.lastError ?? "").toMatch(/private or link-local/);
     // A refused address stays visible rather than tripping the breaker.

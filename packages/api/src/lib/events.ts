@@ -24,6 +24,7 @@ export type EventKind =
   | "task.blocked_overdue"
   | "task.stall_released"
   | "task.stall_exhausted"
+  | "task.thread_relinked"
   | "artifact.published";
 
 export interface AppEvent {

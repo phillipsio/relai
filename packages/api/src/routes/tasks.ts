@@ -5,7 +5,7 @@ import { eq, and, inArray, asc, desc, isNull, count } from "drizzle-orm";
 import { tasks, repos, agents, threads, messages } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertRepoAccess } from "../lib/ownership.js";
+import { assertRepoAccess, threadOwnableByRepo } from "../lib/ownership.js";
 import { verifyTask, resetRouteLogs } from "../lib/router/scheduler.js";
 import { clip, clipMetadata } from "../lib/payload.js";
 import type { Db } from "@getrelai/db";
@@ -83,9 +83,16 @@ function verifyConfigConsistent(v: {
 // issues nobody comments on don't spawn empty threads. Idempotent: returns the
 // existing linked thread if present.
 async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
+  let relinkedFrom: typeof threads.$inferSelect | null = null;
   if (task.threadId) {
     const [existing] = await db.select().from(threads).where(eq(threads.id, task.threadId));
-    if (existing) return existing;
+    // A linked thread has to be one this task could own. A thread in another
+    // project, or a DM whose two participants are its whole audience, would
+    // otherwise be served here without ever passing loadThreadScoped. Relink
+    // rather than refuse: nothing can reset this column through the API any
+    // more, so refusing would 409 the task's comments permanently.
+    if (existing && threadOwnableByRepo(existing, task.repoId)) return existing;
+    if (existing) relinkedFrom = existing;
   }
   const [thread] = await db.insert(threads).values({
     id:        newId("thread"),
@@ -94,7 +101,32 @@ async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
     type:      null,
     taskId:    task.id,
   }).returning();
-  await db.update(tasks).set({ threadId: thread.id, updatedAt: new Date() }).where(eq(tasks.id, task.id));
+
+  // Record what the pointer was BEFORE overwriting it. For a DM the pointer is
+  // usually evidence rather than a mistake: until this check existed the read
+  // path served that conversation to whoever asked, so relinking silently would
+  // destroy the only record of which thread was exposed.
+  const meta = (task.metadata ?? {}) as Record<string, unknown>;
+  const auditedMeta = relinkedFrom
+    ? { ...meta, threadRelinked: { from: relinkedFrom.id, fromRepoId: relinkedFrom.repoId, wasDm: relinkedFrom.type === "dm", at: new Date().toISOString() } }
+    : meta;
+  const [linked] = await db.update(tasks)
+    .set({ threadId: thread.id, ...(relinkedFrom ? { metadata: auditedMeta } : {}), updatedAt: new Date() })
+    .where(eq(tasks.id, task.id))
+    .returning();
+
+  if (relinkedFrom) {
+    console.warn(`[tasks] task ${task.id} pointed at thread ${relinkedFrom.id} it cannot own (repo=${relinkedFrom.repoId}, type=${relinkedFrom.type}); relinked to ${thread.id}`);
+    await publish(db, {
+      id:         newId("evt"),
+      kind:       "task.thread_relinked",
+      repoId:     task.repoId,
+      targetType: "task",
+      targetId:   task.id,
+      payload:    { task: linked, relinkedFrom: relinkedFrom.id, wasDm: relinkedFrom.type === "dm" },
+      createdAt:  linked.updatedAt.toISOString(),
+    });
+  }
   return thread;
 }
 
@@ -161,7 +193,9 @@ const updateSchema = z.object({
   assignedTo:     z.string().nullable().optional(),
   domains:        promptSafeDomains.optional(),
   epicId:         z.string().nullable().optional(),
-  threadId:       z.string().nullable().optional(),
+  // No threadId: ensureTaskThread picks that id itself, no client ever sent one,
+  // and dereferencing it serves message bodies. epicId stays because nothing
+  // dereferences it into content, it is only ever an opaque filter.
   metadata:       z.record(z.unknown()).optional(),
   // Task dependency mutations — append-only to avoid accidental clobbers.
   addBlockedBy:   z.array(z.string()).optional(),
@@ -192,6 +226,7 @@ const SERVER_OWNED_METADATA_KEYS = [
   "proposedOverdueNotifiedAt",
   "reviewOverdueNotifiedAt",
   "verifyRetryCount",
+  "threadRelinked",
 ] as const;
 
 export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {

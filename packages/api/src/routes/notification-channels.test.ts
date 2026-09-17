@@ -579,6 +579,10 @@ describe("owner-scoped notification channels", () => {
       // task.stall_released is deliberately absent — it is self-healing.
       "task.stall_exhausted",
       "task.stalled",
+      // A task found pointing at a thread it cannot own. For a DM that is not a
+      // data-hygiene event: until the check existed the read path served that
+      // conversation to whoever asked, so somebody probably already read it.
+      "task.thread_relinked",
     ]);
   });
 

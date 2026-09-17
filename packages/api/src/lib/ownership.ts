@@ -103,6 +103,19 @@ export async function peerRepoIds(db: Db, agent: typeof agents.$inferSelect): Pr
   return rows.map((r) => r.id);
 }
 
+// Can a repo-scoped surface treat this thread as its own? Separate question from
+// loadThreadScoped, which asks whether a CALLER may read one: this takes no request
+// and must hold for the admin path too, so that check would wave through exactly the
+// case this exists to refuse. What it shares is the rule that `type === "dm"` means
+// repo membership is not sufficient, and that rule lives in this file because two
+// copies of it drifted once already.
+export function threadOwnableByRepo(
+  thread: { repoId: string; type: string | null },
+  repoId: string,
+): boolean {
+  return thread.repoId === repoId && thread.type !== "dm";
+}
+
 // The one place thread access is decided. Two copies drifted once already.
 export async function loadThreadScoped(
   request: FastifyRequest,

@@ -20,6 +20,7 @@ const FAILURE_THRESHOLD = 5;
 export const OWNER_ATTENTION_KINDS = new Set<EventKind>([
   "task.proposed",
   "task.blocked",
+  "task.thread_relinked",
   "task.pending_verification",
   "task.proposed_overdue",
   "task.review_overdue",

@@ -10,7 +10,7 @@ import { sendCommand } from "./commands/send.js";
 import { inboxCommand } from "./commands/inbox.js";
 import { statusCommand } from "./commands/status.js";
 import { startCommand } from "./commands/start.js";
-import { tokenRotateCommand, tokenRevokeCommand } from "./commands/token.js";
+import { tokenRotateCommand, tokenRevokeCommand, tokenListCommand } from "./commands/token.js";
 import { repoInviteCommand, loginCommand } from "./commands/invite.js";
 import { joinCommand } from "./commands/join.js";
 import { mcpCommand } from "./commands/mcp.js";
@@ -251,6 +251,11 @@ token
   .command("rotate")
   .description("Issue a new token, revoke the old one, and list the configs that still hold it")
   .action(tokenRotateCommand);
+
+token
+  .command("list")
+  .description("List your agent's tokens, live and revoked, and mark the one in use")
+  .action(tokenListCommand);
 
 token
   .command("revoke <tokenId>")

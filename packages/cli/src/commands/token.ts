@@ -127,3 +127,35 @@ export async function tokenRevokeCommand(tokenId: string) {
     process.exit(1);
   }
 }
+
+export async function tokenListCommand() {
+  const config = requireConfig();
+  const client = new CliApiClient(config);
+
+  let rows;
+  try {
+    rows = await client.listTokens(config.agentId);
+  } catch (err) {
+    console.error(chalk.red("Could not list tokens"));
+    console.error(chalk.dim(String(err)));
+    process.exit(1);
+  }
+
+  const live = rows.filter((r) => !r.revokedAt);
+  const day = (v: string | null) => (v ? v.slice(0, 10) : chalk.dim("never"));
+
+  for (const r of rows) {
+    const state = r.revokedAt ? chalk.dim(`revoked ${day(r.revokedAt)}`) : chalk.green("live");
+    const mine  = r.current ? chalk.cyan("  ← this one") : "";
+    console.log(`${r.id}  ${state}  ${chalk.dim("created")} ${day(r.createdAt)}  ${chalk.dim("used")} ${day(r.lastUsedAt)}${mine}`);
+  }
+
+  console.log(`\n${live.length} live, ${rows.length - live.length} revoked.`);
+  if (live.length > 1) {
+    console.log(chalk.yellow(`${live.length} live tokens: every one of them authenticates. 'relai token rotate' collapses them to one.`));
+  }
+  const dormant = live.filter((r) => !r.lastUsedAt && !r.current);
+  if (dormant.length) {
+    console.log(chalk.yellow(`${dormant.length} live but never used. Nothing alerts on a credential nobody uses.`));
+  }
+}

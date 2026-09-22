@@ -9,6 +9,11 @@ type Agent = typeof agents.$inferSelect;
 declare module "fastify" {
   interface FastifyRequest {
     agent?: Agent;
+    // Which token row authenticated this request. Only the server can know it
+    // (the client holds a plaintext, the API stores a hash), and GET
+    // /agents/:id/tokens uses it to mark the row the caller is holding so an
+    // operator does not revoke their own credential.
+    tokenId?: string;
     // Set when the request authenticates with SERVICE_ADMIN_TOKEN and carries
     // an X-Owner-Id header. The closed cloud dashboard uses this path to act
     // on behalf of a logged-in user; ownership-aware route handlers filter by
@@ -55,6 +60,7 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
         return reply.status(401).send({ error: { code: "unauthorized", message: "Invalid or revoked token" } });
       }
       request.agent = row.agent;
+      request.tokenId = row.token.id;
       // Any authenticated request marks the agent online, not just /heartbeat.
       // Keep these awaited: un-awaited, they leak a pooled connection per call.
       const now = Date.now();

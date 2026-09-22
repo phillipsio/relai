@@ -93,6 +93,19 @@ export class CliApiClient {
     return { tokenId: res.data.id, token: res.token, revoked: res.revoked ?? [] };
   }
 
+  async listTokens(agentId: string) {
+    const res = await this.requestRaw<{
+      data: Array<{
+        id: string;
+        createdAt: string;
+        lastUsedAt: string | null;
+        revokedAt: string | null;
+        current: boolean;
+      }>;
+    }>("GET", `/agents/${agentId}/tokens`);
+    return res.data;
+  }
+
   revokeToken(tokenId: string) {
     return this.requestRaw<void>("DELETE", `/tokens/${tokenId}`);
   }

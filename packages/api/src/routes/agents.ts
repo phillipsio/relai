@@ -1,7 +1,7 @@
 import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray, isNull } from "drizzle-orm";
+import { eq, and, inArray, isNull, desc } from "drizzle-orm";
 import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
@@ -64,6 +64,32 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     });
 
     return reply.status(201).send({ data: agent, token: plaintext });
+  });
+
+  fastify.get<{ Params: { id: string } }>("/agents/:id/tokens", async (request, reply) => {
+    const check = await assertAgentAccess(request, db, request.params.id);
+    if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
+
+    // Same gate as rotating and revoking: reading the list discloses less than
+    // either, and both already admit exactly these callers.
+    if (!callerMayActOnAgent(request, check.agent.id)) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only the agent itself or an orchestrator may list these tokens." },
+      });
+    }
+
+    const rows = await db
+      .select({
+        id:         tokens.id,
+        createdAt:  tokens.createdAt,
+        lastUsedAt: tokens.lastUsedAt,
+        revokedAt:  tokens.revokedAt,
+      })
+      .from(tokens)
+      .where(eq(tokens.agentId, check.agent.id))
+      .orderBy(desc(tokens.createdAt));
+
+    return { data: rows.map((t) => ({ ...t, current: t.id === request.tokenId })) };
   });
 
   fastify.post<{ Params: { id: string } }>("/agents/:id/tokens", async (request, reply) => {

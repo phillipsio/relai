@@ -289,7 +289,12 @@ describe("the response carries no secret material beyond the plaintext", () => {
 
     const body = res.json();
     expect(body.data).not.toHaveProperty("tokenHash");
-    expect(JSON.stringify(body)).not.toContain((await liveTokens(a.id))[0].tokenHash);
+
+    // vitest's not.toContain(undefined) coerces and passes, so pin the needle
+    // before searching for it.
+    const stored = (await liveTokens(a.id))[0].tokenHash;
+    expect(stored).toMatch(/^[0-9a-f]{64}$/);
+    expect(res.body).not.toContain(stored);
 
     // The fields an operator needs to audit a credential do come back.
     expect(body.data).toHaveProperty("id");

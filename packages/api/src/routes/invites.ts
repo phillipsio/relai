@@ -10,6 +10,22 @@ import { assertRepoAccess } from "../lib/ownership.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
+// Named fields, not the row: codeHash must never leave the server. One list so
+// create and list cannot drift apart.
+const inviteFields = {
+  id:                      invites.id,
+  repoId:                  invites.repoId,
+  createdBy:               invites.createdBy,
+  suggestedName:           invites.suggestedName,
+  suggestedSpecialization: invites.suggestedSpecialization,
+  role:                    invites.role,
+  expiresAt:               invites.expiresAt,
+  acceptedAt:              invites.acceptedAt,
+  acceptedAgentId:         invites.acceptedAgentId,
+  revokedAt:               invites.revokedAt,
+  createdAt:               invites.createdAt,
+};
+
 const createSchema = z.object({
   suggestedName: z.string().min(1).optional(),
   suggestedSpecialization: promptSafeText.min(1).optional(),
@@ -62,7 +78,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       suggestedName:           body.data.suggestedName           ?? null,
       suggestedSpecialization: body.data.suggestedSpecialization ?? null,
       expiresAt: new Date(Date.now() + ttl * 1000),
-    }).returning();
+    }).returning(inviteFields);
 
     return reply.status(201).send({ data: row, code });
   });
@@ -73,7 +89,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     const [project] = await db.select().from(repos).where(eq(repos.id, request.params.id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 
-    const rows = await db.select().from(invites).where(eq(invites.repoId, project.id));
+    const rows = await db.select(inviteFields).from(invites).where(eq(invites.repoId, project.id));
     return { data: rows };
   });
 

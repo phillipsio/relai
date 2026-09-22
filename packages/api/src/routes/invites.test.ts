@@ -149,3 +149,38 @@ describe("GET /repos/:id/invites", () => {
     expect(data.every((i) => i.repoId === repoId)).toBe(true);
   });
 });
+
+describe("codeHash never leaves the server", () => {
+  // The two routes differ in kind and the list one is the reason this matters.
+  // Create returns the plaintext alongside, so the hash there was only ever
+  // redundant. List returns neither, to any repo member of any role, for
+  // invites they never held the code for.
+  it("is absent from create, which returns the plaintext beside it", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ suggestedName: "hash-check" }),
+    });
+    expect(res.statusCode).toBe(201);
+
+    const code = res.json().code as string;
+    expect(code).toMatch(/^inv_/);
+    const { createHash } = await import("node:crypto");
+    const hash = createHash("sha256").update(code).digest("hex");
+
+    expect(res.json().data).not.toHaveProperty("codeHash");
+    expect(res.body).not.toContain(hash);
+  });
+
+  it("is absent from the list, where nothing else discloses it", async () => {
+    const res = await app.inject({
+      method: "GET", url: `/repos/${repoId}/invites`, headers: ADMIN,
+    });
+    expect(res.statusCode).toBe(200);
+
+    const data = res.json().data as Array<Record<string, unknown>>;
+    expect(data.length).toBeGreaterThan(0);
+    expect(data.every((i) => !("codeHash" in i))).toBe(true);
+    // Any sha256 would do; the route has no business emitting one at all.
+    expect(res.body).not.toMatch(/[0-9a-f]{64}/);
+  });
+});

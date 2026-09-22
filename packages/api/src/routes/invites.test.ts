@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
 import type { FastifyInstance } from "fastify";
+import { getTableColumns } from "drizzle-orm";
+import { invites } from "@getrelai/db";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
 const SECRET = "test-secret-invites";
@@ -172,15 +174,34 @@ describe("codeHash never leaves the server", () => {
   });
 
   it("is absent from the list, where nothing else discloses it", async () => {
+    const created = await app.inject({
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ suggestedName: "list-hash-check" }),
+    });
+    expect(created.statusCode).toBe(201);
+    const { createHash } = await import("node:crypto");
+    const hash = createHash("sha256").update(created.json().code as string).digest("hex");
+
     const res = await app.inject({
       method: "GET", url: `/repos/${repoId}/invites`, headers: ADMIN,
     });
     expect(res.statusCode).toBe(200);
 
     const data = res.json().data as Array<Record<string, unknown>>;
-    expect(data.length).toBeGreaterThan(0);
+    expect(data.some((i) => i.id === created.json().data.id)).toBe(true);
     expect(data.every((i) => !("codeHash" in i))).toBe(true);
-    // Any sha256 would do; the route has no business emitting one at all.
-    expect(res.body).not.toMatch(/[0-9a-f]{64}/);
+    expect(res.body).not.toContain(hash);
+  });
+
+  it("keeps every other column, including ones added after this projection was written", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ suggestedName: "shape-check" }),
+    });
+    expect(res.statusCode).toBe(201);
+
+    const returned = Object.keys(res.json().data).sort();
+    const expected = Object.keys(getTableColumns(invites)).filter((c) => c !== "codeHash").sort();
+    expect(returned).toEqual(expected);
   });
 });

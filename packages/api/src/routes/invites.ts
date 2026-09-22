@@ -1,7 +1,7 @@
 import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, getTableColumns } from "drizzle-orm";
 import { agents, invites, repos, tokens } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
@@ -10,21 +10,10 @@ import { assertRepoAccess } from "../lib/ownership.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
-// Named fields, not the row: codeHash must never leave the server. One list so
-// create and list cannot drift apart.
-const inviteFields = {
-  id:                      invites.id,
-  repoId:                  invites.repoId,
-  createdBy:               invites.createdBy,
-  suggestedName:           invites.suggestedName,
-  suggestedSpecialization: invites.suggestedSpecialization,
-  role:                    invites.role,
-  expiresAt:               invites.expiresAt,
-  acceptedAt:              invites.acceptedAt,
-  acceptedAgentId:         invites.acceptedAgentId,
-  revokedAt:               invites.revokedAt,
-  createdAt:               invites.createdAt,
-};
+// Named fields, not the row: codeHash must never leave the server. Derived from
+// the table rather than typed out, so a column added later cannot silently stop
+// being returned.
+const { codeHash: _codeHash, ...inviteFields } = getTableColumns(invites);
 
 const createSchema = z.object({
   suggestedName: z.string().min(1).optional(),

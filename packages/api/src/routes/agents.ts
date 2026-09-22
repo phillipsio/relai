@@ -106,7 +106,13 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
         id:        newId("tok"),
         agentId:   agent.id,
         tokenHash: hashToken(plaintext),
-      }).returning();
+      }).returning({
+        id:         tokens.id,
+        agentId:    tokens.agentId,
+        createdAt:  tokens.createdAt,
+        lastUsedAt: tokens.lastUsedAt,
+        revokedAt:  tokens.revokedAt,
+      });
 
       return { row: inserted, revoked: retired.map((r) => r.id) };
     });

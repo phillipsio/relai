@@ -277,3 +277,23 @@ describe("registration is unaffected", () => {
     expect((await healthAs(a.token)).statusCode).toBe(200);
   });
 });
+
+describe("the response carries no secret material beyond the plaintext", () => {
+  // server.ts installs an error handler specifically so a drizzle failure
+  // cannot put a token's hash in a 500 body. The happy path must not hand out
+  // the same value: `.returning()` with no column list sends the whole row.
+  it("omits tokenHash, and the hash it stored is the one nobody was shown", async () => {
+    const a = await mk();
+    const res = await rotate(a.id, as(a.token));
+    expect(res.statusCode).toBe(201);
+
+    const body = res.json();
+    expect(body.data).not.toHaveProperty("tokenHash");
+    expect(JSON.stringify(body)).not.toContain((await liveTokens(a.id))[0].tokenHash);
+
+    // The fields an operator needs to audit a credential do come back.
+    expect(body.data).toHaveProperty("id");
+    expect(body.data).toHaveProperty("createdAt");
+    expect(body.data).toHaveProperty("revokedAt", null);
+  });
+});

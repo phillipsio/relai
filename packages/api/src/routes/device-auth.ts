@@ -303,7 +303,14 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
       .returning();
     if (!updated) return reply.status(409).send({ error: { code: "already_decided", message: "This request is already decided" } });
 
-    return reply.status(200).send({ data: { repoId: repo.id, agents: body.data.agents.length } });
+    // Echo the scope READ BACK FROM THE ROW, not the one that was asked for.
+    // An older API silently strips an unknown `scope` (this schema is not
+    // strict) and mints an ordinary repo token, so a caller that cannot see
+    // what was actually granted has no way to tell a downgrade from a success.
+    // Echoing the request would reproduce exactly that blindness.
+    return reply.status(200).send({
+      data: { repoId: repo.id, agents: body.data.agents.length, scope: updated.scope },
+    });
   });
 
   fastify.post("/auth/device/deny", async (request, reply) => {

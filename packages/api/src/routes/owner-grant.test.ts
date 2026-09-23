@@ -15,7 +15,7 @@
 // caller cannot mint itself a token for a tenant it does not hold.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { createDb, users, invites, tokens } from "@getrelai/db";
+import { createDb, users, invites, tokens, deviceAuthorizations } from "@getrelai/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
@@ -150,6 +150,33 @@ describe("an owner-scoped grant, end to end", () => {
     const [row] = await db.select().from(invites)
       .where(eq(invites.codeHash, createHash("sha256").update(code).digest("hex")));
     expect(row.ownerId).toBe(ownerA);
+  });
+});
+
+describe("approve states what it granted, so a downgrade cannot pass for success", () => {
+  // An API that predates the scope field strips it (approveSchema is not
+  // strict) and mints an ordinary repo token. Without an echo, a dashboard
+  // offering an owner-scope checkbox would report success while handing the
+  // user a repo-scoped credential.
+  it("echoes owner when owner was granted", async () => {
+    const { approve } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    expect(approve.statusCode).toBe(200);
+    expect(approve.json().data.scope).toBe("owner");
+  });
+
+  it("echoes repo when nothing was asked for", async () => {
+    const { approve } = await grant({ owner: ownerA, repoId: repoA1 });
+    expect(approve.json().data.scope).toBe("repo");
+  });
+
+  it("reports the persisted scope rather than the requested one", async () => {
+    // Reading it back from the update is what makes the echo worth trusting.
+    const { userCode, approve } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    expect(approve.json().data.scope).toBe("owner");
+
+    const [row] = await db.select().from(deviceAuthorizations)
+      .where(eq(deviceAuthorizations.userCode, userCode));
+    expect(row.scope).toBe(approve.json().data.scope);
   });
 });
 

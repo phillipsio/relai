@@ -9,10 +9,11 @@ type Agent = typeof agents.$inferSelect;
 declare module "fastify" {
   interface FastifyRequest {
     agent?: Agent;
-    // Which token row authenticated this request. Only the server can know it
-    // (the client holds a plaintext, the API stores a hash), and GET
-    // /agents/:id/tokens uses it to mark the row the caller is holding so an
-    // operator does not revoke their own credential.
+    // Which token row authenticated this request. A client that got its
+    // credential from a rotation already knows this id, but one minted at
+    // registration or invite acceptance never sees it, and only the server can
+    // map a presented plaintext back to a row. GET /agents/:id/tokens uses it
+    // to mark the row the caller holds so an operator does not revoke it.
     tokenId?: string;
     // Set when the request authenticates with SERVICE_ADMIN_TOKEN and carries
     // an X-Owner-Id header. The closed cloud dashboard uses this path to act
@@ -65,14 +66,18 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
       // Keep these awaited: un-awaited, they leak a pooled connection per call.
       const now = Date.now();
       const interval = Number(process.env.AUTH_STAMP_INTERVAL_MS ?? 60_000);
-      if (now - (lastStamped.get(row.agent.id) ?? 0) >= interval) {
-        lastStamped.set(row.agent.id, now);
+      // Keyed on the token, not the agent: keyed on the agent, one busy token
+      // kept the window warm and its siblings were never stamped however often
+      // they authenticated, so GET /agents/:id/tokens reported a credential in
+      // active use as never used.
+      if (now - (lastStamped.get(row.token.id) ?? 0) >= interval) {
+        lastStamped.set(row.token.id, now);
         const at = new Date(now);
         try {
           await db.update(tokens).set({ lastUsedAt: at }).where(eq(tokens.id, row.token.id));
           await db.update(agents).set({ lastSeenAt: at }).where(eq(agents.id, row.agent.id));
         } catch (err) {
-          lastStamped.delete(row.agent.id);
+          lastStamped.delete(row.token.id);
           request.log.warn({ err }, "failed to stamp agent activity");
         }
       }

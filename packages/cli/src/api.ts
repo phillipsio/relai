@@ -100,7 +100,7 @@ export class CliApiClient {
         createdAt: string;
         lastUsedAt: string | null;
         revokedAt: string | null;
-        current: boolean;
+        current: boolean | null;
       }>;
     }>("GET", `/agents/${agentId}/tokens`);
     return res.data;

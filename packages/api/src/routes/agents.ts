@@ -89,7 +89,16 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       .where(eq(tokens.agentId, check.agent.id))
       .orderBy(desc(tokens.createdAt));
 
-    return { data: rows.map((t) => ({ ...t, current: t.id === request.tokenId })) };
+    // null, not false: on the legacy secret and owner paths nothing resolved a
+    // token row, and "not yours" must not look like "the server cannot tell".
+    // An operator who reads a missing marker as disposable revokes the agent's
+    // only credential, which cannot be undone.
+    return {
+      data: rows.map((t) => ({
+        ...t,
+        current: request.tokenId ? t.id === request.tokenId : null,
+      })),
+    };
   });
 
   fastify.post<{ Params: { id: string } }>("/agents/:id/tokens", async (request, reply) => {

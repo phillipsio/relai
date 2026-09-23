@@ -2,7 +2,7 @@
 //
 // 21 live tokens across 19 agents accumulated in production before anyone
 // noticed (task_o6BhrRbJndRhyMdvnctAy), and the reason nobody noticed is that
-// no route lists them: the pile was only ever visible by opening Postgres on
+// no route listed them: the pile was only ever visible by opening Postgres on
 // the box. GET /agents/:id/tokens closes that, under the same gate as rotating
 // and revoking, so it hands out no authority those two do not already carry.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -96,8 +96,8 @@ describe("an agent can enumerate its own credentials", () => {
 });
 
 describe("the caller can tell which row it is holding", () => {
-  // The client cannot work this out: it holds a plaintext and the server stores
-  // a hash. Without it, revoking from this list is a coin flip.
+  // A client minted at registration or invite acceptance never saw its token
+  // id, so without this marker revoking from the list is a coin flip.
   it("marks exactly the token that authenticated the request", async () => {
     const a = await mk();
     const rot = await rotate(a.id, as(a.token));
@@ -116,6 +116,52 @@ describe("the caller can tell which row it is holding", () => {
     const rows = (await list(worker.id, as(orch.token))).json().data as Array<{ current: boolean }>;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.current === false)).toBe(true);
+  });
+});
+
+describe("a caller that cannot be told apart says so", () => {
+  it("reports current as null on the shared-secret path, never false", async () => {
+    const a = await mk();
+    const rows = (await list(a.id, ADMIN)).json().data as Array<{ current: boolean | null }>;
+    expect(rows.length).toBe(1);
+    // false would read as "not the one you are holding" and invite an operator
+    // to revoke the agent's only credential.
+    expect(rows[0].current).toBeNull();
+  });
+});
+
+describe("lastUsedAt is per token, not per agent", () => {
+  // The audit is only as good as this column. The activity stamp used to be
+  // throttled on the agent id, so when one token kept the window warm its
+  // sibling was never stamped however often it authenticated, and the CLI
+  // reported an actively-used credential as never used and told the operator to
+  // revoke it. That is the audit giving the inverted answer.
+  it("stamps a second live token that is doing the authenticating", async () => {
+    const a = await mk();
+    const second = await app.inject({
+      method: "POST", url: `/agents/${a.id}/tokens`, headers: as(a.token),
+      body: JSON.stringify({ keepExisting: true }),
+    });
+    expect(second.statusCode).toBe(201);
+    const secondToken = second.json().token as string;
+    const secondId = second.json().data.id as string;
+
+    // The suite pins AUTH_STAMP_INTERVAL_MS=0, which disables the very throttle
+    // this is about, so turn it back on for the two calls that matter.
+    const prev = process.env.AUTH_STAMP_INTERVAL_MS;
+    process.env.AUTH_STAMP_INTERVAL_MS = "60000";
+    try {
+      // The first token warms the window, then the second authenticates.
+      expect((await app.inject({ method: "GET", url: "/health", headers: as(a.token) })).statusCode).toBe(200);
+      expect((await app.inject({ method: "GET", url: "/health", headers: as(secondToken) })).statusCode).toBe(200);
+    } finally {
+      process.env.AUTH_STAMP_INTERVAL_MS = prev;
+    }
+
+    const rows = (await list(a.id, as(a.token))).json().data as Array<{ id: string; lastUsedAt: string | null }>;
+    expect(rows.length).toBe(2);
+    expect(rows.find((r) => r.id === secondId)?.lastUsedAt).not.toBeNull();
+    expect(rows.every((r) => r.lastUsedAt !== null)).toBe(true);
   });
 });
 

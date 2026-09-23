@@ -66,7 +66,7 @@ export async function tokenRotateCommand() {
 
   // Printed before anything is written. Past this line the old token is already
   // revoked, so a failure that swallowed the plaintext would lock the agent out:
-  // rotating again needs a working token, and no route lists them.
+  // rotating again needs a working token, and no route returns a plaintext.
   console.log(`
 ${chalk.bold("New token")} ${chalk.dim("(save this now, it is not shown again)")}
   ${token}
@@ -138,11 +138,14 @@ export async function tokenListCommand() {
   } catch (err) {
     console.error(chalk.red("Could not list tokens"));
     console.error(chalk.dim(String(err)));
+    if (String(err).includes("404")) {
+      console.error(chalk.dim(`Either the API predates this command, or agent ${config.agentId} no longer exists.`));
+    }
     process.exit(1);
   }
 
   const live = rows.filter((r) => !r.revokedAt);
-  const day = (v: string | null) => (v ? v.slice(0, 10) : chalk.dim("never"));
+  const day = (v: string | null) => (v ? new Date(v).toLocaleDateString("en-CA") : chalk.dim("never"));
 
   for (const r of rows) {
     const state = r.revokedAt ? chalk.dim(`revoked ${day(r.revokedAt)}`) : chalk.green("live");
@@ -151,10 +154,13 @@ export async function tokenListCommand() {
   }
 
   console.log(`\n${live.length} live, ${rows.length - live.length} revoked.`);
-  if (live.length > 1) {
-    console.log(chalk.yellow(`${live.length} live tokens: every one of them authenticates. 'relai token rotate' collapses them to one.`));
+  if (rows.some((r) => r.current === null)) {
+    console.log(chalk.yellow("Cannot tell which of these you are holding: this config authenticates with a shared secret, not an agent token."));
   }
-  const dormant = live.filter((r) => !r.lastUsedAt && !r.current);
+  if (live.length > 1) {
+    console.log(chalk.yellow(`${live.length} live tokens: every one of them authenticates. 'pitboss token rotate' collapses them to one.`));
+  }
+  const dormant = live.filter((r) => !r.lastUsedAt && r.current === false);
   if (dormant.length) {
     console.log(chalk.yellow(`${dormant.length} live but never used. Nothing alerts on a credential nobody uses.`));
   }

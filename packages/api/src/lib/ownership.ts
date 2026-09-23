@@ -49,14 +49,35 @@ export function scopedRepoFilter(request: FastifyRequest): SQL | null {
 }
 
 // Callers must already be repo-scoped (assertAgentAccess / assertRepoAccess);
-// the orchestrator arm does not itself compare repos.
+// the orchestrator arm does not itself compare repos, and for an owner that
+// scoping is the ONLY confinement, since the answer below is unconditional.
+// `ownership-callsites.test.ts` re-derives that invariant across the route
+// files rather than trusting this sentence.
+//
+// An owner gets the same unrestricted answer as the legacy shared secret, and
+// that is a decision rather than an oversight: assertRepoAccess has already
+// confined it to `repos.ownerId = request.ownerId`, and inside that boundary it
+// can delete the repo outright, taking every agent and token with it. Refusing
+// a token rotation there would be incoherent, not safer. Deliberately NOT
+// written as a separate `if (request.ownerId) return true` arm, because that
+// branch would be indistinguishable from the one below it; `ownership.test.ts`
+// records the decision where it can fail instead.
+//
+// The ORDER is load-bearing. Nothing sets both fields today (the agent branch
+// of the auth plugin returns before the service-admin branch), but
+// task_8nGB_v4A7WSEtInu9HWUR adds `tokens.ownerId` and then one request carries
+// both. Testing the agent FIRST is what keeps an owner-scoped worker a worker;
+// hoisting an ownerId check above it would turn that token into a master key
+// over every agent in the owner's repos.
 export function callerMayActOnAgent(request: FastifyRequest, targetAgentId: string): boolean {
   if (!request.agent) return true;
   return request.agent.id === targetAgentId || request.agent.role === "orchestrator";
 }
 
 // Callers must already be repo-scoped (assertRepoAccess). DELETE removes every
-// agent in the repo, so membership alone is not enough.
+// agent in the repo, so membership alone is not enough. Owner and legacy-secret
+// callers share the unrestricted answer for the same reason as above, and the
+// same ordering constraint applies.
 export function callerMayAdministerRepo(request: FastifyRequest): boolean {
   if (!request.agent) return true;
   return request.agent.role === "orchestrator";

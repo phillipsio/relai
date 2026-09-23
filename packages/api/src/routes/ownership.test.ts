@@ -324,6 +324,56 @@ describe("ownership: notification-channels cross-tenant", () => {
   });
 });
 
+describe("ownership: an owner acting inside its own tenant", () => {
+  // The cross-tenant refusals below are only half the invariant. Without a
+  // positive case the owner arm could 404 on everything and the suite would
+  // stay green, which is exactly the shape that lets a guard rot unnoticed.
+  // Its own agent: rotation now revokes what it replaces, so rotating a shared
+  // fixture's token would quietly 401 every later test that uses it.
+  it("rotates a token for an agent in a repo it owns", async () => {
+    const made = await app.inject({
+      method: "POST", url: "/agents", headers: adminHeaders(),
+      body: JSON.stringify({ repoId: projectAId, name: "owner-rotate-target", role: "worker" }),
+    });
+    const targetId = made.json().data.id as string;
+
+    const res = await app.inject({
+      method: "POST", url: `/agents/${targetId}/tokens`,
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({}),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().token).toMatch(/^aio_/);
+    expect(res.json().revoked.length).toBe(1);
+  });
+
+  it("lists that agent's tokens, which assertAgentAccess alone permits", async () => {
+    const res = await app.inject({
+      method: "GET", url: `/agents/${agentAId}/tokens`,
+      headers: serviceHeaders(userA),
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json().data as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  it("but an owner holds no token row, so nothing is marked as the one in use", async () => {
+    const rows = (await app.inject({
+      method: "GET", url: `/agents/${agentAId}/tokens`,
+      headers: serviceHeaders(userA),
+    })).json().data as Array<{ current: boolean | null }>;
+    expect(rows.every((r) => r.current === null)).toBe(true);
+  });
+
+  it("administers the repo it owns", async () => {
+    const res = await app.inject({
+      method: "PUT", url: `/repos/${projectAId}`,
+      headers: serviceHeaders(userA),
+      body: JSON.stringify({ name: "A-renamed-by-owner" }),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe("ownership: tokens cross-tenant", () => {
   it("service-admin cannot revoke another tenant's token", async () => {
     const rotate = await app.inject({

@@ -438,7 +438,7 @@ Production runs on a **DigitalOcean VPS**, not a PaaS. Read off the box on 2026-
 
 The Fly config was removed on 2026-08-20. It was never deployed, and its `[deploy] release_command` ran `db:push` **from the deployed image**, so rolling back to an older image would have diffed newer tables as deletions and dropped them with their data. If Fly is revisited, the release command must run `db:migrate`, never `push`.
 
-`/health` is auth-gated, so a health probe needs either a token or an unauthenticated `/livez` route. The web dashboard is hosted separately by relai-cloud.
+`/health` is auth-gated, so a health probe needs either a token or the unauthenticated `/livez` route. **Authenticated `/health` also reports the deployed commit** (`{ok:true, commit:"fcc64dd"}`), read at runtime by `lib/version.ts` from the checkout, since there is no build step to inject one; `RELAI_COMMIT` overrides it and `null` means the process is not running from a git working tree. It is deliberately NOT on `/livez`: the repo is public, so a bare sha would tell an anonymous caller which published source is running and therefore which known gaps are still open. Check it before believing a fix is live — production ran two commits behind `main` for four days with a security fix merged and assumed deployed, and nothing the API served could have revealed it. The web dashboard is hosted separately by relai-cloud.
 
 ## Critical rules
 

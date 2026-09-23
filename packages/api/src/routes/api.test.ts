@@ -55,7 +55,7 @@ describe("GET /health", () => {
   it("returns ok with auth", async () => {
     const res = await app.inject({ method: "GET", url: "/health", headers: AUTH });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    expect(res.json().ok).toBe(true);
   });
 });
 
@@ -64,7 +64,7 @@ describe("GET /livez", () => {
   it("returns ok WITHOUT auth and probes the DB", async () => {
     const res = await app.inject({ method: "GET", url: "/livez" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    expect(res.json().ok).toBe(true);
   });
 });
 

@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import type { FastifyError } from "fastify";
 import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
+import { deployedCommit } from "./lib/version.js";
 import { createDb } from "@getrelai/db";
 import authPlugin from "./plugins/auth.js";
 import { repoRoutes } from "./routes/repos.js";
@@ -86,7 +87,10 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(sessionRoutes, { db });
   fastify.register(feedbackRoutes, { db });
 
-  fastify.get("/health", async () => ({ ok: true }));
+  // Authenticated, and the commit is deliberately not on the public /livez
+  // below: this repo is public, so a bare sha tells an anonymous caller which
+  // published source is running and which known gaps are therefore still open.
+  fastify.get("/health", async () => ({ ok: true, commit: deployedCommit() }));
 
   // Unauthenticated readiness probe (in PUBLIC_PATHS) — verifies the process is
   // up AND the DB is reachable, so a monitor can tell "running" from "healthy".

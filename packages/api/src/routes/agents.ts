@@ -84,6 +84,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
         createdAt:  tokens.createdAt,
         lastUsedAt: tokens.lastUsedAt,
         revokedAt:  tokens.revokedAt,
+        ownerId:    tokens.ownerId,
       })
       .from(tokens)
       .where(eq(tokens.agentId, check.agent.id))
@@ -94,8 +95,12 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     // An operator who reads a missing marker as disposable revokes the agent's
     // only credential, which cannot be undone.
     return {
-      data: rows.map((t) => ({
+      data: rows.map(({ ownerId, ...t }) => ({
         ...t,
+        // ownerScoped, never the owner id: a tenant-wide credential has to be
+        // distinguishable from a repo-scoped one, or a stolen one leaves
+        // nothing to find — which is how the 29-token pile went unnoticed.
+        ownerScoped: ownerId !== null,
         current: request.tokenId ? t.id === request.tokenId : null,
       })),
     };
@@ -123,12 +128,22 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     }
 
     const plaintext = generateToken();
-    const { row, revoked } = await db.transaction(async (tx) => {
+    const { row, revoked, carried } = await db.transaction(async (tx) => {
       // The lock serialises rotations of one agent: under READ COMMITTED a
       // second one would otherwise revoke what it can see and miss the row the
       // first just inserted, leaving two live. Revoke precedes insert so no
       // moment has two, and the transaction stops a failed insert leaving none.
       await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, agent.id)).for("update");
+      // Read BEFORE the revoke and only from live rows: revoking every
+      // credential is an operator's containment lever, and copying from a row
+      // it just killed would undo that on the next rotation.
+      const [live] = await tx
+        .select({ ownerId: tokens.ownerId })
+        .from(tokens)
+        .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt)))
+        .orderBy(desc(tokens.createdAt))
+        .limit(1);
+
       const retired = body.data.keepExisting
         ? []
         : await tx
@@ -137,21 +152,22 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
             .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt)))
             .returning({ id: tokens.id });
 
-      // Carry the owner scope across. Revocation precedes this insert in the
-      // same transaction, so dropping it would kill the super agent's
-      // credential with no way back: owner scope reaches a token only through
-      // invites.ownerId, which only an owner-scoped device approval can set.
-      const [current] = await tx
-        .select({ ownerId: tokens.ownerId })
-        .from(tokens)
-        .where(eq(tokens.agentId, agent.id))
-        .orderBy(desc(tokens.createdAt))
-        .limit(1);
+      // Carry owner scope ONLY to an identity already entitled to it. This
+      // route admits any orchestrator in the target's repo, so copying the
+      // target's scope onto whatever the caller receives would let a
+      // repo-scoped peer mint itself the user's tenant-wide authority — with
+      // `keepExisting` the super agent keeps working and nothing alerts.
+      // Self-rotation and the owner's own dashboard both keep it, which is the
+      // "no way back" property this exists to protect.
+      const entitled =
+        request.agent?.id === agent.id ||
+        (!request.agent && !!request.ownerId && request.ownerId === live?.ownerId);
+      const carriedOwnerId = entitled ? live?.ownerId ?? null : null;
 
       const [inserted] = await tx.insert(tokens).values({
         id:        newId("tok"),
         agentId:   agent.id,
-        ownerId:   current?.ownerId ?? null,
+        ownerId:   carriedOwnerId,
         tokenHash: hashToken(plaintext),
       }).returning({
         id:         tokens.id,
@@ -161,10 +177,14 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
         revokedAt:  tokens.revokedAt,
       });
 
-      return { row: inserted, revoked: retired.map((r) => r.id) };
+      return { row: inserted, revoked: retired.map((r) => r.id), carried: carriedOwnerId };
     });
 
-    return reply.status(201).send({ data: row, token: plaintext, revoked });
+    return reply.status(201).send({
+      data: { ...row, ownerScoped: carried !== null },
+      token: plaintext,
+      revoked,
+    });
   });
 
   fastify.put<{ Params: { id: string } }>("/agents/:id/heartbeat", async (request, reply) => {

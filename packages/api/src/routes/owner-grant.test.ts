@@ -264,6 +264,83 @@ describe("rotation keeps the super agent's scope", () => {
   });
 });
 
+describe("rotation must not hand the super agent's scope to a peer", () => {
+  // callerMayActOnAgent admits ANY orchestrator in the target's repo, so
+  // rotation is reachable by a peer. Copying the TARGET's ownerId onto the
+  // token returned to the CALLER turns that into an escalation: an ordinary
+  // repo-scoped orchestrator mints itself the user's tenant-wide authority,
+  // and `keepExisting` means the super agent keeps working so nothing alerts.
+  it("gives a peer orchestrator a repo-scoped token, not the owner's", async () => {
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { agentId: superId } = await redeem(deviceCode, `og-super-${Date.now()}`);
+
+    const peer = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: repoA1, name: `og-peer-${Date.now()}`, role: "orchestrator" }),
+    });
+    const peerToken = peer.json().token as string;
+    // Baseline: the peer cannot reach the sibling repo.
+    expect((await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(peerToken) })).statusCode).toBe(403);
+
+    const stolen = await app.inject({
+      method: "POST", url: `/agents/${superId}/tokens`, headers: as(peerToken),
+      body: JSON.stringify({ keepExisting: true }),
+    });
+    expect(stolen.statusCode).toBe(201);
+
+    // The credential it just received must NOT carry the owner's scope.
+    const reach = await app.inject({
+      method: "GET", url: `/repos/${repoA2}`, headers: as(stolen.json().token as string),
+    });
+    expect(reach.statusCode).toBe(403);
+  });
+
+  it("preserves scope when the super agent rotates itself", async () => {
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { token, agentId } = await redeem(deviceCode, `og-self-${Date.now()}`);
+
+    const rotated = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(token),
+      body: JSON.stringify({}),
+    });
+    expect(rotated.statusCode).toBe(201);
+    const fresh = rotated.json().token as string;
+    expect((await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(fresh) })).statusCode).toBe(200);
+  });
+
+  it("does not resurrect scope from a revoked row after a de-scoping revoke", async () => {
+    // Revoking every credential is an operator's only containment lever. It
+    // must not be undone by the next rotation reading the row it just killed.
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { agentId } = await redeem(deviceCode, `og-revoked-${Date.now()}`);
+
+    for (const row of await db.select().from(tokens).where(eq(tokens.agentId, agentId))) {
+      await app.inject({ method: "DELETE", url: `/tokens/${row.id}`, headers: ADMIN });
+    }
+
+    const reissued = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: ADMIN, body: JSON.stringify({}),
+    });
+    expect(reissued.statusCode).toBe(201);
+    const reach = await app.inject({
+      method: "GET", url: `/repos/${repoA2}`, headers: as(reissued.json().token as string),
+    });
+    expect(reach.statusCode).not.toBe(200);
+  });
+
+  it("makes owner scope visible, so a stolen one is findable", async () => {
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { token, agentId } = await redeem(deviceCode, `og-visible-${Date.now()}`);
+
+    const listed = await app.inject({ method: "GET", url: `/agents/${agentId}/tokens`, headers: as(token) });
+    expect(listed.statusCode).toBe(200);
+    const rows = listed.json().data as Array<{ ownerScoped: boolean }>;
+    expect(rows.some((r) => r.ownerScoped === true)).toBe(true);
+    // Never the owner id itself, and never anything hash-shaped.
+    expect(listed.body).not.toMatch(/[0-9a-f]{64}/);
+  });
+});
+
 describe("the owner comes from the approver, never from the request", () => {
   it("ignores an ownerId in the body and uses the approving tenant", async () => {
     // A caller holding owner A's session must not mint a credential for B by

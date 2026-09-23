@@ -277,8 +277,9 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     // The super agent is a proxy for the user and holds the user's authority
     // over the user's own tenant. That is coherent for one orchestrator and not
     // for a worker: every finding in the 2026-09-23 security review had an
-    // owner-scoped WORKER in it. Refusing at the grant removes the class rather
-    // than guarding each consequence.
+    // owner-scoped WORKER in it. Refusing at the grant is most of the answer,
+    // but not all of it: rotation is a second way a token acquires owner scope,
+    // and it carries the scope only to an identity already entitled to it.
     if (body.data.scope === "owner" && body.data.agents.some((a) => a.role !== "orchestrator")) {
       return reply.status(400).send({
         error: {

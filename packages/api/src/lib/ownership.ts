@@ -59,6 +59,10 @@ export async function assertRepoAccess(
 // clause, or null when no filtering is required (per-agent caller — they
 // already filter by agent.repoId — or legacy API_SECRET).
 export function scopedRepoFilter(request: FastifyRequest): SQL | null {
+  // Agent first, per the invariant in plugins/auth.ts. A super agent carries
+  // ownerId too, and without this line a list route following the doc comment
+  // above would hand it every row the owner has with no agent check at all.
+  if (request.agent) return null;
   if (request.ownerId) return eq(repos.ownerId, request.ownerId);
   return null;
 }

@@ -115,6 +115,10 @@ export const invites = pgTable("invites", {
   id:                     text("id").primaryKey(),
   repoId:              text("repo_id").references(() => repos.id, { onDelete: "cascade" }).notNull(),
   codeHash:               text("code_hash").notNull().unique(),
+  // Set only for an owner-scoped grant, and taken from the APPROVER's own
+  // scope rather than from any request body. Copied onto tokens.ownerId at
+  // accept time, which is how owner scope reaches a credential at all.
+  ownerId:                text("owner_id").references(() => users.id, { onDelete: "cascade" }),
   createdBy:              text("created_by").references(() => agents.id),
   suggestedName:          text("suggested_name"),
   suggestedSpecialization: text("suggested_specialization"),
@@ -135,6 +139,8 @@ export const invites = pgTable("invites", {
 
 export const deviceAuthStatusEnum = pgEnum("device_auth_status", ["pending", "approved", "denied"]);
 
+export const deviceGrantScopeEnum = pgEnum("device_grant_scope", ["repo", "owner"]);
+
 export const deviceAuthorizations = pgTable("device_authorizations", {
   id:             text("id").primaryKey(),
   // Unique because the code-entry form looks rows up by it.
@@ -149,6 +155,10 @@ export const deviceAuthorizations = pgTable("device_authorizations", {
   repoId:         text("repo_id").references(() => repos.id, { onDelete: "cascade" }),
   // The first tenant to look this code up owns it from then on. Without this a
   // code seen over someone's shoulder can be read or cancelled by any account.
+  // What the human approved: a repo grant, or an owner-scoped one. Recorded
+  // here because invites are minted at poll time, long after the decision, and
+  // the scope must never be re-derived from the contents of `granted`.
+  scope:          deviceGrantScopeEnum("scope").notNull().default("repo"),
   claimedBy:      text("claimed_by").references(() => users.id, { onDelete: "cascade" }),
   expiresAt:      timestamp("expires_at",     { withTimezone: true }).notNull(),
   lastPolledAt:   timestamp("last_polled_at", { withTimezone: true }),

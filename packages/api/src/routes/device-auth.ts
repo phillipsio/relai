@@ -55,6 +55,13 @@ const grantSchema = z.object({
 const approveSchema = z.object({
   userCode: z.string().min(1),
   repoId:   z.string().min(1),
+  // An explicit field, never inferred from the contents of `agents`: a grant
+  // whose scope depends on array contents is the kind of thing a later reader
+  // gets wrong. Defaulted, so every caller that predates it keeps its meaning.
+  // repoId stays required even for an owner grant, because agents.repoId is
+  // NOT NULL and the agent still needs a home to exist in; what widens is the
+  // credential, not the agent's address.
+  scope:    z.enum(["repo", "owner"]).default("repo"),
   // An empty approval would otherwise read as success and hand back nothing.
   agents:   z.array(grantSchema).min(1),
 });
@@ -171,6 +178,9 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
           suggestedSpecialization: g.specialization ?? null,
           expiresAt: new Date(now + TTL_SECONDS * 1000),
           deviceAuthorizationId: row.id,
+          // claimedBy, not anything from a request body: the tenant that looked
+          // this code up first is the only one that could have approved it.
+          ownerId: row.scope === "owner" ? row.claimedBy : null,
         });
         return { name: g.name, workerType: g.workerType, role: g.role, specialization: g.specialization ?? null, domains: g.domains, code };
       }));
@@ -261,6 +271,18 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
       return reply.status(403).send({ error: { code: "forbidden", message: "Only orchestrator agents may grant the orchestrator role." } });
     }
 
+    // The owner stamped on the credential is the APPROVER's own, so an approver
+    // with no tenant cannot mint one. The legacy shared secret sets no ownerId
+    // and would otherwise produce a token scoped to nothing.
+    if (body.data.scope === "owner" && !request.ownerId) {
+      return reply.status(400).send({
+        error: {
+          code: "owner_required",
+          message: "An owner-scoped grant needs an approver with an owner; this credential has none.",
+        },
+      });
+    }
+
     const row = await claim(body.data.userCode, request.ownerId);
     if (!row) return reply.status(404).send({ error: { code: "not_found", message: "Unknown code" } });
     if (row.status !== "pending") {
@@ -273,6 +295,7 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     const [updated] = await db.update(deviceAuthorizations)
       .set({
         status:     "approved",
+        scope:      body.data.scope,
         granted:    body.data.agents,
         repoId:     repo.id,
       })

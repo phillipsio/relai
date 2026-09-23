@@ -129,6 +129,9 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     await db.insert(tokens).values({
       id:        newId("tok"),
       agentId:   agent.id,
+      // Owner scope rides the invite rather than being decided here, because
+      // only the approval knew it. Null for every ordinary invite.
+      ownerId:   invite.ownerId ?? null,
       tokenHash: hashSecret(plaintext),
     });
 

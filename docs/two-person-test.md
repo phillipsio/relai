@@ -30,7 +30,7 @@ cp .env.example .env   # only if you don't have one yet
 pnpm --filter @getrelai/api dev
 ```
 
-Confirm with `curl -H "Authorization: Bearer $API_SECRET" http://localhost:3010/health` → `{"ok":true}`.
+Confirm with `curl -H "Authorization: Bearer $API_SECRET" http://localhost:3010/health` → `{"ok":true,"commit":"..."}`. The `commit` is the sha this process booted from, or `null` when it could not be read.
 
 ## 2. Host side — expose the API to the internet
 

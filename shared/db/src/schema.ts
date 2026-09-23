@@ -96,6 +96,13 @@ export const agents = pgTable("agents", {
 export const tokens = pgTable("tokens", {
   id:         text("id").primaryKey(),
   agentId:    text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  // Owner scope carried by the CREDENTIAL, not by a header. The service-admin
+  // path takes its tenant from X-Owner-Id, which is safe only because exactly
+  // one trusted caller sets it; the moment a per-tenant agent authenticates on
+  // that path the header stops being a control and becomes a convention any
+  // holder can rewrite. A token that carries its own owner cannot name another.
+  // Null for every ordinary repo-scoped token, which is nearly all of them.
+  ownerId:    text("owner_id").references(() => users.id, { onDelete: "cascade" }),
   tokenHash:  text("token_hash").notNull().unique(),
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),

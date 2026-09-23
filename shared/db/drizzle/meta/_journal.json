@@ -57,6 +57,13 @@
       "when": 1789677173381,
       "tag": "0007_calm_jazinda",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790177926914,
+      "tag": "0008_dizzy_mongu",
+      "breakpoints": true
     }
   ]
 }

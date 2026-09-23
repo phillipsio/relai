@@ -24,8 +24,21 @@ export async function assertRepoAccess(
   repoId: string,
 ): Promise<{ ok: true } | { ok: false; status: 403 | 404 }> {
   if (request.agent) {
-    if (request.agent.repoId !== repoId) return { ok: false, status: 403 };
-    return { ok: true };
+    if (request.agent.repoId === repoId) return { ok: true };
+    // An owner-scoped token (tokens.ownerId) widens an agent beyond its home
+    // repo to the ones its owner owns. A UNION rather than a replacement: the
+    // home repo above still resolves even when that repo has no owner at all,
+    // which is the self-hosted default and would otherwise lock the agent out
+    // of the one project it actually lives in.
+    if (request.ownerId) {
+      const [owned] = await db
+        .select({ id: repos.id })
+        .from(repos)
+        .where(and(eq(repos.id, repoId), eq(repos.ownerId, request.ownerId)))
+        .limit(1);
+      if (owned) return { ok: true };
+    }
+    return { ok: false, status: 403 };
   }
   if (request.ownerId) {
     const [row] = await db

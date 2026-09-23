@@ -62,6 +62,12 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
       }
       request.agent = row.agent;
       request.tokenId = row.token.id;
+      // Scope from the ROW, never from a header. X-Owner-Id is deliberately not
+      // consulted here: a token that carries its own owner cannot name a
+      // different one, which is the whole difference between a control and a
+      // convention. Null on every ordinary repo-scoped token, which leaves
+      // request.ownerId unset and every downstream check exactly as it was.
+      if (row.token.ownerId) request.ownerId = row.token.ownerId;
       // Any authenticated request marks the agent online, not just /heartbeat.
       // Keep these awaited: un-awaited, they leak a pooled connection per call.
       const now = Date.now();

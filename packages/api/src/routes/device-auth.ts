@@ -64,13 +64,29 @@ const denySchema = z.object({ userCode: z.string().min(1) });
 type Grant = z.infer<typeof grantSchema>;
 
 export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
-  const publicBase = () =>
-    process.env.RELAI_DASHBOARD_URL?.replace(/\/+$/, "") ?? "http://localhost:4000";
+  // null, not a localhost guess: this flow ends at a dashboard page a human
+  // opens, and an instance running only the API has none. Inventing a URL sent
+  // that user somewhere empty and left the CLI polling to timeout, so the
+  // failure looked like a bad --api or a bad token rather than a deployment
+  // without the piece this flow needs.
+  const publicBase = () => process.env.RELAI_DASHBOARD_URL?.replace(/\/+$/, "") || null;
 
   // Public: no credential exists yet. Whitelisted in the auth plugin.
   fastify.post("/auth/device/start", async (request, reply) => {
     const body = startSchema.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: { code: "validation_error", message: body.error.message } });
+
+    // Refuse before minting anything: a device code nobody can approve is
+    // worse than no device code, and it would sit in the table until swept.
+    const dashboard = publicBase();
+    if (!dashboard) {
+      return reply.status(501).send({
+        error: {
+          code: "not_implemented",
+          message: "Device authorization needs a dashboard to approve at, and this server has none (RELAI_DASHBOARD_URL is not set).",
+        },
+      });
+    }
 
     const now = Date.now();
     if (tooManyStarts(request.ip, now)) {
@@ -92,7 +108,7 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     return reply.status(201).send({
       data: {
         userCode:        row.userCode,
-        verificationUri: `${publicBase()}/device`,
+        verificationUri: `${dashboard}/device`,
         expiresIn:       TTL_SECONDS,
         interval:        POLL_INTERVAL_SECONDS,
       },

@@ -15,6 +15,9 @@ process.env.SERVICE_ADMIN_TOKEN = SERVICE_TOKEN;
 // The suite starts far more authorizations than a human would; the throttle
 // itself is exercised by its own test below.
 process.env.DEVICE_START_RATE_LIMIT = "100000";
+// This flow only works where a dashboard exists to approve at. The suite sets
+// one; the "no dashboard configured" case has its own describe below.
+process.env.RELAI_DASHBOARD_URL = "https://dash.example.test";
 
 const ownerId    = "usr_devauth_owner_" + Date.now();
 const outsiderId = "usr_devauth_outsider_" + Date.now();
@@ -614,4 +617,51 @@ describe("GET /auth/device/pending/:userCode", () => {
     expect((await lookup(data.userCode.toLowerCase(), DASHBOARD())).statusCode).toBe(200);
   });
 
+});
+
+describe("an instance with no dashboard says so instead of inventing one", () => {
+  // Self-hosting is documented (relai-cloud's llms.txt publishes
+  // `join --api https://...`), and join completes through this flow. Defaulting
+  // to http://localhost:4000 sent that user to a page that does not exist and
+  // left join polling to timeout with no diagnostic, so the failure read as a
+  // bad --api, a bad token, or a network problem.
+  const withoutDashboard = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const prev = process.env.RELAI_DASHBOARD_URL;
+    delete process.env.RELAI_DASHBOARD_URL;
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.RELAI_DASHBOARD_URL;
+      else process.env.RELAI_DASHBOARD_URL = prev;
+    }
+  };
+
+  it("refuses device start with 501 and names the missing variable", async () => {
+    const res = await withoutDashboard(() =>
+      app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}) }),
+    );
+
+    expect(res.statusCode).toBe(501);
+    expect(res.json().error.code).toBe("not_implemented");
+    expect(res.json().error.message).toContain("RELAI_DASHBOARD_URL");
+    // Never hand back a URL the caller cannot use.
+    expect(res.body).not.toContain("localhost:4000");
+    expect(res.body).not.toContain("verificationUri");
+  });
+
+  it("mints no device code for an approval that could never happen", async () => {
+    const before = (await db.select().from(deviceAuthorizations)).length;
+    await withoutDashboard(() =>
+      app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}) }),
+    );
+    expect((await db.select().from(deviceAuthorizations)).length).toBe(before);
+  });
+
+  it("still works, and uses the configured host, when one is set", async () => {
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.verificationUri).toBe("https://dash.example.test/device");
+  });
 });

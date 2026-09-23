@@ -23,7 +23,11 @@ export class CliApiClient {
     });
     if (res.status === 204) return undefined as T;
     const json = await res.json() as T & { error?: { code: string; message: string } };
-    if (!res.ok) throw new Error(json.error?.message ?? `API error ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(json.error?.message ?? `API error ${res.status}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
     return json;
   }
 

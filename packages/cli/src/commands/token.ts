@@ -66,7 +66,8 @@ export async function tokenRotateCommand() {
 
   // Printed before anything is written. Past this line the old token is already
   // revoked, so a failure that swallowed the plaintext would lock the agent out:
-  // rotating again needs a working token, and no route returns a plaintext.
+  // rotating again needs a working token, and no route returns the plaintext
+  // of an existing one: a lost token can only be replaced, never recovered.
   console.log(`
 ${chalk.bold("New token")} ${chalk.dim("(save this now, it is not shown again)")}
   ${token}
@@ -138,8 +139,8 @@ export async function tokenListCommand() {
   } catch (err) {
     console.error(chalk.red("Could not list tokens"));
     console.error(chalk.dim(String(err)));
-    if (String(err).includes("404")) {
-      console.error(chalk.dim(`Either the API predates this command, or agent ${config.agentId} no longer exists.`));
+    if ((err as { status?: number }).status === 404) {
+      console.error(chalk.dim(`Either the API predates this command, or agent ${config.agentId} is not reachable from this token.`));
     }
     process.exit(1);
   }
@@ -160,7 +161,7 @@ export async function tokenListCommand() {
   if (live.length > 1) {
     console.log(chalk.yellow(`${live.length} live tokens: every one of them authenticates. 'pitboss token rotate' collapses them to one.`));
   }
-  const dormant = live.filter((r) => !r.lastUsedAt && r.current === false);
+  const dormant = live.filter((r) => !r.lastUsedAt && r.current !== true);
   if (dormant.length) {
     console.log(chalk.yellow(`${dormant.length} live but never used. Nothing alerts on a credential nobody uses.`));
   }

@@ -155,7 +155,10 @@ describe("lastUsedAt is per token, not per agent", () => {
       expect((await app.inject({ method: "GET", url: "/health", headers: as(a.token) })).statusCode).toBe(200);
       expect((await app.inject({ method: "GET", url: "/health", headers: as(secondToken) })).statusCode).toBe(200);
     } finally {
-      process.env.AUTH_STAMP_INTERVAL_MS = prev;
+      // Assigning an undefined prev writes the literal "undefined", whose
+      // Number() is NaN, which disables every stamp for the rest of the worker.
+      if (prev === undefined) delete process.env.AUTH_STAMP_INTERVAL_MS;
+      else process.env.AUTH_STAMP_INTERVAL_MS = prev;
     }
 
     const rows = (await list(a.id, as(a.token))).json().data as Array<{ id: string; lastUsedAt: string | null }>;

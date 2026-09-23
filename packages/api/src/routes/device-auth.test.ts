@@ -619,12 +619,17 @@ describe("GET /auth/device/pending/:userCode", () => {
 
 });
 
-describe("an instance with no dashboard says so instead of inventing one", () => {
-  // Self-hosting is documented (relai-cloud's llms.txt publishes
-  // `join --api https://...`), and join completes through this flow. Defaulting
-  // to http://localhost:4000 sent that user to a page that does not exist and
-  // left join polling to timeout with no diagnostic, so the failure read as a
-  // bad --api, a bad token, or a network problem.
+describe("an instance with no dashboard", () => {
+  // The old fallback handed back relai-cloud's DEV url: right for the local
+  // pair, wrong for any deployed instance, where the user opened nothing and
+  // join polled to timeout with no diagnostic.
+  //
+  // Refusing outright was the wrong correction and the join e2e caught it.
+  // Approval has three routes and only one is a dashboard: an owner-scoped
+  // caller (how relai-cloud and that e2e approve), DEVICE_ALLOW_LEGACY_SECRET
+  // for a self-hoster, or a human on the dashboard page. Start cannot see which
+  // the operator has, so it issues the code either way and simply declines to
+  // invent a link.
   const withoutDashboard = async <T>(fn: () => Promise<T>): Promise<T> => {
     const prev = process.env.RELAI_DASHBOARD_URL;
     delete process.env.RELAI_DASHBOARD_URL;
@@ -636,31 +641,50 @@ describe("an instance with no dashboard says so instead of inventing one", () =>
     }
   };
 
-  it("refuses device start with 501 and names the missing variable", async () => {
-    const res = await withoutDashboard(() =>
-      app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}) }),
-    );
+  const startRaw = () =>
+    app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}) });
 
-    expect(res.statusCode).toBe(501);
-    expect(res.json().error.code).toBe("not_implemented");
-    expect(res.json().error.message).toContain("RELAI_DASHBOARD_URL");
-    // Never hand back a URL the caller cannot use.
+  it("still issues a usable code, with no link rather than a link to nothing", async () => {
+    const res = await withoutDashboard(startRaw);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.userCode).toBeTruthy();
+    expect(res.json().deviceCode).toBeTruthy();
+    expect(res.json().data.verificationUri).toBeUndefined();
     expect(res.body).not.toContain("localhost:4000");
-    expect(res.body).not.toContain("verificationUri");
   });
 
-  it("mints no device code for an approval that could never happen", async () => {
-    const before = (await db.select().from(deviceAuthorizations)).length;
-    await withoutDashboard(() =>
-      app.inject({ method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}) }),
-    );
-    expect((await db.select().from(deviceAuthorizations)).length).toBe(before);
+  it("and that code is still approvable, so the feature is not dead", async () => {
+    await withoutDashboard(async () => {
+      const res = await startRaw();
+      const userCode = res.json().data.userCode as string;
+      process.env.DEVICE_ALLOW_LEGACY_SECRET = "true";
+      try {
+        const pending = await app.inject({
+          method: "GET", url: `/auth/device/pending/${userCode}`, headers: ADMIN,
+        });
+        expect(pending.statusCode).toBe(200);
+      } finally {
+        delete process.env.DEVICE_ALLOW_LEGACY_SECRET;
+      }
+    });
+  });
+
+  it("treats a whitespace-only value as no dashboard, not as a usable one", async () => {
+    const prev = process.env.RELAI_DASHBOARD_URL;
+    process.env.RELAI_DASHBOARD_URL = "   ";
+    try {
+      const res = await startRaw();
+      expect(res.statusCode).toBe(201);
+      expect(res.json().data.verificationUri).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.RELAI_DASHBOARD_URL;
+      else process.env.RELAI_DASHBOARD_URL = prev;
+    }
   });
 
   it("still works, and uses the configured host, when one is set", async () => {
-    const res = await app.inject({
-      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
-    });
+    const res = await startRaw();
     expect(res.statusCode).toBe(201);
     expect(res.json().data.verificationUri).toBe("https://dash.example.test/device");
   });

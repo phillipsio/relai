@@ -12,7 +12,7 @@ const DEFAULT_API = "https://api.pitboss.dev";
 
 
 interface StartResponse {
-  data: { userCode: string; verificationUri: string; expiresIn: number; interval: number };
+  data: { userCode: string; verificationUri?: string; expiresIn: number; interval: number };
   deviceCode: string;
 }
 interface GrantedInvite {
@@ -147,14 +147,27 @@ async function run(opts: { api?: string }) {
     proposed: { repoName, remote, host: host ?? undefined },
   });
   if (started.status !== 201) {
-    console.error(chalk.red(started.status === 429
-      ? "\n  Too many join requests from your network just now. Wait a minute and try again."
-      : `\n  Could not reach pitboss at ${api} (HTTP ${started.status})`));
+    // The API often knows exactly what is wrong and says so. Printing "could
+    // not reach" over the top of that sends the user to look at their network
+    // and their --api when the server has already named the cause.
+    const said = (started.payload as { error?: { message?: string } } | undefined)?.error?.message;
+    console.error(chalk.red(
+      started.status === 429
+        ? "\n  Too many join requests from your network just now. Wait a minute and try again."
+        : said
+          ? `\n  ${said}`
+          : `\n  Could not reach pitboss at ${api} (HTTP ${started.status})`,
+    ));
     process.exit(1);
   }
   const { data, deviceCode } = started.payload as unknown as StartResponse;
 
-  console.log(`\n  Open      ${chalk.bold(data.verificationUri)}`);
+  if (data.verificationUri) {
+    console.log(`\n  Open      ${chalk.bold(data.verificationUri)}`);
+  } else {
+    // No dashboard on this instance. Saying so beats printing "Open undefined".
+    console.log(`\n  ${chalk.yellow("This server has no dashboard.")} Have an operator approve this code through the API.`);
+  }
   console.log(`  Code      ${chalk.bold(data.userCode)}   ${chalk.dim(`expires in ${Math.round(data.expiresIn / 60)} minutes`)}`);
   console.log(chalk.dim("\n  Type the code yourself; the approval screen shows what it will grant.\n"));
   console.log(chalk.dim("  Waiting for approval…"));

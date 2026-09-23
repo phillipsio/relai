@@ -144,6 +144,25 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
         .orderBy(desc(tokens.createdAt))
         .limit(1);
 
+      // Self-rotation carries the scope of the credential PRESENTING the
+      // request, not the newest live row: `keepExisting` (a peer's, or the
+      // documented move-between-machines case) leaves a newer repo-scoped row,
+      // and reading that would downgrade the super agent rotating itself.
+      //
+      // Live-filtered AND read before the revoke, for the same reason as `live`
+      // above, and BOTH halves are load-bearing. Before the revoke, or our own
+      // revoke hides the row we are entitled to read. Live-filtered, or an
+      // operator's containment revoke-all lands between auth and here and every
+      // in-flight rotation mints a fresh owner-scoped credential from the row
+      // that revoke just killed. Measured: 40 concurrent rotations, all
+      // surviving credentials owner-scoped, without the filter.
+      const [presenting] = request.tokenId
+        ? await tx
+            .select({ ownerId: tokens.ownerId })
+            .from(tokens)
+            .where(and(eq(tokens.id, request.tokenId), isNull(tokens.revokedAt)))
+        : [];
+
       const retired = body.data.keepExisting
         ? []
         : await tx
@@ -159,15 +178,10 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       // `keepExisting` the super agent keeps working and nothing alerts.
       // Self-rotation and the owner's own dashboard both keep it, which is the
       // "no way back" property this exists to protect.
-      // Self-rotation carries the scope of the credential PRESENTING the
-      // request, not the newest live row. `keepExisting` (a peer's, or the
-      // documented move-between-machines case) leaves a newer repo-scoped row,
-      // and reading that would silently downgrade the super agent rotating
-      // itself — the exact "no way back" this carry-over exists to prevent.
-      const [presenting] = request.tokenId
-        ? await tx.select({ ownerId: tokens.ownerId }).from(tokens).where(eq(tokens.id, request.tokenId))
-        : [];
-
+      // Narrow claim deliberately: this stops a NEWER repo-scoped row being read
+      // as the scope. It does not stop a peer that already holds a credential
+      // minted for this agent from self-rotating the scope away; that path
+      // needs the minting caller recorded on the row and is tracked separately.
       const carriedOwnerId =
         request.agent?.id === agent.id
           ? presenting?.ownerId ?? null

@@ -328,6 +328,22 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
     expect(reach.statusCode).not.toBe(200);
   });
 
+  it("the shared-secret path sets no tokenId, so it cannot carry scope at all", async () => {
+    // The test above passes on the admin path for a reason unrelated to the
+    // branch it is named for: plugins/auth.ts sets neither request.agent nor
+    // request.tokenId on the API_SECRET path, so `presenting` is never read.
+    // Pinning that explicitly, because believing otherwise is what let a
+    // blocker land green.
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { agentId } = await redeem(deviceCode, `og-adminpath-${Date.now()}`);
+
+    const viaAdmin = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: ADMIN, body: JSON.stringify({}),
+    });
+    expect(viaAdmin.statusCode).toBe(201);
+    expect(viaAdmin.json().data.ownerScoped).toBe(false);
+  });
+
   it("makes owner scope visible, so a stolen one is findable", async () => {
     const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
     const { token, agentId } = await redeem(deviceCode, `og-visible-${Date.now()}`);

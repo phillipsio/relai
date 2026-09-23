@@ -159,9 +159,9 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     // row written by anything other than that one route would still produce an
     // owner-scoped worker. Enforce where the value is trusted, which is the
     // same reason runReviewerAgentVerification re-checks its reviewer.
-    if (row.scope === "owner" && (granted as Grant[]).some((g) => g.role !== "orchestrator")) {
+    if (row.scope === "owner" && ((granted as Grant[]).some((g) => g.role !== "orchestrator") || granted.length > 1)) {
       return reply.status(400).send({
-        error: { code: "invalid_grant", message: "This approval pairs owner scope with a non-orchestrator and cannot be minted." },
+        error: { code: "invalid_grant", message: "This approval pairs owner scope with something other than a single orchestrator and cannot be minted." },
       });
     }
 

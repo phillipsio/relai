@@ -122,7 +122,11 @@ export const notificationChannelRoutes: FastifyPluginAsync<{ db: Db }> = async (
     // per-agent behavior (that agent's channels only, and only if it's the
     // owner's — else empty). With no filter, return the owner's own channels
     // plus all their agents' channels.
-    if (request.ownerId) {
+    // `&& !request.agent`: an agent token can now carry ownerId, and this branch
+    // returns full rows including `secret` and `config.headers`. The by-id path
+    // in this file already refuses a per-agent caller for an owner channel; this
+    // was the one place that did not.
+    if (request.ownerId && !request.agent) {
       const visible = (await scopedAgentIds(request, db)) ?? [];
       const requestedAgentId = request.query.agentId;
       if (requestedAgentId) {

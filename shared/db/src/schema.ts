@@ -159,6 +159,8 @@ export const deviceAuthorizations = pgTable("device_authorizations", {
   // here because invites are minted at poll time, long after the decision, and
   // the scope must never be re-derived from the contents of `granted`.
   scope:          deviceGrantScopeEnum("scope").notNull().default("repo"),
+  // The first tenant to look this code up owns it from then on. Without this a
+  // code seen over someone's shoulder can be read or cancelled by any account.
   claimedBy:      text("claimed_by").references(() => users.id, { onDelete: "cascade" }),
   expiresAt:      timestamp("expires_at",     { withTimezone: true }).notNull(),
   lastPolledAt:   timestamp("last_polled_at", { withTimezone: true }),

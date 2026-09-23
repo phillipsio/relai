@@ -180,6 +180,90 @@ describe("approve states what it granted, so a downgrade cannot pass for success
   });
 });
 
+describe("owner scope is for the super agent, which is one orchestrator", () => {
+  // The super agent is a proxy for the user, so it holds the user's authority
+  // over the user's own tenant. That is only a coherent thing to grant to a
+  // single orchestrator. An owner-scoped WORKER is the shape every finding in
+  // the security review had in common, and refusing it at the grant removes
+  // that class rather than guarding each consequence.
+  it("refuses to grant owner scope to a worker", async () => {
+    const started = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerA),
+      body: JSON.stringify({
+        userCode: started.json().data.userCode,
+        repoId: repoA1,
+        scope: "owner",
+        agents: [{ name: `og-worker-${Date.now()}`, workerType: "claude", role: "worker" }],
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/orchestrator/i);
+  });
+
+  it("refuses a mixed grant, so one worker cannot ride along with an orchestrator", async () => {
+    const started = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerA),
+      body: JSON.stringify({
+        userCode: started.json().data.userCode,
+        repoId: repoA1,
+        scope: "owner",
+        agents: [
+          { name: `og-mix-o-${Date.now()}`, workerType: "claude", role: "orchestrator" },
+          { name: `og-mix-w-${Date.now()}`, workerType: "claude", role: "worker" },
+        ],
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("still allows a worker in an ordinary repo grant", async () => {
+    const started = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerA),
+      body: JSON.stringify({
+        userCode: started.json().data.userCode,
+        repoId: repoA1,
+        agents: [{ name: `og-plainworker-${Date.now()}`, workerType: "claude", role: "worker" }],
+      }),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("rotation keeps the super agent's scope", () => {
+  // Rotation revokes what it replaces inside one transaction, so a rotation
+  // that dropped ownerId would kill the credential and leave no route to
+  // re-grant it: owner scope reaches a token only through invites.ownerId.
+  it("carries ownerId onto the replacement token", async () => {
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { token, agentId } = await redeem(deviceCode, `og-rot-${Date.now()}`);
+
+    const rotated = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(token),
+      body: JSON.stringify({}),
+    });
+    expect(rotated.statusCode).toBe(201);
+
+    const fresh = rotated.json().token as string;
+    const live = (await db.select().from(tokens).where(eq(tokens.agentId, agentId)))
+      .filter((t) => t.revokedAt === null);
+    expect(live.length).toBe(1);
+    expect(live[0].ownerId).toBe(ownerA);
+
+    // And it still works across repos, which is the property that matters.
+    const sibling = await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(fresh) });
+    expect(sibling.statusCode).toBe(200);
+  });
+});
+
 describe("the owner comes from the approver, never from the request", () => {
   it("ignores an ownerId in the body and uses the approving tenant", async () => {
     // A caller holding owner A's session must not mint a credential for B by

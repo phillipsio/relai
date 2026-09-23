@@ -15,10 +15,16 @@ declare module "fastify" {
     // map a presented plaintext back to a row. GET /agents/:id/tokens uses it
     // to mark the row the caller holds so an operator does not revoke it.
     tokenId?: string;
-    // Set when the request authenticates with SERVICE_ADMIN_TOKEN and carries
-    // an X-Owner-Id header. The closed cloud dashboard uses this path to act
-    // on behalf of a logged-in user; ownership-aware route handlers filter by
-    // this value. Unset on per-agent tokens and the legacy API_SECRET path.
+    // Which tenant this request acts for. TWO sources, and readers must not
+    // assume the first: (a) SERVICE_ADMIN_TOKEN plus an X-Owner-Id header, the
+    // dashboard acting for a signed-in person, where `agent` is unset; (b) a
+    // per-agent token whose row carries `tokens.ownerId`, the super agent,
+    // where `agent` IS set. Unset on the legacy API_SECRET path.
+    //
+    // THE INVARIANT EVERY CALLSITE MUST HOLD: test `request.agent` before
+    // `request.ownerId`. Reading `if (request.ownerId)` as "this is the trusted
+    // dashboard" was true until 2026-09-23 and is now false; one route made
+    // that assumption and returned owner webhook secrets to an agent.
     ownerId?: string;
   }
 }

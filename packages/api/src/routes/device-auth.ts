@@ -274,6 +274,20 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     // The owner stamped on the credential is the APPROVER's own, so an approver
     // with no tenant cannot mint one. The legacy shared secret sets no ownerId
     // and would otherwise produce a token scoped to nothing.
+    // The super agent is a proxy for the user and holds the user's authority
+    // over the user's own tenant. That is coherent for one orchestrator and not
+    // for a worker: every finding in the 2026-09-23 security review had an
+    // owner-scoped WORKER in it. Refusing at the grant removes the class rather
+    // than guarding each consequence.
+    if (body.data.scope === "owner" && body.data.agents.some((a) => a.role !== "orchestrator")) {
+      return reply.status(400).send({
+        error: {
+          code: "validation_error",
+          message: "Owner scope may only be granted to an orchestrator; grant workers a repo-scoped credential instead.",
+        },
+      });
+    }
+
     if (body.data.scope === "owner" && !request.ownerId) {
       return reply.status(400).send({
         error: {
@@ -303,11 +317,9 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
       .returning();
     if (!updated) return reply.status(409).send({ error: { code: "already_decided", message: "This request is already decided" } });
 
-    // Echo the scope READ BACK FROM THE ROW, not the one that was asked for.
-    // An older API silently strips an unknown `scope` (this schema is not
-    // strict) and mints an ordinary repo token, so a caller that cannot see
-    // what was actually granted has no way to tell a downgrade from a success.
-    // Echoing the request would reproduce exactly that blindness.
+    // A caller detects a downgrade by this key being ABSENT: an API predating
+    // the field strips an unknown `scope` (this schema is not strict) and omits
+    // it from the response, so the approval quietly becomes a repo grant.
     return reply.status(200).send({
       data: { repoId: repo.id, agents: body.data.agents.length, scope: updated.scope },
     });

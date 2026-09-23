@@ -6,10 +6,12 @@ import { isDmParticipant } from "./dm.js";
 // Tenancy enforcement for project-scoped routes. Three auth modes resolve to
 // three different access shapes:
 //
-//   1. Per-agent token  — `request.agent` is set; agent.repoId is the only
-//      project they may touch. Cross-project access is forbidden regardless
-//      of who owns the project.
-//   2. Service-admin    — `request.ownerId` is set (from X-Owner-Id header).
+//   1. Per-agent token  — `request.agent` is set. Its own repo, plus, when the
+//      token row carries `tokens.ownerId` (the super agent), every repo that
+//      owner owns. Without owner scope, cross-project access is forbidden
+//      regardless of who owns the project.
+//   2. Owner            — `request.ownerId` is set, from an X-Owner-Id header
+//      on the dashboard path OR from the token row on the super agent's path.
 //      Access is filtered to repos owned by that user.
 //   3. Legacy API_SECRET — neither is set; full access. Self-hosters and seed
 //      scripts rely on this; no filtering applied.
@@ -70,18 +72,19 @@ export function scopedRepoFilter(request: FastifyRequest): SQL | null {
 // An owner gets the same unrestricted answer as the legacy shared secret, and
 // that is a decision rather than an oversight: assertRepoAccess has already
 // confined it to `repos.ownerId = request.ownerId`, and inside that boundary it
-// can delete the repo outright, taking every agent and token with it. Refusing
-// a token rotation there would be incoherent, not safer. Deliberately NOT
-// written as a separate `if (request.ownerId) return true` arm, because that
+// can delete the repo outright. Deliberately NOT a separate arm, because that
 // branch would be indistinguishable from the one below it; `ownership.test.ts`
 // records the decision where it can fail instead.
 //
-// The ORDER is load-bearing. Nothing sets both fields today (the agent branch
-// of the auth plugin returns before the service-admin branch), but
-// task_8nGB_v4A7WSEtInu9HWUR adds `tokens.ownerId` and then one request carries
-// both. Testing the agent FIRST is what keeps an owner-scoped worker a worker;
-// hoisting an ownerId check above it would turn that token into a master key
-// over every agent in the owner's repos.
+// THE SUPER AGENT IS A PROXY FOR THE USER and therefore does act across the
+// repos its owner owns, including on other agents there. That is intended, not
+// a gap. What bounds it is not this function: owner scope is grantable only to
+// an orchestrator (device-auth refuses a worker), and destructive acts are
+// meant to become recoverable rather than forbidden (task_j03oUMlGHG-bkYQQO-hby).
+// An earlier version of this comment claimed the agent-first ordering stopped
+// the token being "a master key over every agent in the owner's repos". That
+// was false for an orchestrator, and the ordering buys something narrower: an
+// agent identity is judged by its role before any owner scope is consulted.
 export function callerMayActOnAgent(request: FastifyRequest, targetAgentId: string): boolean {
   if (!request.agent) return true;
   return request.agent.id === targetAgentId || request.agent.role === "orchestrator";

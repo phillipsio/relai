@@ -137,9 +137,21 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
             .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt)))
             .returning({ id: tokens.id });
 
+      // Carry the owner scope across. Revocation precedes this insert in the
+      // same transaction, so dropping it would kill the super agent's
+      // credential with no way back: owner scope reaches a token only through
+      // invites.ownerId, which only an owner-scoped device approval can set.
+      const [current] = await tx
+        .select({ ownerId: tokens.ownerId })
+        .from(tokens)
+        .where(eq(tokens.agentId, agent.id))
+        .orderBy(desc(tokens.createdAt))
+        .limit(1);
+
       const [inserted] = await tx.insert(tokens).values({
         id:        newId("tok"),
         agentId:   agent.id,
+        ownerId:   current?.ownerId ?? null,
         tokenHash: hashToken(plaintext),
       }).returning({
         id:         tokens.id,

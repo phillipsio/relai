@@ -156,13 +156,34 @@ describe("the other two scoping sites, checked rather than assumed", () => {
   });
 
   it("scopedAgentIds stays narrow: an owner-scoped agent manages only its own subscriptions", async () => {
-    // Deliberately NOT widened. Managing your own delivery is a different
-    // question from reading across the fleet, and the narrower answer is the
-    // one that cannot surprise anyone.
+    // A row belonging to SOMEONE ELSE has to exist or this asserts nothing:
+    // the first version of this test ran `every()` over an empty array and
+    // stayed green against a deliberately widened scopedAgentIds.
+    const peer = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: repoA2, name: `ot-sub-peer-${Date.now()}`, role: "worker" }),
+    });
+    const peerId = peer.json().data.id as string;
+
+    for (const [agentId, token] of [[agentInA1, ownerToken], [peerId, peer.json().token]] as const) {
+      const t = await app.inject({
+        method: "POST", url: "/threads", headers: as(token),
+        body: JSON.stringify({ repoId: agentId === peerId ? repoA2 : repoA1, title: `sub-${agentId}` }),
+      });
+      const sub = await app.inject({
+        method: "POST", url: "/subscriptions", headers: as(token),
+        body: JSON.stringify({ agentId, targetType: "thread", targetId: t.json().data.id }),
+      });
+      expect(sub.statusCode).toBe(201);
+    }
+
     const res = await app.inject({ method: "GET", url: "/subscriptions", headers: as(ownerToken) });
     expect(res.statusCode).toBe(200);
     const rows = res.json().data as Array<{ agentId: string }>;
+    // Non-empty is the guard; the peer's row exists and must not appear.
+    expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.agentId === agentInA1)).toBe(true);
+    expect(rows.some((r) => r.agentId === peerId)).toBe(false);
   });
 });
 

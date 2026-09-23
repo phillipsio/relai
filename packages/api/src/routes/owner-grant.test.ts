@@ -341,6 +341,86 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
   });
 });
 
+describe("the invariant holds at the point of trust, not only at approve", () => {
+  it("refuses to mint when the approved row pairs owner scope with a worker", async () => {
+    // approve now refuses this, but the mint path builds invites straight from
+    // `granted` and never re-reads the role. A row written before the guard —
+    // or by anything that is not that one route — would still mint an
+    // owner-scoped worker. Enforce where the value is trusted.
+    const started = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    const userCode = started.json().data.userCode as string;
+    const deviceCode = started.json().deviceCode as string;
+
+    await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerA),
+      body: JSON.stringify({
+        userCode, repoId: repoA1,
+        agents: [{ name: `og-pot-${Date.now()}`, workerType: "claude", role: "worker" }],
+      }),
+    });
+    // Forge the state the guard is supposed to make unreachable.
+    await db.update(deviceAuthorizations).set({ scope: "owner" })
+      .where(eq(deviceAuthorizations.userCode, userCode));
+
+    const polled = await app.inject({
+      method: "POST", url: "/auth/device/token",
+      headers: { Authorization: `Bearer ${deviceCode}`, ...JSON_ONLY },
+    });
+    expect(polled.statusCode).toBe(400);
+    expect(polled.body).not.toContain("inv_");
+  });
+
+  it("grants owner scope to exactly one agent, as the design says", async () => {
+    const started = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    const res = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerA),
+      body: JSON.stringify({
+        userCode: started.json().data.userCode, repoId: repoA1, scope: "owner",
+        agents: [
+          { name: `og-two-a-${Date.now()}`, workerType: "claude", role: "orchestrator" },
+          { name: `og-two-b-${Date.now()}`, workerType: "claude", role: "orchestrator" },
+        ],
+      }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("carries the scope of the credential presenting the request, not the newest row", async () => {
+    // keepExisting by a peer (or the documented move-between-machines case)
+    // leaves a newer repo-scoped row. Self-rotation must not read that and
+    // silently downgrade the super agent, which needs a fresh device grant to
+    // recover.
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { token, agentId } = await redeem(deviceCode, `og-present-${Date.now()}`);
+
+    const peer = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: repoA1, name: `og-present-peer-${Date.now()}`, role: "orchestrator" }),
+    });
+    const peerRot = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(peer.json().token as string),
+      body: JSON.stringify({ keepExisting: true }),
+    });
+    expect(peerRot.statusCode).toBe(201);
+
+    // The super agent's own credential is still live; rotating with it must keep scope.
+    const self = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(token),
+      body: JSON.stringify({ keepExisting: true }),
+    });
+    expect(self.statusCode).toBe(201);
+    expect(self.json().data.ownerScoped).toBe(true);
+    const reach = await app.inject({
+      method: "GET", url: `/repos/${repoA2}`, headers: as(self.json().token as string),
+    });
+    expect(reach.statusCode).toBe(200);
+  });
+});
+
 describe("the owner comes from the approver, never from the request", () => {
   it("ignores an ownerId in the body and uses the approving tenant", async () => {
     // A caller holding owner A's session must not mint a credential for B by

@@ -154,6 +154,17 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
 
     const granted = (row.granted ?? []) as Grant[];
     const repoId  = row.repoId;
+    // The role is re-checked HERE, not taken on approve's word. Approve refuses
+    // this pairing, but the mint builds invites straight from `granted`, so a
+    // row written by anything other than that one route would still produce an
+    // owner-scoped worker. Enforce where the value is trusted, which is the
+    // same reason runReviewerAgentVerification re-checks its reviewer.
+    if (row.scope === "owner" && (granted as Grant[]).some((g) => g.role !== "orchestrator")) {
+      return reply.status(400).send({
+        error: { code: "invalid_grant", message: "This approval pairs owner scope with a non-orchestrator and cannot be minted." },
+      });
+    }
+
     if (!repoId || granted.length === 0) {
       return reply.status(500).send({ error: { code: "internal_error", message: "Approved authorization is missing its grant" } });
     }
@@ -277,9 +288,20 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     // The super agent is a proxy for the user and holds the user's authority
     // over the user's own tenant. That is coherent for one orchestrator and not
     // for a worker: every finding in the 2026-09-23 security review had an
-    // owner-scoped WORKER in it. Refusing at the grant is most of the answer,
-    // but not all of it: rotation is a second way a token acquires owner scope,
-    // and it carries the scope only to an identity already entitled to it.
+    // owner-scoped WORKER in it. Refused in three places rather than one,
+    // because a single check is a moment in time: here at approve, again at the
+    // mint (which reads `granted` and must not take this route's word for it),
+    // and in rotation, which carries scope only to an identity already
+    // entitled to it.
+    if (body.data.scope === "owner" && body.data.agents.length > 1) {
+      return reply.status(400).send({
+        error: {
+          code: "validation_error",
+          message: "Owner scope grants one credential; approve additional agents as a separate repo-scoped grant.",
+        },
+      });
+    }
+
     if (body.data.scope === "owner" && body.data.agents.some((a) => a.role !== "orchestrator")) {
       return reply.status(400).send({
         error: {

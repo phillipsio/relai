@@ -159,10 +159,21 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       // `keepExisting` the super agent keeps working and nothing alerts.
       // Self-rotation and the owner's own dashboard both keep it, which is the
       // "no way back" property this exists to protect.
-      const entitled =
-        request.agent?.id === agent.id ||
-        (!request.agent && !!request.ownerId && request.ownerId === live?.ownerId);
-      const carriedOwnerId = entitled ? live?.ownerId ?? null : null;
+      // Self-rotation carries the scope of the credential PRESENTING the
+      // request, not the newest live row. `keepExisting` (a peer's, or the
+      // documented move-between-machines case) leaves a newer repo-scoped row,
+      // and reading that would silently downgrade the super agent rotating
+      // itself — the exact "no way back" this carry-over exists to prevent.
+      const [presenting] = request.tokenId
+        ? await tx.select({ ownerId: tokens.ownerId }).from(tokens).where(eq(tokens.id, request.tokenId))
+        : [];
+
+      const carriedOwnerId =
+        request.agent?.id === agent.id
+          ? presenting?.ownerId ?? null
+          : !request.agent && !!request.ownerId && request.ownerId === live?.ownerId
+            ? live?.ownerId ?? null
+            : null;
 
       const [inserted] = await tx.insert(tokens).values({
         id:        newId("tok"),

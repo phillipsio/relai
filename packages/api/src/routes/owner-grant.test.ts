@@ -437,6 +437,42 @@ describe("the invariant holds at the point of trust, not only at approve", () =>
   });
 });
 
+describe("one invite is one credential, under concurrency", () => {
+  it("mints exactly one agent however many redeems race", async () => {
+    // The approve path enforces a single owner-scoped credential. That rule is
+    // worth nothing if the redeem is not single-use: six concurrent accepts of
+    // one code previously returned six 201s and six tenant-wide tokens on six
+    // agent identities, and revoking the one the operator knew about left the
+    // rest live. A sequential test cannot see this.
+    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const polled = await app.inject({
+      method: "POST", url: "/auth/device/token",
+      headers: { Authorization: `Bearer ${deviceCode}`, ...JSON_ONLY },
+    });
+    const code = polled.json().invites[0].code as string;
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        app.inject({
+          method: "POST", url: "/auth/accept-invite", headers: JSON_ONLY,
+          body: JSON.stringify({ code, name: `og-race-${Date.now()}-${i}`, role: "orchestrator" }),
+        }),
+      ),
+    );
+
+    const created = results.filter((r) => r.statusCode === 201);
+    expect(created.length).toBe(1);
+    expect(results.filter((r) => r.statusCode === 400).length).toBe(5);
+
+    // And exactly one credential carries the scope.
+    const { createHash } = await import("node:crypto");
+    const [row] = await db.select().from(invites)
+      .where(eq(invites.codeHash, createHash("sha256").update(code).digest("hex")));
+    const scoped = await db.select().from(tokens).where(eq(tokens.agentId, row.acceptedAgentId!));
+    expect(scoped.filter((t) => t.ownerId !== null).length).toBe(1);
+  });
+});
+
 describe("the owner comes from the approver, never from the request", () => {
   it("ignores an ownerId in the body and uses the approving tenant", async () => {
     // A caller holding owner A's session must not mint a credential for B by

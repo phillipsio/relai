@@ -149,18 +149,22 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       // documented move-between-machines case) leaves a newer repo-scoped row,
       // and reading that would downgrade the super agent rotating itself.
       //
-      // Live-filtered AND read before the revoke, for the same reason as `live`
-      // above, and BOTH halves are load-bearing. Before the revoke, or our own
-      // revoke hides the row we are entitled to read. Live-filtered, or an
-      // operator's containment revoke-all lands between auth and here and every
-      // in-flight rotation mints a fresh owner-scoped credential from the row
-      // that revoke just killed. Measured: 40 concurrent rotations, all
-      // surviving credentials owner-scoped, without the filter.
+      // Read before the revoke, live-filtered, and locked. Each does a
+      // different job and none of them closes the whole race:
+      //   before  — our own revoke would otherwise hide the row we may read.
+      //   live    — a revoke that COMMITTED before this read cannot be copied.
+      //   FOR UPDATE — a revoke arriving after it blocks rather than being lost.
+      // A revoke landing between this read and the insert was still producing a
+      // scoped credential in 6 of 20 measured trials before the lock. The lock
+      // narrows that; it has not been re-measured here, so treat
+      // `DELETE /agents/:id` as the containment lever that IS measured sound
+      // (0 of 20), because it contends on the agent row this transaction holds.
       const [presenting] = request.tokenId
         ? await tx
             .select({ ownerId: tokens.ownerId })
             .from(tokens)
             .where(and(eq(tokens.id, request.tokenId), isNull(tokens.revokedAt)))
+            .for("update")
         : [];
 
       const retired = body.data.keepExisting

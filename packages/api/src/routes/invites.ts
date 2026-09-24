@@ -1,7 +1,7 @@
 import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, getTableColumns } from "drizzle-orm";
+import { and, eq, isNull, getTableColumns } from "drizzle-orm";
 import { agents, invites, repos, tokens } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
@@ -14,6 +14,14 @@ const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 // the table rather than typed out, so a column added later cannot silently stop
 // being returned.
 const { codeHash: _codeHash, ...inviteFields } = getTableColumns(invites);
+
+// The tenant behind a pending super-agent grant is reconnaissance for any repo
+// member, and membership is all this route checks. Same treatment as
+// GET /agents/:id/tokens: say whether, never who.
+const hideOwner = <T extends { ownerId: string | null }>({ ownerId, ...rest }: T) => ({
+  ...rest,
+  ownerScoped: ownerId !== null,
+});
 
 const createSchema = z.object({
   suggestedName: z.string().min(1).optional(),
@@ -69,7 +77,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       expiresAt: new Date(Date.now() + ttl * 1000),
     }).returning(inviteFields);
 
-    return reply.status(201).send({ data: row, code });
+    return reply.status(201).send({ data: hideOwner(row), code });
   });
 
   fastify.get<{ Params: { id: string } }>("/repos/:id/invites", async (request, reply) => {
@@ -79,7 +87,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
 
     const rows = await db.select(inviteFields).from(invites).where(eq(invites.repoId, project.id));
-    return { data: rows };
+    return { data: rows.map(hideOwner) };
   });
 
   fastify.delete<{ Params: { id: string } }>("/invites/:id", async (request, reply) => {
@@ -114,30 +122,50 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       });
     }
 
-    const [agent] = await db.insert(agents).values({
-      id:             newId("agent"),
-      repoId:      invite.repoId,
-      name:           body.data.name,
-      role:           invite.role,
-      specialization: body.data.specialization ?? invite.suggestedSpecialization ?? null,
-      domains:        body.data.domains,
-      workerType:     body.data.workerType ?? null,
-      lastSeenAt:     new Date(0),
-    }).returning();
-
+    // The conditional stamp is the ONLY consumption guard, the same shape
+    // POST /auth/device/token already uses. The checks above are for error
+    // messages; they cannot guard, because two concurrent redeems both pass
+    // them before either writes. Measured before this: six concurrent accepts
+    // of one owner-scoped invite returned six 201s and six tenant-wide
+    // credentials on six agent identities, and revoking the one the operator
+    // knew about left the rest live.
     const plaintext = generateToken();
-    await db.insert(tokens).values({
-      id:        newId("tok"),
-      agentId:   agent.id,
-      // Owner scope rides the invite rather than being decided here, because
-      // only the approval knew it. Null for every ordinary invite.
-      ownerId:   invite.ownerId ?? null,
-      tokenHash: hashSecret(plaintext),
+    const minted = await db.transaction(async (tx) => {
+      const [claimed] = await tx
+        .update(invites)
+        .set({ acceptedAt: new Date() })
+        .where(and(eq(invites.id, invite.id), isNull(invites.acceptedAt)))
+        .returning();
+      if (!claimed) return null;
+
+      const [agent] = await tx.insert(agents).values({
+        id:             newId("agent"),
+        repoId:         claimed.repoId,
+        name:           body.data.name,
+        role:           claimed.role,
+        specialization: body.data.specialization ?? claimed.suggestedSpecialization ?? null,
+        domains:        body.data.domains,
+        workerType:     body.data.workerType ?? null,
+        lastSeenAt:     new Date(0),
+      }).returning();
+
+      await tx.insert(tokens).values({
+        id:        newId("tok"),
+        agentId:   agent.id,
+        // Owner scope rides the invite rather than being decided here, because
+        // only the approval knew it. Null for every ordinary invite.
+        ownerId:   claimed.ownerId ?? null,
+        tokenHash: hashSecret(plaintext),
+      });
+
+      await tx.update(invites).set({ acceptedAgentId: agent.id }).where(eq(invites.id, claimed.id));
+      return agent;
     });
 
-    await db.update(invites)
-      .set({ acceptedAt: new Date(), acceptedAgentId: agent.id })
-      .where(eq(invites.id, invite.id));
+    if (!minted) {
+      return reply.status(400).send({ error: { code: "invalid_invite", message: "Invite already accepted" } });
+    }
+    const agent = minted;
 
     return reply.status(201).send({ data: agent, token: plaintext });
   });

@@ -201,7 +201,14 @@ describe("codeHash never leaves the server", () => {
     expect(res.statusCode).toBe(201);
 
     const returned = Object.keys(res.json().data).sort();
-    const expected = Object.keys(getTableColumns(invites)).filter((c) => c !== "codeHash").sort();
+    // Two columns are deliberately withheld and one derived field replaces the
+    // second: codeHash never leaves the server, and ownerId is reconnaissance
+    // for any repo member, so callers get ownerScoped instead.
+    const expected = [
+      ...Object.keys(getTableColumns(invites)).filter((c) => c !== "codeHash" && c !== "ownerId"),
+      "ownerScoped",
+    ].sort();
     expect(returned).toEqual(expected);
+    expect(returned).not.toContain("ownerId");
   });
 });

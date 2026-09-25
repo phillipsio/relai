@@ -1183,5 +1183,142 @@ export function buildOperatorTools(client: ApiClient, ownerId?: string) {
         return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
       },
     },
+
+    {
+      name: "create_repo",
+      description:
+        "Create a new project owned by you. Use this when work needs somewhere to live that does " +
+        "not exist yet — you do not have to send the user to a dashboard first. The new repo is " +
+        "owned by your account, so your own credential reaches it immediately and list_repos " +
+        "will show it. Set repoUrl if you know the git remote: the git_pushed verification kind " +
+        "needs it to check whether a branch was actually pushed. Creating a repo cannot be " +
+        "undone from here, so use a name the user would recognise.",
+      inputSchema: z.object({
+        name:        z.string().min(1).describe("Short project name, e.g. 'checkout-service'."),
+        description: z.string().optional().describe("What this project is for."),
+        repoUrl:     z.string().optional().describe(
+          "Git remote, and it must parse as a URL: https://host/o/r.git or ssh://git@host/o/r.git. " +
+          "The scp-style form git@host:o/r.git that `git remote -v` prints is REFUSED with a 400. " +
+          "Enables the git_pushed verification kind.",
+        ),
+      }),
+      handler: async (input: { name: string; description?: string; repoUrl?: string }) => {
+        // No `context`: /session/start returns repos.context verbatim to every
+        // agent in the repo as configuration, so nothing marks it untrusted.
+        const repo = await client.createRepo({
+          name: input.name,
+          ...(input.description ? { description: input.description } : {}),
+          ...(input.repoUrl ? { repoUrl: input.repoUrl } : {}),
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify({ repo }, null, 2) }] };
+      },
+    },
+
+    {
+      name: "invite_agent",
+      description:
+        "Authorise a new agent to join one of your repos. This does NOT create the agent: it " +
+        "mints a single-use, expiring invite code and returns the exact command that redeems it. " +
+        "Two ways to finish. If you have a shell on the machine that agent will run on, create " +
+        "its working directory and run the command there. If you do not, give the user the " +
+        "command to paste. Either way the redeem is INTERACTIVE: `login` prompts for the agent " +
+        "name and specialization and does not yet read them from the invite, so expect to answer " +
+        "two questions and do not run it anywhere it cannot reach a terminal. " +
+        "The code is the only secret here and it is worthless once redeemed, which is why this " +
+        "is an invite rather than a token: a token would be long-lived and would sit in this " +
+        "conversation. Set workerType to the runtime that agent actually is, or it joins " +
+        "labelled 'human' and routing treats it wrongly.",
+      inputSchema: z.object({
+        repoId:         z.string().describe("The repo to invite into. Must be one you own; see list_repos."),
+        name:           z.string().min(1).describe("Suggested name for the new agent, e.g. 'reviewer'."),
+        workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"])
+                          .optional().describe("The runtime this agent will run as. Defaults to 'human' at redeem time if omitted."),
+        specialization: z.string().optional().describe("What this agent is for, e.g. 'review' or 'frontend'. Used for routing."),
+      }),
+      handler: async (input: { repoId: string; name: string; workerType?: string; specialization?: string }) => {
+        // Worker, hardcoded. The route gate is `request.agent.role !== "orchestrator"`
+        // and this credential is always an orchestrator, in every repo its owner
+        // owns, so a `role` input would be a mint for an identity that can author
+        // a shell verify predicate.
+        const { invite, code } = await client.createInvite(input.repoId, {
+          suggestedName: input.name,
+          ...(input.specialization ? { suggestedSpecialization: input.specialization } : {}),
+          role: "worker",
+        });
+        const workerTypeFlag = input.workerType ? ` --worker-type ${input.workerType}` : "";
+        // --api, because `login` otherwise prompts with a localhost default and
+        // a wrong Enter sends the redeem to the wrong server. RELAI_CONFIG_DIR,
+        // because the config is per HOME rather than per directory: with one
+        // already present, `login --invite` prints "Already logged in" and exits
+        // 0 without redeeming, which is the normal second call in an onboarding
+        // session.
+        const slot = input.name.replace(/[^A-Za-z0-9._-]/g, "-");
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              invite,
+              code,
+              redeemCommand:
+                `RELAI_CONFIG_DIR=~/.config/relai/${slot} pitboss login --api ${client.apiUrl} ` +
+                `--invite ${code}${workerTypeFlag}`,
+              nextStep:
+                "Run redeemCommand in the directory that agent will work from, or give it to the " +
+                "user to paste there. It will ask for an agent name and a specialization. The " +
+                "code is single-use and expires. One machine holds one identity per config dir, " +
+                "which is why the command sets RELAI_CONFIG_DIR — drop it and a machine that " +
+                "already has an agent will report success without redeeming anything.",
+            }, null, 2),
+          }],
+        };
+      },
+    },
+
+    {
+      name: "list_invites",
+      description:
+        "List the outstanding join codes on one of your repos, so you can see what is still " +
+        "redeemable. Use this before minting another, and to check nothing is open that you did " +
+        "not intend. An invite with acceptedAt set has already been used and is dead; one with " +
+        "neither acceptedAt nor revokedAt is live until it expires.",
+      inputSchema: z.object({
+        repoId: z.string().describe("The repo whose invites to list."),
+      }),
+      handler: async (input: { repoId: string }) => {
+        const invites = await client.listInvites(input.repoId);
+        return {
+          content: [{
+            type: "text" as const,
+            text: invites.length === 0
+              ? "No invites on that repo."
+              : JSON.stringify({ invites }, null, 2),
+          }],
+        };
+      },
+    },
+
+    {
+      name: "revoke_invite",
+      description:
+        "Kill an outstanding join code so it can no longer be redeemed. Use this the moment an " +
+        "invite is not going to be used, or if a code may have been seen by someone it was not " +
+        "meant for. This is recoverable: it does not remove any agent that already joined, and " +
+        "you can always mint a fresh code with invite_agent.",
+      inputSchema: z.object({
+        inviteId: z.string().describe(
+          "The invite id from list_invites, which looks like invite_xxx. This is NOT the join " +
+          "code: codes are a different value with a different prefix and cannot be revoked by code.",
+        ),
+      }),
+      handler: async (input: { inviteId: string }) => {
+        await client.revokeInvite(input.inviteId);
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({ revoked: input.inviteId }, null, 2),
+          }],
+        };
+      },
+    },
   ];
 }

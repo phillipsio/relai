@@ -87,3 +87,43 @@ describe("getAgent", () => {
     expect(agent).toEqual({ id: "agent_1", repoPath: "/Users/x/repo" });
   });
 });
+
+describe("a 204 is a success, not a parse error", () => {
+  // DELETE /invites/:id answers 204 with an empty body. requestEnvelope called
+  // res.json() unconditionally, which rejects on empty input, so revokeInvite
+  // threw on every success: the invite WAS revoked and the model was told the
+  // call failed. That is the worst possible direction for the one tool whose
+  // job is killing a code that may have leaked.
+  it("resolves rather than throwing when the route returns no body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: async () => { throw new SyntaxError("Unexpected end of JSON input"); },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient({ baseUrl: "http://api.test", secret: "t" });
+    await expect(client.revokeInvite("invite_abc")).resolves.toBeUndefined();
+    expect(String(fetchMock.mock.calls[0][0])).toBe("http://api.test/invites/invite_abc");
+    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+  });
+
+  it("still surfaces an error status that carries no body", async () => {
+    // Failing closed matters more here than a tidy message: a revoke that did
+    // not happen must not read as one that did.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => { throw new SyntaxError("Unexpected end of JSON input"); },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient({ baseUrl: "http://api.test", secret: "t" });
+    await expect(client.revokeInvite("invite_missing")).rejects.toThrow(/404/);
+  });
+
+  it("leaves a normal JSON response alone", async () => {
+    const fetchMock = mockFetchOk();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient({ baseUrl: "http://api.test", secret: "t" });
+    await expect(client.listInvites("repo_1")).resolves.toEqual([]);
+  });
+});

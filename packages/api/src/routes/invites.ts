@@ -9,6 +9,11 @@ import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js"
 import { assertRepoAccess } from "../lib/ownership.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+// Clamped here rather than in the schema: a rejected request tells the caller
+// the limit, but the code is the thing that has to be short-lived, and the
+// MCP tool that prints one into a chat transcript is not the only caller.
+// An unclamped value also overflows Date and 500s past ~3e11 seconds.
+const MAX_TTL_SECONDS = DEFAULT_TTL_SECONDS;
 
 // Named fields, not the row: codeHash must never leave the server. Derived from
 // the table rather than typed out, so a column added later cannot silently stop
@@ -65,7 +70,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     }
 
     const code = generateInviteCode();
-    const ttl  = body.data.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    const ttl  = Math.min(body.data.ttlSeconds ?? DEFAULT_TTL_SECONDS, MAX_TTL_SECONDS);
     const [row] = await db.insert(invites).values({
       id:        newId("invite"),
       repoId: project.id,

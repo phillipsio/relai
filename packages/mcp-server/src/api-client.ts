@@ -14,8 +14,11 @@ export class ApiClient {
   private baseUrl: string;
   private headers: Record<string, string>;
 
+  readonly apiUrl: string;
+
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
+    this.apiUrl = this.baseUrl;
     this.headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.secret}`,
@@ -35,7 +38,10 @@ export class ApiClient {
       headers: this.headers,
       body: body ? JSON.stringify(body) : undefined,
     });
-    const json = await res.json() as { data?: T; meta?: Record<string, unknown>; error?: { code: string; message: string } };
+    // A 204 carries no body, so res.json() rejects. Parse defensively rather
+    // than checking only for 204: a body-less error must still fail, loudly.
+    const json = await res.json().catch(() => ({})) as
+      { data?: T; meta?: Record<string, unknown>; error?: { code: string; message: string } };
     if (!res.ok) {
       throw new Error(json.error?.message ?? `API error ${res.status}`);
     }
@@ -54,6 +60,31 @@ export class ApiClient {
 
   listRepos() {
     return this.request<unknown[]>("GET", "/repos");
+  }
+
+  createRepo(body: { name: string; description?: string; repoUrl?: string; context?: string }) {
+    return this.request<{ id: string; name: string; ownerId: string | null }>("POST", "/repos", body);
+  }
+
+  listInvites(repoId: string) {
+    return this.request<Array<{ id: string; acceptedAt: string | null; expiresAt: string }>>(
+      "GET", `/repos/${repoId}/invites`,
+    );
+  }
+
+  revokeInvite(inviteId: string) {
+    return this.request<void>("DELETE", `/invites/${inviteId}`);
+  }
+
+  // `code` is a sibling of `data`, not a field inside it: unwrapping `.data`
+  // returns an invite row with no way to redeem it.
+  async createInvite(repoId: string, body: {
+    suggestedName?: string; suggestedSpecialization?: string; role?: string; ttlSeconds?: number;
+  }) {
+    const json = await this.requestEnvelope<{ id: string; repoId: string; role: string; expiresAt: string }>(
+      "POST", `/repos/${repoId}/invites`, body,
+    );
+    return { invite: json.data, code: (json as { code?: string }).code };
   }
 
   // Artifacts

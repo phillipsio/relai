@@ -103,7 +103,7 @@ Per-agent bearer tokens. Every route — including `GET /health` — runs throug
 Fastify v4 with Zod validation throughout.
 
 **Repos**
-- `POST /repos`, `GET /repos`, `GET /repos/:id`
+- `POST /repos`, `GET /repos`, `GET /repos/:id`. **`GET /repos` returns the same union `assertRepoAccess` grants per id**: the caller's own repo, plus every repo owned by `request.ownerId` when the presenting token carries one. It branched on `request.agent` first until 2026-09-24 and returned only the home repo, so an owner-scoped agent could act on a sibling repo it was handed the id of but had no way to discover the rest. `assertRepoAccess` and `GET /agents` were both widened for that credential and this was missed; `GET /agents` widens by the agent's repo's OWNER (`peerRepoIds`) and so applies to every agent, while this widens by the CREDENTIAL's scope and so applies only to an owner-scoped one.
 - `PUT /repos/:id`, `DELETE /repos/:id` — **orchestrator-only**, via `callerMayAdministerRepo` (`lib/ownership.ts`). DELETE removes every agent in the repo, so with membership alone a worker refused at `DELETE /agents/:id` reached the same orchestrator lockout one route up. PUT previously role-checked `repoUrl` only, which left `defaultAssignee` writable by any member.
 
 **Agents & tokens**

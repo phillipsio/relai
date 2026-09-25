@@ -124,7 +124,34 @@ describe("the scope comes from the token row, not from a header", () => {
   });
 });
 
+describe("the owner's agent can find the owner's repos, not just act on ones it was told about", () => {
+  // assertRepoAccess and GET /agents were both widened for an owner-scoped
+  // token; GET /repos was missed, and it branched on request.agent first. So the
+  // top-level agent could act on a repo only if it already knew the id, and had
+  // no way to discover the rest. That breaks "reach across repos for the user"
+  // at step one, before any permission question arises.
+  it("lists every repo the owner owns", async () => {
+    const res = await app.inject({ method: "GET", url: "/repos", headers: as(ownerToken) });
+    expect(res.statusCode).toBe(200);
+    const ids = (res.json().data as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toContain(repoA1);
+    expect(ids).toContain(repoA2);
+  });
+
+  it("and no repo belonging to anyone else", async () => {
+    const res = await app.inject({ method: "GET", url: "/repos", headers: as(ownerToken) });
+    expect((res.json().data as Array<{ id: string }>).map((r) => r.id)).not.toContain(repoB);
+  });
+});
+
 describe("no collateral widening for ordinary tokens", () => {
+  it("a plain agent token still lists only its own repo", async () => {
+    const res = await app.inject({ method: "GET", url: "/repos", headers: as(plainToken) });
+    expect(res.statusCode).toBe(200);
+    const ids = (res.json().data as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toEqual([repoA1]);
+  });
+
   it("the same agent's plain token still cannot see the sibling repo", async () => {
     const res = await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(plainToken) });
     expect(res.statusCode).toBe(403);

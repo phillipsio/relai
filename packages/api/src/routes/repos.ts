@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, inArray, and } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { repos, agents, threads, messages, tasks, routingLog, verificationLog, invites } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { assertRepoAccess, callerMayAdministerRepo, scopedRepoFilter } from "../lib/ownership.js";
@@ -38,7 +38,13 @@ export const repoRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // Per-agent callers see only their own project; service-admin sees only
     // repos owned by X-Owner-Id; API_SECRET sees everything.
     if (request.agent) {
-      const rows = await db.select().from(repos).where(eq(repos.id, request.agent.repoId));
+      // An owner-scoped credential must be able to FIND the owner's repos, not
+      // only act on ones it was already told the id of. Same union
+      // assertRepoAccess grants per id, and the scope still comes from the
+      // token row rather than anything the caller sent.
+      const own = eq(repos.id, request.agent.repoId);
+      const rows = await db.select().from(repos)
+        .where(request.ownerId ? or(own, eq(repos.ownerId, request.ownerId)) : own);
       return { data: rows };
     }
     const filter = scopedRepoFilter(request);

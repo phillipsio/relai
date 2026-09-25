@@ -88,6 +88,7 @@ export type TaskHumanLabel =
   | "Queued"          // pending, autoAssign true — awaiting routing
   | "Unassigned"      // pending, no assignee and no autoAssign
   | "Starting"        // assigned, not yet picked up
+  | "Not picked up"   // assigned, and nothing has touched it since
   | "Running"         // in_progress
   | "Stalled"         // in_progress with stalledAt set
   | "Verifying"       // pending_verification — predicate scheduled
@@ -95,20 +96,36 @@ export type TaskHumanLabel =
   | "Done"            // completed
   | "Cancelled";      // cancelled
 
-export function humanizeTaskStatus(task: {
-  status: TaskStatus;
-  autoAssign?: boolean;
-  assignedTo?: string | null;
-  stalledAt?: Date | string | null;
-}): TaskHumanLabel {
+// No scheduler watches this state; detectStalls scans only `in_progress`.
+export const DEFAULT_UNSTARTED_AFTER_MS = 4 * 60 * 60 * 1000;
+
+export function humanizeTaskStatus(
+  task: {
+    status: TaskStatus;
+    autoAssign?: boolean;
+    assignedTo?: string | null;
+    stalledAt?: Date | string | null;
+    updatedAt?: Date | string | null;
+  },
+  opts: { unstartedAfterMs?: number } = {},
+): TaskHumanLabel {
   switch (task.status) {
     case "proposed":    return "Proposed";
     case "pending":     return task.autoAssign ? "Queued" : "Unassigned";
-    case "assigned":    return "Starting";
+    case "assigned":    return unstarted(task, opts) ? "Not picked up" : "Starting";
     case "in_progress": return task.stalledAt ? "Stalled" : "Running";
     case "pending_verification": return "Verifying";
     case "blocked":     return "Input required";
     case "completed":   return "Done";
     case "cancelled":   return "Cancelled";
   }
+}
+
+// Fails closed on a missing or unparseable timestamp, because NaN >= n is false.
+function unstarted(
+  task: { updatedAt?: Date | string | null },
+  opts: { unstartedAfterMs?: number },
+): boolean {
+  if (!task.updatedAt) return false;
+  return Date.now() - new Date(task.updatedAt).getTime() >= (opts.unstartedAfterMs ?? DEFAULT_UNSTARTED_AFTER_MS);
 }

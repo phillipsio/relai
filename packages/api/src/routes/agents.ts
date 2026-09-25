@@ -258,7 +258,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       // An assigned task with a null assignee is unreachable, so anything still
       // in flight goes back to the queue rather than being stranded.
       await tx.update(tasks)
-        .set({ status: "pending", assignedTo: null, autoAssign: true })
+        .set({ status: "pending", assignedTo: null, autoAssign: true, updatedAt: new Date() })
         .where(and(
           eq(tasks.assignedTo, agentId),
           inArray(tasks.status, ["assigned", "in_progress", "blocked", "pending_verification"]),

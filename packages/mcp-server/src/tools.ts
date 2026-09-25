@@ -238,7 +238,10 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
       description:
         "Retrieve tasks assigned to this agent. Use this at the start of a session or when you want " +
         "to know what work is queued for you. Returns tasks with status 'assigned' or 'in_progress'. " +
-        "Always call this before starting new work so you don't duplicate effort.",
+        "Always call this before starting new work so you don't duplicate effort. " +
+        "humanLabel 'Not picked up' means this task was assigned to you hours ago and nothing has " +
+        "touched it since — the assignment notice never reached you. Start it now, or say on its " +
+        "thread why you are not going to.",
       inputSchema: z.object({
         status: z
           .enum(["assigned", "in_progress", "pending", "all"])
@@ -545,7 +548,8 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
       description:
         "Get a single bundled snapshot of your current state in this repo: your identity, the " +
         "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +
-        "human-readable label like 'Running' / 'Stalled' / 'Input required'), unread messages " +
+        "human-readable label like 'Running' / 'Stalled' / 'Input required'; 'Not picked up' means " +
+        "you were assigned that task hours ago and never started it, so start it or say why not), unread messages " +
         "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
         "start of every session — it replaces the get_my_tasks + get_unread_messages + list_threads " +
         "calls you would otherwise need to orient yourself, and includes context those tools don't " +
@@ -588,7 +592,9 @@ export function buildTools(client: ApiClient, agentId: string, repoId: string) {
         "Prefer get_my_tasks when you only need your own work queue. " +
         "Returns the most recently updated tasks first, capped, with descriptions clipped — " +
         "a whole repo does not fit in one response. taskCount is the true total; raise `limit` " +
-        "or filter by `status` to see more, and read a clipped task in full with get_task.",
+        "or filter by `status` to see more, and read a clipped task in full with get_task. " +
+        "humanLabel 'Not picked up' means the assignee has not touched that task since it was " +
+        "assigned hours ago: that agent is not acting on it, whatever its online flag says.",
       inputSchema: z.object({
         status: z
           .string()

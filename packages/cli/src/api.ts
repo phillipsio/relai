@@ -244,7 +244,7 @@ export interface SessionStart {
     defaultAssignee: string | null;
   };
   tasks: Array<TaskRow & {
-    humanLabel: "Queued" | "Unassigned" | "Starting" | "Running" | "Stalled" | "Input required" | "Done" | "Cancelled";
+    humanLabel: "Proposed" | "Queued" | "Unassigned" | "Starting" | "Not picked up" | "Running" | "Stalled" | "Verifying" | "Input required" | "Done" | "Cancelled";
     stalledAt?: string | null;
   }>;
   taskCount?: number;

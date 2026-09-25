@@ -5,9 +5,9 @@ import {
   artifacts, artifactVersions, artifactReads,
   type Db,
 } from "@getrelai/db";
-import { humanizeTaskStatus } from "@getrelai/types";
 import { dmEventFilter } from "../lib/dm.js";
 import { clip, clipMetadata } from "../lib/payload.js";
+import { taskLabel, unstartedFirst } from "../lib/task-label.js";
 import { unreadFilter } from "../lib/unread.js";
 
 // How many recent events the snapshot carries. Kept small (and each event
@@ -81,7 +81,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         inArray(tasks.status, ["pending", "assigned", "in_progress", "blocked"]),
         isNull(tasks.archivedAt),
       ))
-      .orderBy(desc(tasks.updatedAt))
+      .orderBy(unstartedFirst(), desc(tasks.updatedAt))
       .limit(TASK_LIMIT);
 
     const [{ value: taskCount }] = await db
@@ -100,7 +100,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
         ...t,
         description:    desc.text,
         metadata:       clipMetadata(t.metadata, TASK_META_CHARS),
-        humanLabel:     humanizeTaskStatus(t),
+        humanLabel:     taskLabel(t),
         ...(desc.truncated ? { truncated: true, descriptionLength: t.description.length } : {}),
       };
     });

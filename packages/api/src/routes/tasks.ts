@@ -8,6 +8,7 @@ import { publish, ensureSubscription } from "../lib/events.js";
 import { assertRepoAccess, threadOwnableByRepo } from "../lib/ownership.js";
 import { verifyTask, resetRouteLogs } from "../lib/router/scheduler.js";
 import { clip, clipMetadata } from "../lib/payload.js";
+import { taskLabel, unstartedFirst } from "../lib/task-label.js";
 import type { Db } from "@getrelai/db";
 import type { TaskStatus } from "@getrelai/types";
 
@@ -111,7 +112,7 @@ async function ensureTaskThread(db: Db, task: typeof tasks.$inferSelect) {
     ? { ...meta, threadRelinked: { from: relinkedFrom.id, fromRepoId: relinkedFrom.repoId, wasDm: relinkedFrom.type === "dm", at: new Date().toISOString() } }
     : meta;
   const [linked] = await db.update(tasks)
-    .set({ threadId: thread.id, ...(relinkedFrom ? { metadata: auditedMeta } : {}), updatedAt: new Date() })
+    .set({ threadId: thread.id, ...(relinkedFrom ? { metadata: auditedMeta } : {}) })
     .where(eq(tasks.id, task.id))
     .returning();
 
@@ -470,24 +471,25 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       if (limit !== undefined) {
         const [{ value }] = await db.select({ value: count() }).from(tasks).where(where);
         total = value;
-        query = query.orderBy(desc(tasks.updatedAt), desc(tasks.id)).limit(limit);
+        query = query.orderBy(unstartedFirst(), desc(tasks.updatedAt), desc(tasks.id)).limit(limit);
       }
       const rows = await query;
       if (total === undefined) total = rows.length;
 
-      const data = shouldClip
-        ? rows.map((t) => {
-            const description = clip(t.description, descChars());
-            return {
-              ...t,
-              description: description.text,
-              metadata: clipMetadata(t.metadata, metaChars()),
-              ...(description.truncated
-                ? { truncated: true, descriptionLength: t.description.length }
-                : {}),
-            };
-          })
-        : rows;
+      // Labelled outside the clip branch: get_my_tasks does not pass clip=true.
+      const data = rows.map((t) => {
+        const labelled = { ...t, humanLabel: taskLabel(t) };
+        if (!shouldClip) return labelled;
+        const description = clip(t.description, descChars());
+        return {
+          ...labelled,
+          description: description.text,
+          metadata: clipMetadata(t.metadata, metaChars()),
+          ...(description.truncated
+            ? { truncated: true, descriptionLength: t.description.length }
+            : {}),
+        };
+      });
 
       return { data, meta: { total, returned: data.length } };
     }
@@ -496,7 +498,7 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
   fastify.get<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
     const result = await loadTaskScoped(request, db, request.params.id, { allowAuthor: true });
     if (!result.ok) return reply.status(result.status).send({ error: { code: "not_found", message: "Task not found" } });
-    return { data: result.task };
+    return { data: { ...result.task, humanLabel: taskLabel(result.task) } };
   });
 
   // Archive a terminal task out of the default live views. Orthogonal to status:

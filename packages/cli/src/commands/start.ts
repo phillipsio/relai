@@ -7,6 +7,7 @@ const LABEL_COLOR: Record<string, (s: string) => string> = {
   "Running":         chalk.cyan,
   "Stalled":         chalk.red,
   "Starting":        chalk.blue,
+  "Not picked up":   chalk.red,
   "Input required":  chalk.yellow,
   "Queued":          chalk.dim,
   "Unassigned":      chalk.dim,

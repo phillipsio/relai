@@ -151,7 +151,7 @@ export async function routePendingTasks(db: Db, repoId: string): Promise<void> {
     }
 
     resetRouteLogs(task.id);
-    await db.update(tasks).set({ status: "assigned", assignedTo: result.agentId }).where(eq(tasks.id, task.id));
+    await db.update(tasks).set({ status: "assigned", assignedTo: result.agentId, updatedAt: new Date() }).where(eq(tasks.id, task.id));
     await db.insert(routingLog).values({
       id: newId("route"),
       taskId: task.id,
@@ -230,6 +230,7 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
       console.log(`[scheduler] Human replied to blocked task ${task.id} — resuming`);
       await db.update(tasks).set({
         status: "assigned",
+        updatedAt: new Date(),
         metadata: { ...meta, humanReply: humanReply.body, humanRepliedAt: humanReply.createdAt },
       }).where(eq(tasks.id, task.id));
       continue;
@@ -239,6 +240,7 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
       console.log(`[scheduler] ${agentReply.fromAgent} answered blocked task ${task.id} — resuming`);
       await db.update(tasks).set({
         status: "assigned",
+        updatedAt: new Date(),
         metadata: {
           ...meta,
           agentReply: {
@@ -276,7 +278,7 @@ export async function watchBlockedTasks(db: Db, repoId: string): Promise<void> {
     );
 
     await db.update(tasks)
-      .set({ ...(releasing ? { status: "assigned" as const } : {}), metadata: nextMeta })
+      .set({ ...(releasing ? { status: "assigned" as const, updatedAt: new Date() } : {}), metadata: nextMeta })
       .where(eq(tasks.id, task.id));
 
     await publish(db, {
@@ -329,6 +331,7 @@ export async function reapStalledTasks(db: Db, repoId: string): Promise<void> {
         .set({
           status:    "blocked",
           blockedAt: new Date(),
+          updatedAt: new Date(),
           metadata:  {
             ...meta,
             blockedReason: `Stalled ${STALLED_MAX_RELEASES} time(s) after re-queueing; no worker completed it.`,
@@ -358,6 +361,7 @@ export async function reapStalledTasks(db: Db, repoId: string): Promise<void> {
         status:      "pending",
         autoAssign:  true,
         assignedTo:  null,
+        updatedAt:   new Date(),
         // Cleared, or a re-queued task that stalls again is never re-detected.
         stalledAt:   null,
         metadata: {

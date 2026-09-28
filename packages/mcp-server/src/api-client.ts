@@ -66,6 +66,15 @@ export class ApiClient {
     return this.request<{ id: string; name: string; ownerId: string | null }>("POST", "/repos", body);
   }
 
+  // Used at startup to decide whether this credential carries owner scope. The
+  // `current` flag marks the row that authenticated the request, which is the
+  // only row that answers the question.
+  listAgentTokens(agentId: string) {
+    return this.request<Array<{ id: string; ownerScoped: boolean; current: boolean | null }>>(
+      "GET", `/agents/${agentId}/tokens`,
+    );
+  }
+
   listInvites(repoId: string) {
     return this.request<Array<{ id: string; acceptedAt: string | null; expiresAt: string }>>(
       "GET", `/repos/${repoId}/invites`,

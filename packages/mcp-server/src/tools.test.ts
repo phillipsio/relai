@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildTools, buildOperatorTools } from "./tools.js";
+import { buildTools, buildOperatorTools, selectTools } from "./tools.js";
 import type { ApiClient } from "./api-client.js";
 
 const AGENT_ID = "agent_test";
@@ -511,6 +511,81 @@ describe("add_task_comment", () => {
     const tools = buildTools(mockClient({ addTaskComment }), AGENT_ID, REPO_ID);
     await getHandler(tools, "add_task_comment")({ taskId: "task_9", body: "note" });
     expect(addTaskComment).toHaveBeenCalledWith("task_9", { body: "note", type: undefined });
+  });
+});
+
+describe("an owner-scoped agent gets the provisioning tools ON TOP of its own", () => {
+  // The seam the owner-credential work left open: tokens.ownerId decided
+  // authority at the API, and the MCP server still chose its toolset from an
+  // env var, so the credential granted access the model could not reach.
+  // NOT invite_agent. It is the only one of the six that mints a bearer
+  // credential, and agent mode reaches `claude --print
+  // --dangerously-skip-permissions` (claude-worker/src/session.ts:55), where no
+  // human confirms a call and peer text arrives through get_unread_messages.
+  const PROVISIONING = ["create_repo", "list_invites", "revoke_invite", "list_repos"];
+  // These assume no agent identity — no heartbeat, no home repo — and
+  // buildOperatorTools' create_task bypasses propose/commit, which an
+  // owner-scoped WORKER is not entitled to. They stay in owner mode.
+  const OPERATOR_ONLY = ["reply_human", "review_task", "commit_proposal", "list_attention"];
+
+  it("adds nothing for an ordinary agent, so the default path is untouched", () => {
+    const names = buildTools(mockClient(), AGENT_ID, REPO_ID).map((t) => t.name);
+    for (const n of PROVISIONING) expect(names).not.toContain(n);
+  });
+
+  it("adds exactly the five when the credential is owner-scoped", () => {
+    const plain = buildTools(mockClient(), AGENT_ID, REPO_ID).map((t) => t.name);
+    const scoped = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
+    expect(scoped.filter((n) => !plain.includes(n)).sort()).toEqual([...PROVISIONING].sort());
+  });
+
+  it("takes nothing away, because it is still an agent", () => {
+    // Swapping onto the operator toolset would drop these, which is why the
+    // shape is additive rather than a swap.
+    const scoped = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
+    const plain = buildTools(mockClient(), AGENT_ID, REPO_ID).map((t) => t.name);
+    for (const n of plain) expect(scoped).toContain(n);
+    for (const n of ["session_start", "get_my_tasks", "send_message", "create_task"]) {
+      expect(scoped).toContain(n);
+    }
+  });
+
+  it("does not hand over the operator-only verbs", () => {
+    const scoped = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
+    for (const n of OPERATOR_ONLY) expect(scoped).not.toContain(n);
+  });
+
+  it("shares the operator implementations rather than copying them", () => {
+    // Two copies of a provisioning verb drift, and the API enforces scope per
+    // call, so one implementation can serve both modes safely.
+    const client = mockClient();
+    const fromOperator = new Map(buildOperatorTools(client, "usr_1").map((t) => [t.name, t]));
+    const fromAgent = new Map(
+      buildTools(client, AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => [t.name, t]),
+    );
+    for (const n of PROVISIONING) {
+      expect(fromAgent.get(n)!.description).toBe(fromOperator.get(n)!.description);
+      expect(Object.keys((fromAgent.get(n)!.inputSchema as any).shape).sort())
+        .toEqual(Object.keys((fromOperator.get(n)!.inputSchema as any).shape).sort());
+    }
+  });
+
+  it("withholds the one verb that mints a credential", () => {
+    // Before this change NO agent-mode tool took a repoId from the model: every
+    // repoId inside buildTools was the closure constant, so the model's reach
+    // was one repo even when the credential's was not. That gap was doing real
+    // work against prompt injection, and invite_agent would have ended it by
+    // handing an injected turn a redeemable code for any repo the owner owns —
+    // redeemable at POST /auth/accept-invite, which needs no token at all.
+    const scoped = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
+    expect(scoped).not.toContain("invite_agent");
+    // Owner mode keeps it: a human drives that surface.
+    expect(buildOperatorTools(mockClient(), "usr_1").map((t) => t.name)).toContain("invite_agent");
+  });
+
+  it("registers no duplicate names, which would break registration outright", () => {
+    const names = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
+    expect(names.length).toBe(new Set(names).size);
   });
 });
 
@@ -1389,3 +1464,76 @@ describe("assign_task", () => {
   });
 });
 
+
+describe("selectTools maps a config shape to a toolset", () => {
+  // The line index.ts used to hold inline. It decided the provisioning tools
+  // did not exist for an owner-scoped agent while every test of the builders
+  // passed, because nothing tested the selection itself.
+  const names = (config: Parameters<typeof selectTools>[1]) =>
+    selectTools(mockClient(), config).map((t) => t.name);
+
+  it("owner mode gets the operator toolset and no agent identity tools", () => {
+    const n = names({ ownerMode: true, ownerId: "usr_1" });
+    expect(n).toContain("reply_human");
+    expect(n).toContain("create_repo");
+    expect(n).not.toContain("session_start");
+  });
+
+  it("an ordinary agent config gets the agent toolset and no provisioning verbs", () => {
+    const n = names({ ownerMode: false, agentId: AGENT_ID, repoId: REPO_ID });
+    expect(n).toContain("session_start");
+    expect(n).not.toContain("create_repo");
+    expect(n).not.toContain("invite_agent");
+  });
+
+  it("AN OWNER-SCOPED AGENT CONFIG GETS BOTH, which is the whole fix", () => {
+    const n = names({ ownerMode: false, agentId: AGENT_ID, repoId: REPO_ID, ownerScoped: true });
+    expect(n).toContain("session_start");
+    expect(n).toContain("get_my_tasks");
+    expect(n).toContain("create_repo");
+    expect(n).not.toContain("invite_agent");
+    expect(n).toContain("list_repos");
+    // Still not the operator-only verbs.
+    expect(n).not.toContain("reply_human");
+  });
+
+  it("owner mode ignores ownerScoped, so the two paths cannot be confused", () => {
+    expect(names({ ownerMode: true, ownerId: "usr_1", ownerScoped: true }))
+      .toEqual(names({ ownerMode: true, ownerId: "usr_1" }));
+  });
+});
+
+describe("what these tools hand back to the model", () => {
+  it("list_repos does not carry a git remote's embedded credentials", async () => {
+    // repoUrlSchema explicitly validates url.username, so https://user:tok@host
+    // is a supported value, and verify-git-pushed.ts already scrubs exactly this
+    // shape before it reaches verification_log because it is a secret. GET /repos
+    // returns the bare row, and no agent-mode tool returned a repo row before now.
+    const listRepos = vi.fn().mockResolvedValue([
+      { id: "repo_1", name: "a", repoUrl: "https://x-access-token:ghp_SECRETVALUE@github.com/o/r.git" },
+      { id: "repo_2", name: "b", repoUrl: "ssh://git@github.com/o/r2.git" },
+    ]);
+    const tools = buildOperatorTools(mockClient({ listRepos }), "usr_1");
+    const text = (await getHandler(tools, "list_repos")({})).content[0].text;
+    expect(text).not.toContain("ghp_SECRETVALUE");
+    expect(text).not.toContain("x-access-token");
+    // The remote is still identifiable, which is what it is for.
+    expect(text).toContain("github.com/o/r.git");
+    expect(text).toContain("ssh://git@github.com/o/r2.git");
+  });
+
+  it("list_invites marks peer-authored text as peer-authored", async () => {
+    // suggestedName is free text any member of any of the owner's repos can
+    // write, and it lands in a turn that also holds create_repo.
+    const listInvites = vi.fn().mockResolvedValue([{ id: "invite_1", suggestedName: "hi" }]);
+    const tools = buildOperatorTools(mockClient({ listInvites }), "usr_1");
+    const text = (await getHandler(tools, "list_invites")({ repoId: "r" })).content[0].text;
+    expect(text).toContain("peerBoundary");
+  });
+
+  it("says nothing about peers when there are no invites", async () => {
+    const tools = buildOperatorTools(mockClient({ listInvites: vi.fn().mockResolvedValue([]) }), "usr_1");
+    const text = (await getHandler(tools, "list_invites")({ repoId: "r" })).content[0].text;
+    expect(text).not.toContain("peerBoundary");
+  });
+});

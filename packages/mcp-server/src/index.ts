@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { createMcpServer } from "./create-server.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ApiClient } from "./api-client.js";
-import { buildTools, buildOperatorTools } from "./tools.js";
+import type { ToolConfig } from "./tools.js";
+import { registerTools } from "./register-tools.js";
 import { diffAttention, type AttentionState, type WatchTask } from "./owner-watch.js";
 import { assertRepoMatch } from "./repo-guard.js";
 
@@ -71,14 +72,14 @@ const apiClient = new ApiClient({
 
 const server = createMcpServer(OWNER_MODE ? "relai-operator" : "relai", pkg.version);
 
-// Register tools for the active mode.
-const tools = OWNER_MODE
-  ? buildOperatorTools(apiClient, OWNER_ID)
-  : buildTools(apiClient, AGENT_ID!, REPO_ID!);
-
-for (const tool of tools) {
-  server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);
-}
+// Register tools for the active mode. In agent mode the CREDENTIAL decides
+// whether the provisioning verbs appear, not the environment: tokens.ownerId
+// exists so possession determines authority, and choosing the toolset from an
+// env var left that true at the API and false at the layer the model uses.
+// Awaited before connect, bounded, and fails closed — see owner-scope.ts.
+const toolConfig: ToolConfig = OWNER_MODE
+  ? { ownerMode: true, ownerId: OWNER_ID }
+  : { ownerMode: false, agentId: AGENT_ID!, repoId: REPO_ID! };
 
 // No agent identity here, so heartbeat does not apply but attention does:
 // without this the console saw only what the operator thought to ask for.
@@ -199,6 +200,9 @@ async function assertRepoOrExit() {
 // Transport
 async function main() {
   await assertRepoOrExit();
+  // Before connect: a client that connects first would see whatever was
+  // registered at that instant.
+  await registerTools(server, apiClient, toolConfig);
   if (TRANSPORT === "stdio") {
     const transport = new StdioServerTransport();
     await server.connect(transport);

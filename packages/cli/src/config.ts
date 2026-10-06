@@ -75,6 +75,7 @@ export function readConfig(): Config | null {
 // chmod it, which silently diverged whenever PITBOSS_CONFIG_DIR was set.
 export function writeConfig(config: Config): string {
   const file = configPath();
+  const migrating = !existsSync(file);
   mkdirSync(dirname(file), { recursive: true });
   // Temp-then-rename, never a direct write: a plain write follows a symlink, and
   // writeFileSync's mode is ignored when the path already exists. `wx` refuses a
@@ -82,7 +83,7 @@ export function writeConfig(config: Config): string {
   const tmp = `${file}.relai-${randomBytes(8).toString("hex")}`;
   writeFileSync(tmp, JSON.stringify(config, null, 2), { mode: 0o600, flag: "wx" });
   renameSync(tmp, file);
-  retireLegacy(legacyHomePath("config.json"), file, configOverridden());
+  if (migrating) retireLegacy(legacyHomePath("config.json"), file, configOverridden());
   return file;
 }
 

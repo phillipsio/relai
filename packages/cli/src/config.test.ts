@@ -239,6 +239,18 @@ describe("config", () => {
       expect(configPath()).toBe(newFile());
     });
 
+    it("removes the legacy file only on the write that migrates, not on later writes", () => {
+      delete process.env.PITBOSS_CONFIG_DIR;
+      writeConfig({ ...sample, agentName: "current" });
+      process.env.PITBOSS_CONFIG_DIR = join(fakeHome, ".config", "relai");
+      writeConfig({ ...sample, agentName: "written-by-an-old-cli" });
+      delete process.env.PITBOSS_CONFIG_DIR;
+
+      writeConfig({ ...sample, agentName: "rotated" });
+
+      expect(JSON.parse(readFileSync(legacyFile(), "utf-8")).agentName).toBe("written-by-an-old-cli");
+    });
+
     it("protects the legacy file when only RELAI_CONFIG_DIR is set", () => {
       plantLegacy("legacy");
       process.env.RELAI_CONFIG_DIR = configDir;

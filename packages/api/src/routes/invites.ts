@@ -71,8 +71,8 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     }
 
     // Deliberately NOT gated on whether the repo already has an orchestrator:
-    // redemption is (agents_one_orchestrator_per_repo, enforced below), but a
-    // pre-minted orchestrator invite held in reserve is the one in-band
+    // redemption is gated (agents_one_orchestrator_per_repo, enforced below),
+    // but a pre-minted orchestrator invite held in reserve is the one in-band
     // recovery path if the incumbent is ever deleted (DELETE /agents/:id
     // refuses removing a repo's sole orchestrator on the agent-token path for
     // exactly this reason) — gating creation here would remove that.

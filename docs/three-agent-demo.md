@@ -14,9 +14,9 @@ The point isn't production realism — it's a tight feedback loop that exercises
 
 | Identity   | Working directory                       | Config dir                          |
 | ---------- | --------------------------------------- | ----------------------------------- |
-| Orchestrator (you)  | `~/PhpstormProjects/relai` (this repo) | `~/.config/relai`                   |
-| Worker     | `~/clones/relai-worker` (fresh clone)   | `~/.config/relai-worker`            |
-| Reviewer   | anywhere (no repo needed)               | `~/.config/relai-reviewer`          |
+| Orchestrator (you)  | `~/PhpstormProjects/relai` (this repo) | `~/.config/pitboss`                   |
+| Worker     | `~/clones/relai-worker` (fresh clone)   | `~/.config/pitboss-worker`            |
+| Reviewer   | anywhere (no repo needed)               | `~/.config/pitboss-reviewer`          |
 
 The reviewer doesn't need a clone — they only need a CLI identity to call `relai task review`. They read diffs out of the **worker's** clone path directly (`~/clones/relai-worker`).
 
@@ -56,18 +56,18 @@ relai repo invite -n claude-reviewer -s reviewer --ttl 1h
 ```bash
 git clone <this-repo> ~/clones/relai-worker
 cd ~/clones/relai-worker
-RELAI_CONFIG_DIR=~/.config/relai-worker \
+PITBOSS_CONFIG_DIR=~/.config/pitboss-worker \
   relai login --invite <worker-code> --api http://localhost:3010
 ```
 
 ### 5. Reviewer identity (no clone)
 
 ```bash
-RELAI_CONFIG_DIR=~/.config/relai-reviewer \
+PITBOSS_CONFIG_DIR=~/.config/pitboss-reviewer \
   relai login --invite <reviewer-code> --api http://localhost:3010
 ```
 
-Confirm: `RELAI_CONFIG_DIR=~/.config/relai-reviewer relai status` shows the reviewer agent.
+Confirm: `PITBOSS_CONFIG_DIR=~/.config/pitboss-reviewer relai status` shows the reviewer agent.
 
 ---
 
@@ -79,9 +79,9 @@ In a dedicated terminal:
 
 ```bash
 cd ~/clones/relai-worker
-RELAI_CONFIG_DIR=~/.config/relai-worker \
-  AGENT_ID=$(jq -r .agentId ~/.config/relai-worker/config.json) \
-  REPO_ID=$(jq -r .repoId ~/.config/relai-worker/config.json) \
+PITBOSS_CONFIG_DIR=~/.config/pitboss-worker \
+  AGENT_ID=$(jq -r .agentId ~/.config/pitboss-worker/config.json) \
+  REPO_ID=$(jq -r .repoId ~/.config/pitboss-worker/config.json) \
   CLAUDE_WORKER_SPECIALIZATION=writer \
   pnpm --filter @getrelai/claude-worker dev
 ```
@@ -124,11 +124,11 @@ git diff main      # or whatever base branch the worker created from
 Decide, then:
 
 ```bash
-RELAI_CONFIG_DIR=~/.config/relai-reviewer \
+PITBOSS_CONFIG_DIR=~/.config/pitboss-reviewer \
   relai task review <task-id> --decision approve
 
 # or
-RELAI_CONFIG_DIR=~/.config/relai-reviewer \
+PITBOSS_CONFIG_DIR=~/.config/pitboss-reviewer \
   relai task review <task-id> --decision reject \
   --note "missing tests for the misconfigured-row branch"
 ```

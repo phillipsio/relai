@@ -60,7 +60,7 @@ describe("runtimeTargets", () => {
   });
 
   it("falls back to the CLI's own config for a generic MCP client", () => {
-    expect(runtimeTargets("mcp", { home, repo })).toEqual(["/home/jim/.config/relai/config.json"]);
+    expect(runtimeTargets("mcp", { home, repo })).toEqual(["/home/jim/.config/pitboss/config.json"]);
   });
 
   it("names a target for every runtime it offers, so none can be silently skipped", () => {
@@ -164,6 +164,10 @@ describe("allRuntimeTargets", () => {
   it("lists each path once even where two runtimes share one", () => {
     const targets = allRuntimeTargets({ home: "/home/jim", repo: "/home/jim/code/app" });
     expect(new Set(targets).size).toBe(targets.length);
+  });
+
+  it("still scans the legacy ~/.config/relai config, where pre-0.2 joins left tokens", () => {
+    expect(allRuntimeTargets({ home: "/home/jim", repo: "/home/jim/code/app" })).toContain("/home/jim/.config/relai/config.json");
   });
 
   it("includes ~/.claude.json, which the CLI's own invite snippet tells people to use", () => {

@@ -62,7 +62,7 @@ Walk through the prompts:
 - **Agent name:** e.g. `jim-host`
 - **Specialization:** `architect` or whatever fits
 
-After this, `~/.config/relai/config.json` holds your per-agent token. The admin secret is no longer needed for day-to-day calls.
+After this, `~/.config/pitboss/config.json` holds your per-agent token. The admin secret is no longer needed for day-to-day calls.
 
 If you also want to drive relai from this machine via Claude Code (recommended), copy the printed MCP snippet into your repo's `.mcp.json`.
 
@@ -96,7 +96,7 @@ Prompts:
 - **Agent name:** their choice (the suggestion you set is the default)
 - **Specialization:** their choice
 
-This creates an agent record in your repo, mints a per-agent token for them, and writes `~/.config/relai/config.json` on their machine. They never see your admin secret.
+This creates an agent record in your repo, mints a per-agent token for them, and writes `~/.config/pitboss/config.json` on their machine. They never see your admin secret.
 
 ## 6. Coworker side — wire up MCP
 
@@ -134,13 +134,13 @@ relai token revoke <coworker's token id>   # optional
 docker compose down                                                  # stops Postgres
 
 # Coworker
-rm ~/.config/relai/config.json
+rm ~/.config/pitboss/config.json
 # Remove the relai entry from their .mcp.json
 ```
 
 ## Solo test (fake the second person)
 
-If you don't have a real coworker on hand, you can play both sides from the same machine. The CLI honors `RELAI_CONFIG_DIR` so two terminals can hold different agent identities side by side.
+If you don't have a real coworker on hand, you can play both sides from the same machine. The CLI honors `PITBOSS_CONFIG_DIR` so two terminals can hold different agent identities side by side.
 
 ```bash
 # Terminal A — "host" identity, default config dir
@@ -150,7 +150,7 @@ relai repo invite --name fake-coworker --ttl 3600
 # Copy the printed `relai login --invite ...` line.
 
 # Terminal B — "coworker" identity, separate config dir
-export RELAI_CONFIG_DIR=/tmp/relai-coworker
+export PITBOSS_CONFIG_DIR=/tmp/relai-coworker
 relai login --invite inv_<...> --api http://localhost:3010
 # Walk through the prompts as the imaginary coworker.
 ```
@@ -166,7 +166,7 @@ This validates the full auth + invite + per-agent-token + event-fan-out path; on
 
 ## Solo test, multi-identity via git worktrees (closer to a real two-person setup)
 
-`RELAI_CONFIG_DIR` isolates the CLI config but **doesn't isolate `.mcp.json`** — every Claude Code session opened in this checkout reads the same repo-level `.mcp.json` and so picks up the same agent token. Worker processes also share the working tree, so file edits race.
+`PITBOSS_CONFIG_DIR` isolates the CLI config but **doesn't isolate `.mcp.json`** — every Claude Code session opened in this checkout reads the same repo-level `.mcp.json` and so picks up the same agent token. Worker processes also share the working tree, so file edits race.
 
 Git worktrees fix this without needing a second machine. Each identity gets its own checkout (own `.mcp.json`, own working tree) but everyone hits the same shared API and DB.
 
@@ -186,7 +186,7 @@ cd ../relai-bob
 
 # Optional but recommended: keep their CLI config separate too, so `relai` from
 # this terminal won't see the host's identity if you cd around.
-export RELAI_CONFIG_DIR=$PWD/.relai-config
+export PITBOSS_CONFIG_DIR=$PWD/.relai-config
 
 # Get an invite from the host terminal:
 #   (in main checkout) relai repo invite --name bob --ttl 3600

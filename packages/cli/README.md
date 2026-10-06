@@ -38,7 +38,7 @@ relai login --invite inv_<code> --api <https://your-relai-host>
 If you're standing one up yourself, see the [main repo](https://github.com/phillipsio/relai) for setup; then:
 
 ```bash
-relai init   # guided setup — saves config to ~/.config/relai/config.json
+relai init   # guided setup — saves config to ~/.config/pitboss/config.json
 ```
 
 After either path, `relai init` / `relai login` prints a ready-to-paste `mcpServers` block — drop it into your project's `.mcp.json` (or `~/.claude.json`) so your AI agent (Claude Code, Cursor, Copilot, etc.) can use the relai tools directly.
@@ -117,16 +117,16 @@ relai token revoke <tokenId>        Revoke a specific token
 
 ## Multi-identity
 
-Set `RELAI_CONFIG_DIR` to override the config location and run multiple agent identities side by side from one machine:
+Set `PITBOSS_CONFIG_DIR` to override the config location and run multiple agent identities side by side from one machine:
 
 ```bash
-export RELAI_CONFIG_DIR=/tmp/relai-coworker
+export PITBOSS_CONFIG_DIR=/tmp/relai-coworker
 relai login --invite inv_<...>
 ```
 
 ## Config
 
-`~/.config/relai/config.json` (or `$RELAI_CONFIG_DIR/config.json`):
+`~/.config/pitboss/config.json` (or `$PITBOSS_CONFIG_DIR/config.json`):
 
 ```json
 {

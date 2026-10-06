@@ -94,7 +94,7 @@ export async function loginCommand(opts: {
   const existing = readConfig();
   if (existing && opts.invite) {
     console.log(chalk.yellow(`\nAlready logged in as ${chalk.bold(existing.agentName)} (${existing.agentId})`));
-    console.log(chalk.dim("Delete ~/.config/relai/config.json to re-login.\n"));
+    console.log(chalk.dim("Delete ~/.config/pitboss/config.json to re-login.\n"));
     return;
   }
 

@@ -42,15 +42,18 @@ beforeAll(async () => {
   repoA = await mkRepo("__test__ boundary A");
   repoB = await mkRepo("__test__ boundary B");
 
-  const mkAgent = async (repoId: string, name: string) => {
+  const mkAgent = async (repoId: string, name: string, role: "orchestrator" | "worker" = "orchestrator") => {
     const a = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ repoId, name, role: "orchestrator" }),
+      body: JSON.stringify({ repoId, name, role }),
     });
     return { id: a.json().data.id as string, token: a.json().token as string };
   };
   ({ id: alice, token: aliceTok } = await mkAgent(repoA, "boundary-alice"));
-  ({ id: bob, token: bobTok } = await mkAgent(repoA, "boundary-bob"));
+  // Worker, not orchestrator: repoA already has one (alice), and
+  // agents_one_orchestrator_per_repo allows only one. Bob's role is
+  // incidental here — he's only ever the other DM participant.
+  ({ id: bob, token: bobTok } = await mkAgent(repoA, "boundary-bob", "worker"));
   ({ id: carol } = await mkAgent(repoB, "boundary-carol"));
 });
 

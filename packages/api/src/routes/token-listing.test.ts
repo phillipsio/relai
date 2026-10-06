@@ -186,12 +186,22 @@ describe("the listing carries no secret material", () => {
 
 describe("the gate is the one rotation and revocation already use", () => {
   it("lets an orchestrator read a worker's tokens in its own repo", async () => {
-    const orch = await mk("orchestrator");
-    const worker = await mk();
+    // Own repo, not the shared one — "marks nothing when an orchestrator
+    // reads someone else's list" above already put an orchestrator in
+    // repoId, and agents_one_orchestrator_per_repo allows only one.
+    const ownRepoId = (await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ token-listing own-repo" }),
+    })).json().data.id as string;
+
+    const orch = await mk("orchestrator", ownRepoId);
+    const worker = await mk("worker", ownRepoId);
 
     const res = await list(worker.id, as(orch.token));
     expect(res.statusCode).toBe(200);
     expect((res.json().data as unknown[]).length).toBe(1);
+
+    await app.inject({ method: "DELETE", url: `/repos/${ownRepoId}`, headers: ADMIN });
   });
 
   it("refuses a peer worker in the same repo", async () => {

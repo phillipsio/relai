@@ -146,20 +146,43 @@ describe("the invite pins the role, the accepter does not choose it", () => {
 
   // Mutation testing gap: this is the only case where reading the body instead
   // of the invite diverges, and it is the path `relai login` now takes.
+  //
+  // Each redeems the invite into a real orchestrator-role agent, which the
+  // shared `repoId` above can no longer hold a second of
+  // (agents_one_orchestrator_per_repo) — "role-orch" already lives there.
+  // Scoped to a fresh repo instead of the two tests colliding with it.
   it("grants orchestrator when the accepter omits the role on an orchestrator invite", async () => {
-    const inv = await newInvite(ADMIN, { role: "orchestrator" });
+    const scopedRepoId = (await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ roles silent-orch" }),
+    })).json().data.id as string;
+    const inv = await app.inject({
+      method: "POST", url: `/repos/${scopedRepoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ role: "orchestrator" }),
+    });
     const res = await accept({ code: inv.json().code, name: "silent-orch", workerType: "human" });
 
     expect(res.statusCode).toBe(201);
     expect(res.json().data.role).toBe("orchestrator");
+
+    await app.inject({ method: "DELETE", url: `/repos/${scopedRepoId}`, headers: ADMIN });
   });
 
   it("carries an orchestrator invite through to the registered agent", async () => {
-    const inv = await newInvite(ADMIN, { role: "orchestrator" });
+    const scopedRepoId = (await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ roles real-orch" }),
+    })).json().data.id as string;
+    const inv = await app.inject({
+      method: "POST", url: `/repos/${scopedRepoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ role: "orchestrator" }),
+    });
     const res = await accept({ code: inv.json().code, name: "real-orch", role: "orchestrator" });
 
     expect(res.statusCode).toBe(201);
     expect(res.json().data.role).toBe("orchestrator");
+
+    await app.inject({ method: "DELETE", url: `/repos/${scopedRepoId}`, headers: ADMIN });
   });
 });
 
@@ -190,13 +213,18 @@ describe("the shell-predicate gate is sound once roles cannot be self-granted", 
 
 // The premise the block above assumed and never checked: POST /agents was
 // gated, the rotate and delete routes beside it were not.
+//
+// The victim here is a worker, not an orchestrator: agents_one_orchestrator_per_repo
+// means repoId (which already holds "role-orch") cannot hold a second one, and
+// none of the assertions below are actually role-specific — callerMayActOnAgent
+// gates on the CALLER's role and repo, not the target's.
 describe("a worker cannot mint or destroy another agent's token", () => {
   let victimOrchId: string;
 
   beforeAll(async () => {
     const o = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ repoId, name: "escalation-victim-orch", role: "orchestrator" }),
+      body: JSON.stringify({ repoId, name: "escalation-victim", role: "worker" }),
     });
     victimOrchId = o.json().data.id;
   });
@@ -208,7 +236,7 @@ describe("a worker cannot mint or destroy another agent's token", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("stops the escalation this enables: minting an orchestrator token and authoring a shell predicate with it", async () => {
+  it("stops the escalation this enables: minting another agent's token and acting with it", async () => {
     const rotate = await app.inject({
       method: "POST", url: `/agents/${victimOrchId}/tokens`, headers: asAgent(workerToken),
     });
@@ -276,9 +304,12 @@ describe("a worker cannot mint or destroy another agent's token", () => {
 // the orchestrator's active tokens is as much a lockout as minting a new one.
 describe("a worker cannot revoke another agent's token", () => {
   it("refuses revocation, and the token still authenticates afterward", async () => {
+    // Worker victim, not orchestrator — repoId already holds "role-orch", and
+    // agents_one_orchestrator_per_repo won't allow a second. The assertions
+    // below aren't role-specific: callerMayActOnAgent gates on the caller.
     const o = await app.inject({
       method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ repoId, name: "revoke-victim-orch", role: "orchestrator" }),
+      body: JSON.stringify({ repoId, name: "revoke-victim", role: "worker" }),
     });
     const victimId = o.json().data.id;
     const victimToken = o.json().token;

@@ -71,6 +71,13 @@
       "when": 1790178601005,
       "tag": "0009_unknown_george_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790647723136,
+      "tag": "0010_volatile_ben_grimm",
+      "breakpoints": true
     }
   ]
 }

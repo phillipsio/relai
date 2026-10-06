@@ -254,17 +254,35 @@ describe("revoking grants no authority the caller did not already have", () => {
   it("every caller who may rotate may already revoke the same agent directly", async () => {
     // Self and orchestrator are the two the gate admits. Both are shown to
     // reach DELETE /tokens/:id, so rotation's revoke is not a new power.
-    const orch = await mk("orchestrator");
+    //
+    // Own repo for the orchestrator: an earlier test in this file already put
+    // one in the shared repoId, and agents_one_orchestrator_per_repo allows
+    // only one.
+    const ownRepoId = (await app.inject({
+      method: "POST", url: "/repos", headers: ADMIN,
+      body: JSON.stringify({ name: "__test__ token-rotation own-repo" }),
+    })).json().data.id as string;
+    const orchRes = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: ownRepoId, name: `tr-orch-${++seq}`, role: "orchestrator" }),
+    });
+    const orch = { id: orchRes.json().data.id as string, token: orchRes.json().token as string };
 
     const self = await mk();
     const selfTokenId = (await liveTokens(self.id))[0].id;
     const r1 = await app.inject({ method: "DELETE", url: `/tokens/${selfTokenId}`, headers: as(self.token) });
     expect(r1.statusCode).toBe(204);
 
-    const worker = await mk();
+    const workerRes = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: ownRepoId, name: `tr-worker-${++seq}`, role: "worker" }),
+    });
+    const worker = { id: workerRes.json().data.id as string, token: workerRes.json().token as string };
     const workerTokenId = (await liveTokens(worker.id))[0].id;
     const r2 = await app.inject({ method: "DELETE", url: `/tokens/${workerTokenId}`, headers: as(orch.token) });
     expect(r2.statusCode).toBe(204);
+
+    await app.inject({ method: "DELETE", url: `/repos/${ownRepoId}`, headers: ADMIN });
   });
 });
 

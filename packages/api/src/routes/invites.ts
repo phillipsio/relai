@@ -7,6 +7,7 @@ import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js";
 import { assertRepoAccess } from "../lib/ownership.js";
+import { isConstraintViolation, ONE_ORCHESTRATOR_PER_REPO } from "../lib/constraints.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 // Clamped here rather than in the schema: a rejected request tells the caller
@@ -135,7 +136,13 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     // credentials on six agent identities, and revoking the one the operator
     // knew about left the rest live.
     const plaintext = generateToken();
-    const minted = await db.transaction(async (tx) => {
+    // The insert below can violate agents_one_orchestrator_per_repo. That aborts
+    // the whole transaction, so the conditional claim rolls back too and the
+    // code stays redeemable — the operator can fix the cause and reuse it rather
+    // than minting another.
+    let minted: typeof agents.$inferSelect | null;
+    try {
+      minted = await db.transaction(async (tx) => {
       const [claimed] = await tx
         .update(invites)
         .set({ acceptedAt: new Date() })
@@ -164,8 +171,19 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       });
 
       await tx.update(invites).set({ acceptedAgentId: agent.id }).where(eq(invites.id, claimed.id));
-      return agent;
-    });
+        return agent;
+      });
+    } catch (err) {
+      if (isConstraintViolation(err, ONE_ORCHESTRATOR_PER_REPO)) {
+        return reply.status(409).send({
+          error: {
+            code: "conflict",
+            message: "This project already has an orchestrator, so this invite cannot be redeemed as one. The code is still valid once that changes.",
+          },
+        });
+      }
+      throw err;
+    }
 
     if (!minted) {
       return reply.status(400).send({ error: { code: "invalid_invite", message: "Invite already accepted" } });

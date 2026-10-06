@@ -89,7 +89,16 @@ export const agents = pgTable("agents", {
   repoPath:       text("repo_path"),
   connectedAt:    timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
   lastSeenAt:     timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // One orchestrator per repo. Delegated authority is defined against "the
+  // orchestrator of the repo", and a definite article the schema cannot supply
+  // is not a control. In the database rather than only the routes because the
+  // seed scripts and add-agent.ts write this table directly — same reasoning as
+  // tasks_reviewer_not_assignee.
+  oneOrchestrator: uniqueIndex("agents_one_orchestrator_per_repo")
+    .on(t.repoId)
+    .where(sql`role = 'orchestrator'`),
+}));
 
 // ── Agent tokens ──────────────────────────────────────────────────────────────
 

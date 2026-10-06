@@ -4,6 +4,7 @@ import { z } from "zod";
 import { eq, and, inArray, isNull, desc } from "drizzle-orm";
 import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions } from "@getrelai/db";
 import { newId } from "../lib/id.js";
+import { isConstraintViolation, ONE_ORCHESTRATOR_PER_REPO } from "../lib/constraints.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { assertRepoAccess, assertAgentAccess, callerMayActOnAgent } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
@@ -43,18 +44,32 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       });
     }
 
-    const [agent] = await db.insert(agents).values({
-      id:             newId("agent"),
-      repoId:      body.data.repoId,
-      name:           body.data.name,
-      role:           body.data.role,
-      specialization: body.data.specialization ?? null,
-      tier:           body.data.tier ?? null,
-      domains:        body.data.domains,
-      workerType:     body.data.workerType ?? null,
-      repoPath:       body.data.repoPath ?? null,
-      lastSeenAt:     new Date(0), // never connected; first heartbeat marks it online
-    }).returning();
+    let agent: typeof agents.$inferSelect;
+    try {
+      const [row] = await db.insert(agents).values({
+        id:             newId("agent"),
+        repoId:      body.data.repoId,
+        name:           body.data.name,
+        role:           body.data.role,
+        specialization: body.data.specialization ?? null,
+        tier:           body.data.tier ?? null,
+        domains:        body.data.domains,
+        workerType:     body.data.workerType ?? null,
+        repoPath:       body.data.repoPath ?? null,
+        lastSeenAt:     new Date(0), // never connected; first heartbeat marks it online
+      }).returning();
+      agent = row;
+    } catch (err) {
+      if (isConstraintViolation(err, ONE_ORCHESTRATOR_PER_REPO)) {
+        return reply.status(409).send({
+          error: {
+            code: "conflict",
+            message: "This project already has an orchestrator. Delete the existing one first, or register this agent as a worker.",
+          },
+        });
+      }
+      throw err;
+    }
 
     const plaintext = generateToken();
     await db.insert(tokens).values({

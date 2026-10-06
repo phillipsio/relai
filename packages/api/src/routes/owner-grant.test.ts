@@ -46,9 +46,24 @@ const ownerB = `usr_og_b_${Date.now()}`;
 let repoA1: string;
 let repoA2: string;
 
-const mkRepo = async (name: string, owner: string) =>
-  (await app.inject({ method: "POST", url: "/repos", headers: asOwner(owner), body: JSON.stringify({ name }) }))
+const extraRepoIds: string[] = [];
+
+const mkRepo = async (name: string, owner: string) => {
+  const id = (await app.inject({ method: "POST", url: "/repos", headers: asOwner(owner), body: JSON.stringify({ name }) }))
     .json().data.id as string;
+  extraRepoIds.push(id);
+  return id;
+};
+
+// Each test that mints its own orchestrator (via grant/redeem) needs a repo
+// nothing else has touched — agents_one_orchestrator_per_repo means a second
+// test reusing repoA1 for its own orchestrator would 409 against whatever the
+// first test already put there. Tests that also check a sibling-repo reach
+// get a fresh pair instead of reusing repoA1/repoA2.
+const mkRepoPair = async (owner: string, label: string) => ({
+  home: await mkRepo(`__test__ og ${label} home`, owner),
+  sibling: await mkRepo(`__test__ og ${label} sibling`, owner),
+});
 
 // The full dance: start, approve, poll for invites, redeem one into a token.
 async function grant(opts: { owner: string; repoId: string; body?: Record<string, unknown> }) {
@@ -100,7 +115,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  for (const id of [repoA1, repoA2]) {
+  for (const id of [repoA1, repoA2, ...extraRepoIds]) {
     if (id) await app.inject({ method: "DELETE", url: `/repos/${id}`, headers: ADMIN });
   }
   await db.delete(users).where(eq(users.id, ownerA));
@@ -126,15 +141,16 @@ describe("today's grant is unchanged when nobody asks for anything else", () => 
 
 describe("an owner-scoped grant, end to end", () => {
   it("produces a credential that reads across the owner's repos", async () => {
+    const { home, sibling: siblingRepo } = await mkRepoPair(ownerA, "cross-repo");
     const { deviceCode, approve } = await grant({
-      owner: ownerA, repoId: repoA1, body: { scope: "owner" },
+      owner: ownerA, repoId: home, body: { scope: "owner" },
     });
     expect(approve.statusCode).toBe(200);
 
     const { token, agentId } = await redeem(deviceCode, `og-owner-${Date.now()}`);
 
     // The whole point of the slice.
-    const sibling = await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(token) });
+    const sibling = await app.inject({ method: "GET", url: `/repos/${siblingRepo}`, headers: as(token) });
     expect(sibling.statusCode).toBe(200);
 
     // And the agent still has a home repo, because agents.repoId is NOT NULL.
@@ -143,7 +159,8 @@ describe("an owner-scoped grant, end to end", () => {
   });
 
   it("carries the owner on the invite, which is how it reaches the token at all", async () => {
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const home = await mkRepo("__test__ og invite-owner", ownerA);
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const { code } = await redeem(deviceCode, `og-invite-${Date.now()}`);
 
     const { createHash } = await import("node:crypto");
@@ -243,7 +260,8 @@ describe("rotation keeps the super agent's scope", () => {
   // that dropped ownerId would kill the credential and leave no route to
   // re-grant it: owner scope reaches a token only through invites.ownerId.
   it("carries ownerId onto the replacement token", async () => {
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { home, sibling: siblingRepo } = await mkRepoPair(ownerA, "rot-scope");
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const { token, agentId } = await redeem(deviceCode, `og-rot-${Date.now()}`);
 
     const rotated = await app.inject({
@@ -259,44 +277,26 @@ describe("rotation keeps the super agent's scope", () => {
     expect(live[0].ownerId).toBe(ownerA);
 
     // And it still works across repos, which is the property that matters.
-    const sibling = await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(fresh) });
+    const sibling = await app.inject({ method: "GET", url: `/repos/${siblingRepo}`, headers: as(fresh) });
     expect(sibling.statusCode).toBe(200);
   });
 });
 
 describe("rotation must not hand the super agent's scope to a peer", () => {
   // callerMayActOnAgent admits ANY orchestrator in the target's repo, so
-  // rotation is reachable by a peer. Copying the TARGET's ownerId onto the
-  // token returned to the CALLER turns that into an escalation: an ordinary
-  // repo-scoped orchestrator mints itself the user's tenant-wide authority,
-  // and `keepExisting` means the super agent keeps working so nothing alerts.
-  it("gives a peer orchestrator a repo-scoped token, not the owner's", async () => {
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
-    const { agentId: superId } = await redeem(deviceCode, `og-super-${Date.now()}`);
-
-    const peer = await app.inject({
-      method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ repoId: repoA1, name: `og-peer-${Date.now()}`, role: "orchestrator" }),
-    });
-    const peerToken = peer.json().token as string;
-    // Baseline: the peer cannot reach the sibling repo.
-    expect((await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(peerToken) })).statusCode).toBe(403);
-
-    const stolen = await app.inject({
-      method: "POST", url: `/agents/${superId}/tokens`, headers: as(peerToken),
-      body: JSON.stringify({ keepExisting: true }),
-    });
-    expect(stolen.statusCode).toBe(201);
-
-    // The credential it just received must NOT carry the owner's scope.
-    const reach = await app.inject({
-      method: "GET", url: `/repos/${repoA2}`, headers: as(stolen.json().token as string),
-    });
-    expect(reach.statusCode).toBe(403);
-  });
+  // rotation was reachable by a peer, which used to matter: copying the
+  // TARGET's ownerId onto the token returned to the CALLER would have let an
+  // ordinary repo-scoped orchestrator mint itself the user's tenant-wide
+  // authority. `agents_one_orchestrator_per_repo` closes this by construction
+  // rather than by a token-scope check — a peer orchestrator can no longer be
+  // registered in the super agent's own repo at all (see
+  // one-orchestrator.test.ts), so the premise this scenario needed can't
+  // exist. The two tests that exercised it were removed rather than kept as
+  // permanently-skipped dead code.
 
   it("preserves scope when the super agent rotates itself", async () => {
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { home, sibling: siblingRepo } = await mkRepoPair(ownerA, "self-rotate");
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const { token, agentId } = await redeem(deviceCode, `og-self-${Date.now()}`);
 
     const rotated = await app.inject({
@@ -305,13 +305,14 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
     });
     expect(rotated.statusCode).toBe(201);
     const fresh = rotated.json().token as string;
-    expect((await app.inject({ method: "GET", url: `/repos/${repoA2}`, headers: as(fresh) })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: `/repos/${siblingRepo}`, headers: as(fresh) })).statusCode).toBe(200);
   });
 
   it("does not resurrect scope from a revoked row after a de-scoping revoke", async () => {
     // Revoking every credential is an operator's only containment lever. It
     // must not be undone by the next rotation reading the row it just killed.
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const { home, sibling: siblingRepo } = await mkRepoPair(ownerA, "revoke-descope");
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const { agentId } = await redeem(deviceCode, `og-revoked-${Date.now()}`);
 
     for (const row of await db.select().from(tokens).where(eq(tokens.agentId, agentId))) {
@@ -323,7 +324,7 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
     });
     expect(reissued.statusCode).toBe(201);
     const reach = await app.inject({
-      method: "GET", url: `/repos/${repoA2}`, headers: as(reissued.json().token as string),
+      method: "GET", url: `/repos/${siblingRepo}`, headers: as(reissued.json().token as string),
     });
     expect(reach.statusCode).not.toBe(200);
   });
@@ -334,7 +335,8 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
     // request.tokenId on the API_SECRET path, so `presenting` is never read.
     // Pinning that explicitly, because believing otherwise is what let a
     // blocker land green.
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const home = await mkRepo("__test__ og adminpath", ownerA);
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const { agentId } = await redeem(deviceCode, `og-adminpath-${Date.now()}`);
 
     const viaAdmin = await app.inject({
@@ -345,7 +347,8 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
   });
 
   it("makes owner scope visible, so a stolen one is findable", async () => {
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const home = await mkRepo("__test__ og visible", ownerA);
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const { token, agentId } = await redeem(deviceCode, `og-visible-${Date.now()}`);
 
     const listed = await app.inject({ method: "GET", url: `/agents/${agentId}/tokens`, headers: as(token) });
@@ -405,36 +408,13 @@ describe("the invariant holds at the point of trust, not only at approve", () =>
     expect(res.statusCode).toBe(400);
   });
 
-  it("carries the scope of the credential presenting the request, not the newest row", async () => {
-    // keepExisting by a peer (or the documented move-between-machines case)
-    // leaves a newer repo-scoped row. Self-rotation must not read that and
-    // silently downgrade the super agent, which needs a fresh device grant to
-    // recover.
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
-    const { token, agentId } = await redeem(deviceCode, `og-present-${Date.now()}`);
-
-    const peer = await app.inject({
-      method: "POST", url: "/agents", headers: ADMIN,
-      body: JSON.stringify({ repoId: repoA1, name: `og-present-peer-${Date.now()}`, role: "orchestrator" }),
-    });
-    const peerRot = await app.inject({
-      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(peer.json().token as string),
-      body: JSON.stringify({ keepExisting: true }),
-    });
-    expect(peerRot.statusCode).toBe(201);
-
-    // The super agent's own credential is still live; rotating with it must keep scope.
-    const self = await app.inject({
-      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(token),
-      body: JSON.stringify({ keepExisting: true }),
-    });
-    expect(self.statusCode).toBe(201);
-    expect(self.json().data.ownerScoped).toBe(true);
-    const reach = await app.inject({
-      method: "GET", url: `/repos/${repoA2}`, headers: as(self.json().token as string),
-    });
-    expect(reach.statusCode).toBe(200);
-  });
+  // Same structural conflict as the peer-orchestrator-rotation scenario
+  // removed from the "rotation must not hand the super agent's scope to a
+  // peer" block above: this needs a second orchestrator in the super agent's
+  // own repo to create the peer-initiated rotation row at all, which
+  // agents_one_orchestrator_per_repo no longer allows. See that comment for
+  // the full reasoning; removed here for the same reason rather than kept as
+  // permanently-skipped dead code.
 });
 
 describe("one invite is one credential, under concurrency", () => {
@@ -444,7 +424,8 @@ describe("one invite is one credential, under concurrency", () => {
     // one code previously returned six 201s and six tenant-wide tokens on six
     // agent identities, and revoking the one the operator knew about left the
     // rest live. A sequential test cannot see this.
-    const { deviceCode } = await grant({ owner: ownerA, repoId: repoA1, body: { scope: "owner" } });
+    const home = await mkRepo("__test__ og race", ownerA);
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
     const polled = await app.inject({
       method: "POST", url: "/auth/device/token",
       headers: { Authorization: `Bearer ${deviceCode}`, ...JSON_ONLY },
@@ -478,8 +459,9 @@ describe("the owner comes from the approver, never from the request", () => {
     // A caller holding owner A's session must not mint a credential for B by
     // typing B's id. The field is not in the schema, so it is stripped; this
     // pins the OUTCOME rather than the mechanism, which survives a refactor.
+    const home = await mkRepo("__test__ og forge", ownerA);
     const { deviceCode } = await grant({
-      owner: ownerA, repoId: repoA1, body: { scope: "owner", ownerId: ownerB },
+      owner: ownerA, repoId: home, body: { scope: "owner", ownerId: ownerB },
     });
     const { agentId } = await redeem(deviceCode, `og-forge-${Date.now()}`);
 

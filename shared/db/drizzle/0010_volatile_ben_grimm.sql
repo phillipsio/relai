@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "agents_one_orchestrator_per_repo" ON "agents" USING btree ("repo_id") WHERE role = 'orchestrator';

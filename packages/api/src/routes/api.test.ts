@@ -199,29 +199,37 @@ describe("GET /repos/:id", () => {
 
 describe("PUT /repos/:id", () => {
   it("a worker agent cannot set repoUrl on update (403); an orchestrator can", async () => {
+    const repoRes = await app.inject({
+      method: "POST", url: "/repos",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "repo-url-put-test" }),
+    });
+    const scopedRepoId = repoRes.json().data.id as string;
+    extraRepoIds.push(scopedRepoId);
+
     const orchRes = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ repoId, name: "repo-url-put-orch", role: "orchestrator" }),
+      body: JSON.stringify({ repoId: scopedRepoId, name: "repo-url-put-orch", role: "orchestrator" }),
     });
     const orchToken = orchRes.json().token as string;
 
     const workerRes = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ repoId, name: "repo-url-put-worker", role: "worker" }),
+      body: JSON.stringify({ repoId: scopedRepoId, name: "repo-url-put-worker", role: "worker" }),
     });
     const workerToken = workerRes.json().token as string;
 
     const denied = await app.inject({
-      method: "PUT", url: `/repos/${repoId}`,
+      method: "PUT", url: `/repos/${scopedRepoId}`,
       headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ repoUrl: "https://example.com/x.git" }),
     });
     expect(denied.statusCode).toBe(403);
 
     const allowed = await app.inject({
-      method: "PUT", url: `/repos/${repoId}`,
+      method: "PUT", url: `/repos/${scopedRepoId}`,
       headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ repoUrl: "https://example.com/x.git" }),
     });
@@ -714,23 +722,31 @@ describe("PUT /tasks/:id", () => {
   });
 
   it("a worker cannot re-point a git_pushed task's verifyPath via PUT (403); an orchestrator can", async () => {
+    const repoRes = await app.inject({
+      method: "POST", url: "/repos",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "gp-put-test" }),
+    });
+    const scopedRepoId = repoRes.json().data.id as string;
+    extraRepoIds.push(scopedRepoId);
+
     const orchRes = await app.inject({
       method: "POST", url: "/agents", headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ repoId, name: "gp-put-orch", role: "orchestrator" }),
+      body: JSON.stringify({ repoId: scopedRepoId, name: "gp-put-orch", role: "orchestrator" }),
     });
     const orchToken = orchRes.json().token as string;
     const orchId    = orchRes.json().data.id as string;
 
     const workerRes = await app.inject({
       method: "POST", url: "/agents", headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ repoId, name: "gp-put-worker", role: "worker" }),
+      body: JSON.stringify({ repoId: scopedRepoId, name: "gp-put-worker", role: "worker" }),
     });
     const workerToken = workerRes.json().token as string;
 
     const create = await app.inject({
       method: "POST", url: "/tasks", headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        repoId, createdBy: orchId, title: "gp-put", description: "x",
+        repoId: scopedRepoId, createdBy: orchId, title: "gp-put", description: "x",
         verifyKind: "git_pushed", verifyPath: "feature/a",
       }),
     });
@@ -891,11 +907,19 @@ describe("PUT /tasks/:id", () => {
   });
 
   it("workers cannot author shell verifyCommand (403); orchestrators can", async () => {
+    const repoRes = await app.inject({
+      method: "POST", url: "/repos",
+      headers: { ...AUTH, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "shell-verify-test" }),
+    });
+    const scopedRepoId = repoRes.json().data.id as string;
+    extraRepoIds.push(scopedRepoId);
+
     // Register an orchestrator and a worker, each with their own token.
     const orchRes = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ repoId, name: "lead", role: "orchestrator", specialization: "architect" }),
+      body: JSON.stringify({ repoId: scopedRepoId, name: "lead", role: "orchestrator", specialization: "architect" }),
     });
     const orchToken = orchRes.json().token as string;
     const orchId    = orchRes.json().data.id as string;
@@ -903,7 +927,7 @@ describe("PUT /tasks/:id", () => {
     const workerRes = await app.inject({
       method: "POST", url: "/agents",
       headers: { ...AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({ repoId, name: "shell-worker", role: "worker", specialization: "tester" }),
+      body: JSON.stringify({ repoId: scopedRepoId, name: "shell-worker", role: "worker", specialization: "tester" }),
     });
     const workerToken = workerRes.json().token as string;
     const workerId    = workerRes.json().data.id as string;
@@ -913,7 +937,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        repoId, createdBy: workerId, title: "x", description: "x",
+        repoId: scopedRepoId, createdBy: workerId, title: "x", description: "x",
         verifyCommand: "rm -rf /",
       }),
     });
@@ -925,7 +949,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        repoId, createdBy: workerId, title: "fx", description: "x",
+        repoId: scopedRepoId, createdBy: workerId, title: "fx", description: "x",
         verifyKind: "file_exists", verifyPath: "/tmp/x",
       }),
     });
@@ -936,7 +960,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        repoId, createdBy: orchId, title: "shell", description: "x",
+        repoId: scopedRepoId, createdBy: orchId, title: "shell", description: "x",
         verifyCommand: "true",
       }),
     });
@@ -948,7 +972,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        repoId, createdBy: workerId, title: "gp", description: "x",
+        repoId: scopedRepoId, createdBy: workerId, title: "gp", description: "x",
         verifyKind: "git_pushed", verifyPath: "feature/x",
       }),
     });
@@ -958,7 +982,7 @@ describe("PUT /tasks/:id", () => {
       method: "POST", url: "/tasks",
       headers: { Authorization: `Bearer ${orchToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        repoId, createdBy: orchId, title: "gp-ok", description: "x",
+        repoId: scopedRepoId, createdBy: orchId, title: "gp-ok", description: "x",
         verifyKind: "git_pushed", verifyPath: "feature/x",
       }),
     });

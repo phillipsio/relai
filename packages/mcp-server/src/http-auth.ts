@@ -23,3 +23,17 @@ export function isAuthorizedBearer(authHeader: string | undefined, credential: s
   const token = authHeader.slice(spaceIndex + 1);
   return timingSafeEqual(sha256(token), sha256(credential));
 }
+
+// Which value gates the HTTP transport. A pure function so the precedence
+// (MCP_HTTP_TOKEN, when set, wins over the credential forwarded upstream) is
+// unit-testable on its own, rather than living as inline logic in index.ts —
+// AGENTS.md records that shape of bug once already (selectTools).
+export function resolveHttpCredential(
+  mcpHttpToken: string | undefined,
+  ownerMode: boolean,
+  ownerToken: string | undefined,
+  apiSecret: string | undefined,
+): string {
+  if (mcpHttpToken) return mcpHttpToken;
+  return (ownerMode ? ownerToken : apiSecret) ?? "";
+}

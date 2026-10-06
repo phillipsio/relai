@@ -15,12 +15,20 @@ const UNAUTHORIZED_BODY = JSON.stringify({
 // reached by anyone who can open a TCP connection to it. An unauthenticated
 // request never reaches server.connect() or the message handler.
 export function createHttpRequestListener(server: McpServer, credential: string): HttpRequestListener {
-  // McpServer.connect() replaces the server's single transport without
-  // closing the one it replaces, so a second concurrent GET /sse doesn't
-  // just "displace" the first connection — it silently kills a stream a
-  // legitimate client still has open. Refuse the second connection loudly
-  // instead, and allow a new one once the first actually disconnects.
-  let connected = false;
+  // The underlying McpServer supports exactly one live transport at a time.
+  // A reconnect (a dropped network, a client restart) is the ordinary case
+  // for this transport, so a new GET /sse takes over rather than being
+  // refused: whatever connection it replaces is closed explicitly first, so
+  // that connection's own eventual close can never race with — and null out
+  // — the new one. This also means a peer that silently vanished (no FIN)
+  // never locks the transport closed; the next reconnect simply displaces it.
+  let current: SSEServerTransport | undefined;
+
+  async function connectSse(res: ServerResponse): Promise<SSEServerTransport> {
+    const transport = new SSEServerTransport("/messages", res);
+    await server.connect(transport);
+    return transport;
+  }
 
   return async (req, res) => {
     if (!isAuthorizedBearer(req.headers.authorization, credential)) {
@@ -30,18 +38,34 @@ export function createHttpRequestListener(server: McpServer, credential: string)
         .end(UNAUTHORIZED_BODY);
       return;
     }
-    if (req.method === "GET" && req.url === "/sse") {
-      if (connected) {
-        res
-          .writeHead(409, { "content-type": "application/json" })
-          .end(JSON.stringify({ error: { code: "already_connected", message: "Another SSE client is already connected" } }));
-        return;
+
+    // SSEServerTransport.start() advertises the endpoint clients must POST
+    // to as "/messages?sessionId=<uuid>" — match on the path alone so that
+    // real traffic (which always carries the query string) reaches the same
+    // branch a bare "/messages" does, rather than falling through to 404.
+    const path = (req.url ?? "").split("?")[0];
+
+    if (req.method === "GET" && path === "/sse") {
+      const replaced = current;
+      current = undefined;
+      if (replaced) {
+        try {
+          await replaced.close();
+        } catch {
+          // Already gone — that's exactly the case this takeover exists for.
+        }
       }
-      connected = true;
-      res.on("close", () => { connected = false; });
-      const transport = new SSEServerTransport("/messages", res);
-      await server.connect(transport);
-    } else if (req.method === "POST" && req.url === "/messages") {
+      try {
+        current = await connectSse(res);
+      } catch (err) {
+        console.error("[relai-mcp] failed to establish SSE connection:", err instanceof Error ? err.message : err);
+        if (!res.headersSent) {
+          res
+            .writeHead(500, { "content-type": "application/json" })
+            .end(JSON.stringify({ error: { code: "connect_failed", message: "Failed to establish SSE connection" } }));
+        }
+      }
+    } else if (req.method === "POST" && path === "/messages") {
       res.writeHead(200).end();
     } else {
       res.writeHead(404).end();

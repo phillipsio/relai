@@ -61,6 +61,7 @@ Restart your MCP client. Confirm via `/mcp` (or the equivalent) that `relai` sho
 | `PROJECT_ID` | Yes | The project's ID (`proj_*`) |
 | `TRANSPORT` | No | `stdio` (default) or `http` for remote/team scenarios |
 | `MCP_PORT` | No | Port for HTTP transport (default `3001`) |
+| `MCP_HTTP_TOKEN` | No | HTTP transport only — bearer credential required on `GET /sse` / `POST /messages`. Defaults to `API_SECRET` if unset. |
 
 ## Tool slot limits
 

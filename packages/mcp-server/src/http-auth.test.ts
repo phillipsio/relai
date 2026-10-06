@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAuthorizedBearer } from "./http-auth.js";
+import { isAuthorizedBearer, resolveHttpCredential } from "./http-auth.js";
 
 const CREDENTIAL = "owner-token-abc123";
 
@@ -43,5 +43,31 @@ describe("isAuthorizedBearer", () => {
 
   it("is case-sensitive on the token value itself, unlike the scheme name", () => {
     expect(isAuthorizedBearer(`Bearer ${CREDENTIAL.toUpperCase()}`, CREDENTIAL)).toBe(false);
+  });
+
+  it("authorizes a non-ASCII credential consistently", () => {
+    const utf8Credential = "pässwort-ünïcode";
+    expect(isAuthorizedBearer(`Bearer ${utf8Credential}`, utf8Credential)).toBe(true);
+    expect(isAuthorizedBearer(`Bearer wrong`, utf8Credential)).toBe(false);
+  });
+});
+
+describe("resolveHttpCredential", () => {
+  it("prefers MCP_HTTP_TOKEN when set, in either mode", () => {
+    expect(resolveHttpCredential("transport-token", true, "owner-token", undefined)).toBe("transport-token");
+    expect(resolveHttpCredential("transport-token", false, undefined, "api-secret")).toBe("transport-token");
+  });
+
+  it("falls back to the owner credential in owner mode when unset", () => {
+    expect(resolveHttpCredential(undefined, true, "owner-token", undefined)).toBe("owner-token");
+  });
+
+  it("falls back to the agent credential outside owner mode when unset", () => {
+    expect(resolveHttpCredential(undefined, false, undefined, "api-secret")).toBe("api-secret");
+  });
+
+  it("treats an empty MCP_HTTP_TOKEN as unset, not as a real value", () => {
+    expect(resolveHttpCredential("", true, "owner-token", undefined)).toBe("owner-token");
+    expect(resolveHttpCredential("", false, undefined, "api-secret")).toBe("api-secret");
   });
 });

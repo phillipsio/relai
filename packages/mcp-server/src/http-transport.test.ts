@@ -14,8 +14,21 @@ async function startTestServer(): Promise<{ url: string; close: () => Promise<vo
   if (!address || typeof address === "string") throw new Error("expected a bound TCP address");
   return {
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise<void>((resolve, reject) => httpServer.close((err) => (err ? reject(err) : resolve()))),
+    close: () => {
+      // Without this, a kept-alive idle socket makes httpServer.close()'s
+      // callback wait out Node's default 5s keepAliveTimeout before firing.
+      httpServer.closeAllConnections();
+      return new Promise<void>((resolve, reject) => httpServer.close((err) => (err ? reject(err) : resolve())));
+    },
   };
+}
+
+async function readToEnd(body: ReadableStream<Uint8Array> | null): Promise<void> {
+  const reader = body!.getReader();
+  let done = false;
+  while (!done) {
+    ({ done } = await reader.read());
+  }
 }
 
 describe("HTTP/SSE transport auth gate", () => {
@@ -77,14 +90,17 @@ describe("HTTP/SSE transport auth gate", () => {
     expect(getMessages.status).toBe(404);
   });
 
-  it("returns 200 for an authorized POST /messages, unchanged no-op behavior", async () => {
+  it("pins the known POST /messages no-op (200, not yet wired to handlePostMessage — see AGENTS.md), including the ?sessionId= query string real clients send", async () => {
     const server = await startTestServer();
     close = server.close;
-    const res = await fetch(`${server.url}/messages`, {
+    const auth = { authorization: `Bearer ${CREDENTIAL}` };
+    const bare = await fetch(`${server.url}/messages`, { method: "POST", headers: auth });
+    expect(bare.status).toBe(200);
+    const withSessionId = await fetch(`${server.url}/messages?sessionId=test-session-id`, {
       method: "POST",
-      headers: { authorization: `Bearer ${CREDENTIAL}` },
+      headers: auth,
     });
-    expect(res.status).toBe(200);
+    expect(withSessionId.status).toBe(200);
   });
 
   it("lets an authorized GET /sse past the gate and establish the SSE stream", async () => {
@@ -96,7 +112,7 @@ describe("HTTP/SSE transport auth gate", () => {
     await res.body?.cancel();
   });
 
-  it("refuses a second concurrent GET /sse with 409 rather than silently killing the first", async () => {
+  it("a new GET /sse takes over from a still-live one, ending the previous stream rather than refusing or silently corrupting it", async () => {
     const server = await startTestServer();
     close = server.close;
     const auth = { authorization: `Bearer ${CREDENTIAL}` };
@@ -104,14 +120,16 @@ describe("HTTP/SSE transport auth gate", () => {
     const first = await fetch(`${server.url}/sse`, { headers: auth });
     expect(first.status).toBe(200);
 
+    // The first connection is never closed client-side here — this is the
+    // regression case for a peer that vanished without a clean disconnect.
     const second = await fetch(`${server.url}/sse`, { headers: auth });
-    expect(second.status).toBe(409);
-    await second.body?.cancel();
+    expect(second.status).toBe(200);
 
-    await first.body?.cancel();
+    await readToEnd(first.body);
+    await second.body?.cancel();
   });
 
-  it("allows a new GET /sse once the previous connection closes", async () => {
+  it("also takes over cleanly when the previous connection already closed", async () => {
     const server = await startTestServer();
     close = server.close;
     const auth = { authorization: `Bearer ${CREDENTIAL}` };
@@ -119,9 +137,6 @@ describe("HTTP/SSE transport auth gate", () => {
     const first = await fetch(`${server.url}/sse`, { headers: auth });
     expect(first.status).toBe(200);
     await first.body?.cancel();
-
-    // Give the server a tick to observe the socket close event.
-    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const second = await fetch(`${server.url}/sse`, { headers: auth });
     expect(second.status).toBe(200);

@@ -21,21 +21,20 @@ const { API_URL = "http://localhost:3010", API_SECRET, AGENT_ID, REPO_ID, API_OW
 // toolset that acts across ALL of the owner's projects — for remote/mobile
 // triage and unblocking. Otherwise the default per-agent mode exposes the agent
 // tools scoped to one project.
-const OWNER_MODE = Boolean(API_OWNER_TOKEN);
+const OWNER_MODE = Boolean(API_OWNER_TOKEN?.trim());
 if (OWNER_MODE) {
     if (!OWNER_ID || !OWNER_ID.startsWith("usr_")) {
         console.error("[relai-mcp] owner mode requires OWNER_ID (a 'usr_…' id) alongside API_OWNER_TOKEN");
         process.exit(1);
     }
     // API_OWNER_TOKEN is a cross-project credential — with a different X-Owner-Id
-    // it can act as any owner. The HTTP transport below requires this same
-    // credential as a bearer token, but still bind to localhost behind an
-    // authenticating proxy for defense in depth. See docs/operator-ingress.md.
+    // it can act as any owner. See docs/operator-ingress.md for the HTTP
+    // transport's own credential handling (MCP_HTTP_TOKEN).
     console.error("[relai-mcp] owner mode: API_OWNER_TOKEN is a god-key credential — keep this server " +
         "off the open internet (localhost bind + authenticating reverse proxy only).");
 }
 else {
-    if (!API_SECRET) {
+    if (!API_SECRET?.trim()) {
         console.error("[relai-mcp] API_SECRET is required");
         process.exit(1);
     }
@@ -178,21 +177,25 @@ async function main() {
         await server.connect(transport);
     }
     else if (TRANSPORT === "http") {
-        // HTTP/SSE transport — for remote/team scenarios. Gated on the same
-        // credential this process already holds (API_SECRET or API_OWNER_TOKEN) —
-        // see http-transport.ts. Still bind to loopback by default and put an
-        // authenticating layer (tunnel/proxy/VPN) in front for remote access
-        // rather than binding to all interfaces. Override only deliberately via
-        // MCP_HOST.
+        // HTTP/SSE transport — for remote/team scenarios. Still binds to loopback
+        // by default; put an authenticating layer (tunnel/proxy/VPN) in front for
+        // remote access rather than binding to all interfaces. Override only
+        // deliberately via MCP_HOST.
         const http = await import("node:http");
         const { createHttpRequestListener } = await import("./http-transport.js");
+        const { resolveHttpCredential } = await import("./http-auth.js");
         const port = Number(process.env.MCP_PORT ?? 3001);
         const host = process.env.MCP_HOST ?? "127.0.0.1";
         // MCP_HTTP_TOKEN lets the transport gate use a credential distinct from
         // the one forwarded to the API — so a leaked transport token doesn't
         // itself grant upstream API access. Falls back to the process credential
         // when unset, preserving the simpler single-credential setup.
-        const credential = process.env.MCP_HTTP_TOKEN || (OWNER_MODE ? API_OWNER_TOKEN : API_SECRET);
+        const credential = resolveHttpCredential(process.env.MCP_HTTP_TOKEN, OWNER_MODE, API_OWNER_TOKEN, API_SECRET);
+        if (!credential.trim()) {
+            console.error("[relai-mcp] the HTTP transport credential (MCP_HTTP_TOKEN, API_SECRET, or API_OWNER_TOKEN) is empty " +
+                "or whitespace — refusing to start with a credential that would lock out every client");
+            process.exit(1);
+        }
         const listener = createHttpRequestListener(server, credential);
         const httpServer = http.createServer(listener);
         httpServer.listen(port, host, () => {

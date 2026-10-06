@@ -84,6 +84,7 @@ API_SECRET=your-per-agent-token \
 AGENT_ID=agent_yourAgentId \
 REPO_ID=repo_yourRepoId \
 MCP_PORT=3001 \
+MCP_HTTP_TOKEN=your-transport-token \
 npx @getrelai/mcp-server
 ```
 
@@ -91,14 +92,14 @@ npx @getrelai/mcp-server
 against `MCP_HTTP_TOKEN` if set, else the same credential the server itself holds
 (`API_SECRET` here, `API_OWNER_TOKEN` in owner mode). Set `MCP_HTTP_TOKEN` to a value
 distinct from your upstream credential so a leaked transport token doesn't also grant API
-access. Configure clients to point at the SSE endpoint with that header set:
+access. Configure clients to point at the SSE endpoint with that same header set:
 
 ```json
 {
   "mcpServers": {
     "relai": {
       "url": "http://your-server:3001/sse",
-      "headers": { "Authorization": "Bearer your-per-agent-token" }
+      "headers": { "Authorization": "Bearer your-transport-token" }
     }
   }
 }

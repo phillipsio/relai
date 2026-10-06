@@ -187,6 +187,23 @@ describe("config", () => {
       }
     });
 
+    it("names each legacy file it falls back to, not only the first", async () => {
+      vi.resetModules();
+      const fresh = await import("./config.js");
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const legacyAgents = join(fakeHome, ".config", "relai", "agents.json");
+        fresh.readableFrom(newFile(), legacyFile(), false);
+        plantLegacy("legacy");
+        writeFileSync(legacyAgents, "{\"agents\":[]}");
+        fresh.readableFrom(newFile(), legacyFile(), false);
+        fresh.readableFrom(join(fakeHome, ".config", "pitboss", "agents.json"), legacyAgents, false);
+        expect(err).toHaveBeenCalledTimes(2);
+      } finally {
+        err.mockRestore();
+      }
+    });
+
     it("says nothing once the new file exists", async () => {
       vi.resetModules();
       const fresh = await import("./config.js");

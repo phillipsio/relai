@@ -72,6 +72,19 @@ describe("agents-state", () => {
       });
     }
 
+    it("removes the legacy file only on the write that migrates, not on later claims", () => {
+      const claim = (agentId: string) => ({ agentId, agentName: agentId, workingDir: join(dir, agentId), apiUrl: "http://x", tokenRef: "t" });
+      claimWorkingDir(claim("agent_current"));
+      const legacy = join(dir, ".config", "relai", "agents.json");
+      process.env.PITBOSS_AGENTS_STATE = legacy;
+      claimWorkingDir(claim("agent_from_old_cli"));
+      delete process.env.PITBOSS_AGENTS_STATE;
+
+      claimWorkingDir(claim("agent_later"));
+
+      expect(existsSync(legacy)).toBe(true);
+    });
+
     it("reads the new file when both exist", () => {
       const claim = (agentId: string) => ({ agentId, agentName: agentId, workingDir: join(dir, agentId), apiUrl: "http://x", tokenRef: "t" });
       process.env.PITBOSS_AGENTS_STATE = join(dir, ".config", "relai", "agents.json");

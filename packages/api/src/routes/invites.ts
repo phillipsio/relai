@@ -49,6 +49,7 @@ const acceptSchema = z.object({
   specialization: z.string().min(1).max(80).regex(/^[^\r\n]+$/).optional(),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
   domains:        promptSafeDomains.default([]),
+  repoPath:       z.string().min(1).max(1024).regex(/^[^\r\n]+$/).optional(),
 });
 
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -164,6 +165,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
         specialization: body.data.specialization ?? claimed.suggestedSpecialization ?? null,
         domains:        body.data.domains,
         workerType:     body.data.workerType ?? null,
+        repoPath:       body.data.repoPath ?? null,
         lastSeenAt:     new Date(0),
       }).returning();
 

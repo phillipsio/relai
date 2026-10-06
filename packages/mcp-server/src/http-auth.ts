@@ -1,17 +1,25 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+
+function sha256(value: string): Buffer {
+  return createHash("sha256").update(value, "utf8").digest();
+}
 
 // The HTTP/SSE transport has no per-request identity of its own — the
-// credential is whatever this process was started with (API_SECRET or
-// API_OWNER_TOKEN), the same one forwarded to the API on every call. So a
-// connecting client proves it holds that same value via a bearer header,
-// compared in constant time to avoid leaking the credential one byte at a
-// time through response latency.
+// credential is whatever this process was started with (MCP_HTTP_TOKEN,
+// API_SECRET, or API_OWNER_TOKEN). Hashing both sides to a fixed 32-byte
+// digest before comparing means timingSafeEqual never throws on a length
+// mismatch and the comparison leaks nothing about either side's length,
+// matching the pattern packages/api/src/lib/tokens.ts's secretsMatch() uses
+// for the same kind of check. An empty or whitespace-only credential is
+// refused outright rather than becoming an always-matching value: nothing
+// upstream guarantees this string came from a non-empty env var.
 export function isAuthorizedBearer(authHeader: string | undefined, credential: string): boolean {
-  const prefix = "Bearer ";
-  if (!authHeader || !authHeader.startsWith(prefix)) return false;
+  if (!credential.trim() || !authHeader) return false;
 
-  const token = Buffer.from(authHeader.slice(prefix.length));
-  const expected = Buffer.from(credential);
-  if (token.length !== expected.length) return false;
-  return timingSafeEqual(token, expected);
+  const spaceIndex = authHeader.indexOf(" ");
+  if (spaceIndex === -1) return false;
+  if (authHeader.slice(0, spaceIndex).toLowerCase() !== "bearer") return false;
+
+  const token = authHeader.slice(spaceIndex + 1);
+  return timingSafeEqual(sha256(token), sha256(credential));
 }

@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PEER_BOUNDARY = void 0;
 exports.buildTools = buildTools;
+exports.selectTools = selectTools;
+exports.buildProvisioningTools = buildProvisioningTools;
 exports.buildOperatorTools = buildOperatorTools;
 const zod_1 = require("zod");
 // Each tool: name, description (written for any AI model), input schema, handler.
@@ -50,7 +52,7 @@ function resolveAgentRef(candidates, ref, scope) {
     }
     return { id: matches[0].id };
 }
-function buildTools(client, agentId, repoId) {
+function buildTools(client, agentId, repoId, opts = {}) {
     return [
         {
             name: "publish_artifact",
@@ -213,7 +215,10 @@ function buildTools(client, agentId, repoId) {
             name: "get_my_tasks",
             description: "Retrieve tasks assigned to this agent. Use this at the start of a session or when you want " +
                 "to know what work is queued for you. Returns tasks with status 'assigned' or 'in_progress'. " +
-                "Always call this before starting new work so you don't duplicate effort.",
+                "Always call this before starting new work so you don't duplicate effort. " +
+                "humanLabel 'Not picked up' means this task was assigned to you hours ago and nothing has " +
+                "touched it since — the assignment notice never reached you. Start it now, or say on its " +
+                "thread why you are not going to.",
             inputSchema: zod_1.z.object({
                 status: zod_1.z
                     .enum(["assigned", "in_progress", "pending", "all"])
@@ -489,7 +494,8 @@ function buildTools(client, agentId, repoId) {
             name: "session_start",
             description: "Get a single bundled snapshot of your current state in this repo: your identity, the " +
                 "project's pinned context (the 'everyone-reads-this' notes), your open tasks (with a " +
-                "human-readable label like 'Running' / 'Stalled' / 'Input required'), unread messages " +
+                "human-readable label like 'Running' / 'Stalled' / 'Input required'; 'Not picked up' means " +
+                "you were assigned that task hours ago and never started it, so start it or say why not), unread messages " +
                 "addressed to your project, and open threads you're subscribed to. Call this FIRST at the " +
                 "start of every session — it replaces the get_my_tasks + get_unread_messages + list_threads " +
                 "calls you would otherwise need to orient yourself, and includes context those tools don't " +
@@ -528,7 +534,9 @@ function buildTools(client, agentId, repoId) {
                 "Prefer get_my_tasks when you only need your own work queue. " +
                 "Returns the most recently updated tasks first, capped, with descriptions clipped — " +
                 "a whole repo does not fit in one response. taskCount is the true total; raise `limit` " +
-                "or filter by `status` to see more, and read a clipped task in full with get_task.",
+                "or filter by `status` to see more, and read a clipped task in full with get_task. " +
+                "humanLabel 'Not picked up' means the assignee has not touched that task since it was " +
+                "assigned hours ago: that agent is not acting on it, whatever its online flag says.",
             inputSchema: zod_1.z.object({
                 status: zod_1.z
                     .string()
@@ -724,24 +732,59 @@ function buildTools(client, agentId, repoId) {
                 return say(JSON.stringify(task, null, 2));
             },
         },
+        // Additive, never a swap: an owner-scoped agent is still an agent and needs
+        // everything above. buildOperatorTools assumes no agent identity, and its
+        // create_task bypasses propose/commit.
+        ...(opts.ownerScoped ? buildProvisioningTools(client) : []),
     ];
 }
-// Operator (owner) toolset — used when the MCP server runs in owner mode (an
-// owner credential instead of a per-agent token). These act across ALL of the
-// owner's projects: the API scopes by the X-Owner-Id the client sends, and each
-// resource is addressed by its own id, so no repoId argument is needed. The
-// human (you, e.g. from a phone) drives these to triage and unblock work
-// remotely. Keep this set small — it's a different surface from the agent
-// tools, not an extension of them.
-function buildOperatorTools(client, ownerId) {
+function selectTools(client, config) {
+    return config.ownerMode
+        ? buildOperatorTools(client, config.ownerId)
+        : buildTools(client, config.agentId, config.repoId, { ownerScoped: config.ownerScoped });
+}
+// The provisioning verbs. Shared by owner mode and by an owner-scoped AGENT,
+// because the API enforces scope on every call, so one implementation serves
+// both and two copies would drift.
+// repoUrlSchema validates url.username, so https://user:token@host is a
+// supported stored value; verify-git-pushed.ts scrubs the same shape before it
+// reaches verification_log. GET /repos returns the bare row.
+function scrubRepoRow(repo) {
+    if (!repo || typeof repo !== "object")
+        return repo;
+    const row = { ...repo };
+    if (typeof row.repoUrl !== "string")
+        return row;
+    try {
+        const url = new URL(row.repoUrl);
+        // `ssh://git@host` is the ordinary remote and the username carries nothing,
+        // so it stays. A password always goes, and an https username is a token in
+        // every form that actually works (https://ghp_…@github.com/…).
+        if (url.password)
+            url.password = "";
+        if (url.protocol === "https:")
+            url.username = "";
+        row.repoUrl = url.toString();
+    }
+    catch {
+        // Unparseable means it never passed repoUrlSchema; hand back nothing rather
+        // than a string this function has not understood.
+        row.repoUrl = null;
+    }
+    return row;
+}
+function buildProvisioningTools(client, opts = {}) {
     return [
         {
             name: "list_repos",
-            description: "List all your repos. Returns id, name, repoUrl, description, and defaultAssignee for " +
-                "each. Use this first to get repo IDs before calling list_agents or create_task.",
+            description: "List every repo you own: id, name, description and defaultAssignee. Use it to find a " +
+                "repo's id before a tool that takes one. NOTE which tools those are — most tools act on " +
+                "the repo this session belongs to and take no repo argument, so passing an id to one of " +
+                "them is ignored rather than refused, and the work lands in your home repo. Check the " +
+                "tool's own schema for a repoId field before assuming you can aim it somewhere else.",
             inputSchema: zod_1.z.object({}),
             handler: async () => {
-                const repos = await client.listRepos();
+                const repos = (await client.listRepos()).map(scrubRepoRow);
                 return {
                     content: [{
                             type: "text",
@@ -752,6 +795,141 @@ function buildOperatorTools(client, ownerId) {
                 };
             },
         },
+        {
+            name: "create_repo",
+            description: "Create a new project owned by you. Use this when work needs somewhere to live that does " +
+                "not exist yet — you do not have to send the user to a dashboard first. The new repo is " +
+                "owned by your account, so your own credential reaches it immediately and list_repos " +
+                "will show it. Set repoUrl if you know the git remote: the git_pushed verification kind " +
+                "needs it to check whether a branch was actually pushed. Creating a repo cannot be " +
+                "undone from here, so use a name the user would recognise.",
+            inputSchema: zod_1.z.object({
+                name: zod_1.z.string().min(1).describe("Short project name, e.g. 'checkout-service'."),
+                description: zod_1.z.string().optional().describe("What this project is for."),
+                repoUrl: zod_1.z.string().optional().describe("Git remote, and it must parse as a URL: https://host/o/r.git or ssh://git@host/o/r.git. " +
+                    "The scp-style form git@host:o/r.git that `git remote -v` prints is REFUSED with a 400. " +
+                    "Enables the git_pushed verification kind."),
+            }),
+            handler: async (input) => {
+                // No `context`: /session/start returns repos.context verbatim to every
+                // agent in the repo as configuration, so nothing marks it untrusted.
+                const repo = await client.createRepo({
+                    name: input.name,
+                    ...(input.description ? { description: input.description } : {}),
+                    ...(input.repoUrl ? { repoUrl: input.repoUrl } : {}),
+                });
+                return { content: [{ type: "text", text: JSON.stringify({ repo }, null, 2) }] };
+            },
+        },
+        // invite_agent mints a bearer credential, and agent mode reaches a headless
+        // `claude --print --dangerously-skip-permissions` loop where nothing
+        // confirms a call. Before this, no agent-mode tool took a repoId from the
+        // model at all, so the model's reach was one repo even when the credential
+        // reached every repo the owner owns.
+        ...(opts.credentialMinting ? [{
+                name: "invite_agent",
+                description: "Authorise a new agent to join one of your repos. This does NOT create the agent: it " +
+                    "mints a single-use, expiring invite code and returns the exact command that redeems it. " +
+                    "Two ways to finish. If you have a shell on the machine that agent will run on, create " +
+                    "its working directory and run the command there. If you do not, give the user the " +
+                    "command to paste. Either way the redeem is INTERACTIVE: `login` prompts for the agent " +
+                    "name and specialization and does not yet read them from the invite, so expect to answer " +
+                    "two questions and do not run it anywhere it cannot reach a terminal. " +
+                    "The code is the only secret here and it is worthless once redeemed, which is why this " +
+                    "is an invite rather than a token: a token would be long-lived and would sit in this " +
+                    "conversation. Set workerType to the runtime that agent actually is, or it joins " +
+                    "labelled 'human' and routing treats it wrongly.",
+                inputSchema: zod_1.z.object({
+                    repoId: zod_1.z.string().describe("The repo to invite into. Must be one you own; see list_repos."),
+                    name: zod_1.z.string().min(1).describe("Suggested name for the new agent, e.g. 'reviewer'."),
+                    workerType: zod_1.z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"])
+                        .optional().describe("The runtime this agent will run as. Defaults to 'human' at redeem time if omitted."),
+                    specialization: zod_1.z.string().optional().describe("What this agent is for, e.g. 'review' or 'frontend'. Used for routing."),
+                }),
+                handler: async (input) => {
+                    // Worker, hardcoded, and this is the ONLY control on the path. The route
+                    // refuses an orchestrator invite from a non-orchestrator caller and
+                    // applies no role check at all to a worker one, so there is no backstop
+                    // behind this line. The caller here is always an orchestrator anyway.
+                    const { invite, code } = await client.createInvite(input.repoId, {
+                        suggestedName: input.name,
+                        ...(input.specialization ? { suggestedSpecialization: input.specialization } : {}),
+                        role: "worker",
+                    });
+                    const workerTypeFlag = input.workerType ? ` --worker-type ${input.workerType}` : "";
+                    // --api, because `login` otherwise prompts with a localhost default and
+                    // a wrong Enter sends the redeem to the wrong server. RELAI_CONFIG_DIR,
+                    // because the config is per HOME rather than per directory: with one
+                    // already present, `login --invite` prints "Already logged in" and exits
+                    // 0 without redeeming, which is the normal second call in an onboarding
+                    // session.
+                    const slot = input.name.replace(/[^A-Za-z0-9._-]/g, "-");
+                    return {
+                        content: [{
+                                type: "text",
+                                text: JSON.stringify({
+                                    invite,
+                                    code,
+                                    redeemCommand: `RELAI_CONFIG_DIR=~/.config/relai/${slot} pitboss login --api ${client.apiUrl} ` +
+                                        `--invite ${code}${workerTypeFlag}`,
+                                    nextStep: "Run redeemCommand in the directory that agent will work from, or give it to the " +
+                                        "user to paste there. It will ask for an agent name and a specialization. The " +
+                                        "code is single-use and expires. One machine holds one identity per config dir, " +
+                                        "which is why the command sets RELAI_CONFIG_DIR — drop it and a machine that " +
+                                        "already has an agent will report success without redeeming anything.",
+                                }, null, 2),
+                            }],
+                    };
+                },
+            }] : []),
+        {
+            name: "list_invites",
+            description: "List the outstanding join codes on one of your repos, so you can see what is still " +
+                "redeemable. Use this before minting another, and to check nothing is open that you did " +
+                "not intend. An invite with acceptedAt set has already been used and is dead; one with " +
+                "neither acceptedAt nor revokedAt is live until it expires.",
+            inputSchema: zod_1.z.object({
+                repoId: zod_1.z.string().describe("The repo whose invites to list."),
+            }),
+            handler: async (input) => {
+                const invites = await client.listInvites(input.repoId);
+                return {
+                    content: [{
+                            type: "text",
+                            text: invites.length === 0
+                                ? "No invites on that repo."
+                                // suggestedName is free text any member of any of the owner's
+                                // repos can write, and it lands in a turn holding create_repo.
+                                : JSON.stringify({ invites, peerBoundary: exports.PEER_BOUNDARY }, null, 2),
+                        }],
+                };
+            },
+        },
+        {
+            name: "revoke_invite",
+            description: "Kill an outstanding join code so it can no longer be redeemed. Use this the moment an " +
+                "invite is not going to be used, or if a code may have been seen by someone it was not " +
+                "meant for. This is recoverable: it does not remove any agent that already joined, and " +
+                "you can always mint a fresh code with invite_agent.",
+            inputSchema: zod_1.z.object({
+                inviteId: zod_1.z.string().describe("The invite id from list_invites, which looks like invite_xxx. This is NOT the join " +
+                    "code: codes are a different value with a different prefix and cannot be revoked by code."),
+            }),
+            handler: async (input) => {
+                await client.revokeInvite(input.inviteId);
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ revoked: input.inviteId }, null, 2),
+                        }],
+                };
+            },
+        },
+    ];
+}
+function buildOperatorTools(client, ownerId) {
+    return [
+        ...buildProvisioningTools(client, { credentialMinting: true }),
         {
             name: "list_agents",
             description: "List agents across your repos, with a computed online field (true if seen within the " +

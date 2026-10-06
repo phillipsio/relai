@@ -10,7 +10,7 @@ const node_path_1 = require("node:path");
 const create_server_js_1 = require("./create-server.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const api_client_js_1 = require("./api-client.js");
-const tools_js_1 = require("./tools.js");
+const register_tools_js_1 = require("./register-tools.js");
 const owner_watch_js_1 = require("./owner-watch.js");
 const repo_guard_js_1 = require("./repo-guard.js");
 // Report the package version (dist/index.js → ../package.json) so the MCP
@@ -28,9 +28,9 @@ if (OWNER_MODE) {
         process.exit(1);
     }
     // API_OWNER_TOKEN is a cross-project credential — with a different X-Owner-Id
-    // it can act as any owner. The HTTP transport below is unauthenticated, so
-    // this process must sit behind an authenticating proxy / bound to localhost,
-    // never exposed directly. See docs/operator-ingress.md.
+    // it can act as any owner. The HTTP transport below requires this same
+    // credential as a bearer token, but still bind to localhost behind an
+    // authenticating proxy for defense in depth. See docs/operator-ingress.md.
     console.error("[relai-mcp] owner mode: API_OWNER_TOKEN is a god-key credential — keep this server " +
         "off the open internet (localhost bind + authenticating reverse proxy only).");
 }
@@ -54,13 +54,14 @@ const apiClient = new api_client_js_1.ApiClient({
     ownerId: OWNER_MODE ? OWNER_ID : undefined,
 });
 const server = (0, create_server_js_1.createMcpServer)(OWNER_MODE ? "relai-operator" : "relai", pkg.version);
-// Register tools for the active mode.
-const tools = OWNER_MODE
-    ? (0, tools_js_1.buildOperatorTools)(apiClient, OWNER_ID)
-    : (0, tools_js_1.buildTools)(apiClient, AGENT_ID, REPO_ID);
-for (const tool of tools) {
-    server.tool(tool.name, tool.description, tool.inputSchema.shape, tool.handler);
-}
+// Register tools for the active mode. In agent mode the CREDENTIAL decides
+// whether the provisioning verbs appear, not the environment: tokens.ownerId
+// exists so possession determines authority, and choosing the toolset from an
+// env var left that true at the API and false at the layer the model uses.
+// Awaited before connect, bounded, and fails closed — see owner-scope.ts.
+const toolConfig = OWNER_MODE
+    ? { ownerMode: true, ownerId: OWNER_ID }
+    : { ownerMode: false, agentId: AGENT_ID, repoId: REPO_ID };
 // No agent identity here, so heartbeat does not apply but attention does:
 // without this the console saw only what the operator thought to ask for.
 if (OWNER_MODE) {
@@ -169,33 +170,31 @@ async function assertRepoOrExit() {
 // Transport
 async function main() {
     await assertRepoOrExit();
+    // Before connect: a client that connects first would see whatever was
+    // registered at that instant.
+    await (0, register_tools_js_1.registerTools)(server, apiClient, toolConfig);
     if (TRANSPORT === "stdio") {
         const transport = new stdio_js_1.StdioServerTransport();
         await server.connect(transport);
     }
     else if (TRANSPORT === "http") {
-        // HTTP/SSE transport — for remote/team scenarios
-        // Import lazily so stdio-only installs don't need the HTTP deps
-        const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
+        // HTTP/SSE transport — for remote/team scenarios. Gated on the same
+        // credential this process already holds (API_SECRET or API_OWNER_TOKEN) —
+        // see http-transport.ts. Still bind to loopback by default and put an
+        // authenticating layer (tunnel/proxy/VPN) in front for remote access
+        // rather than binding to all interfaces. Override only deliberately via
+        // MCP_HOST.
         const http = await import("node:http");
+        const { createHttpRequestListener } = await import("./http-transport.js");
         const port = Number(process.env.MCP_PORT ?? 3001);
-        // The HTTP/SSE transport is unauthenticated and, in owner mode, carries a
-        // god-key credential — so bind to loopback by default. Put an
-        // authenticating layer (tunnel/proxy/VPN) in front for remote access rather
-        // than binding to all interfaces. Override only deliberately via MCP_HOST.
         const host = process.env.MCP_HOST ?? "127.0.0.1";
-        const httpServer = http.createServer(async (req, res) => {
-            if (req.method === "GET" && req.url === "/sse") {
-                const transport = new SSEServerTransport("/messages", res);
-                await server.connect(transport);
-            }
-            else if (req.method === "POST" && req.url === "/messages") {
-                res.writeHead(200).end();
-            }
-            else {
-                res.writeHead(404).end();
-            }
-        });
+        // MCP_HTTP_TOKEN lets the transport gate use a credential distinct from
+        // the one forwarded to the API — so a leaked transport token doesn't
+        // itself grant upstream API access. Falls back to the process credential
+        // when unset, preserving the simpler single-credential setup.
+        const credential = process.env.MCP_HTTP_TOKEN || (OWNER_MODE ? API_OWNER_TOKEN : API_SECRET);
+        const listener = createHttpRequestListener(server, credential);
+        const httpServer = http.createServer(listener);
         httpServer.listen(port, host, () => {
             console.error(`[relai-mcp] HTTP/SSE transport listening on ${host}:${port}`);
         });

@@ -6,6 +6,7 @@ export interface ApiClientConfig {
 export declare class ApiClient {
     private baseUrl;
     private headers;
+    readonly apiUrl: string;
     constructor(config: ApiClientConfig);
     private requestEnvelope;
     private request;
@@ -14,6 +15,41 @@ export declare class ApiClient {
         repoUrl?: string | null;
     }>;
     listRepos(): Promise<unknown[]>;
+    createRepo(body: {
+        name: string;
+        description?: string;
+        repoUrl?: string;
+        context?: string;
+    }): Promise<{
+        id: string;
+        name: string;
+        ownerId: string | null;
+    }>;
+    listAgentTokens(agentId: string): Promise<{
+        id: string;
+        ownerScoped: boolean;
+        current: boolean | null;
+    }[]>;
+    listInvites(repoId: string): Promise<{
+        id: string;
+        acceptedAt: string | null;
+        expiresAt: string;
+    }[]>;
+    revokeInvite(inviteId: string): Promise<void>;
+    createInvite(repoId: string, body: {
+        suggestedName?: string;
+        suggestedSpecialization?: string;
+        role?: string;
+        ttlSeconds?: number;
+    }): Promise<{
+        invite: {
+            id: string;
+            repoId: string;
+            role: string;
+            expiresAt: string;
+        } | undefined;
+        code: string | undefined;
+    }>;
     publishArtifact(body: {
         repoId: string;
         name: string;

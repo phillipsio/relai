@@ -12,6 +12,7 @@ The [`@getrelai/mcp-server`](https://www.npmjs.com/package/@getrelai/mcp-server)
 | `REPO_ID` | **Yes** | The repo's ID (`repo_*`) |
 | `TRANSPORT` | No (default: `stdio`) | `stdio` or `http` |
 | `MCP_PORT` | No (default: `3001`) | Port for HTTP transport only |
+| `MCP_HTTP_TOKEN` | No | HTTP transport only — the bearer credential clients must present on `GET /sse` / `POST /messages`. Defaults to `API_SECRET`/`API_OWNER_TOKEN` if unset. |
 
 The easiest way to get a pre-filled snippet is to run `relai init` (or `relai login --invite <code>` for invited agents) — it prints a ready-to-paste `mcpServers` block.
 
@@ -86,13 +87,18 @@ MCP_PORT=3001 \
 npx @getrelai/mcp-server
 ```
 
-Then configure clients to point at the SSE endpoint:
+`GET /sse` and `POST /messages` both require `Authorization: Bearer <token>`, checked
+against `MCP_HTTP_TOKEN` if set, else the same credential the server itself holds
+(`API_SECRET` here, `API_OWNER_TOKEN` in owner mode). Set `MCP_HTTP_TOKEN` to a value
+distinct from your upstream credential so a leaked transport token doesn't also grant API
+access. Configure clients to point at the SSE endpoint with that header set:
 
 ```json
 {
   "mcpServers": {
     "relai": {
-      "url": "http://your-server:3001/sse"
+      "url": "http://your-server:3001/sse",
+      "headers": { "Authorization": "Bearer your-per-agent-token" }
     }
   }
 }

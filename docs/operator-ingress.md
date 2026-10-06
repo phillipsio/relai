@@ -65,17 +65,23 @@ TRANSPORT=http
 MCP_PORT=3001
 ```
 
-> **The HTTP/SSE transport requires the same credential as a bearer token.**
-> `GET /sse` and `POST /messages` both check `Authorization: Bearer <token>`
-> against whatever this process was started with (`API_OWNER_TOKEN` here,
-> `API_SECRET` in agent mode), in constant time — see `http-auth.ts`. Connect
-> your remote MCP client with that header set. This is one credential doing
-> double duty (transport auth and upstream API auth), not two independent
-> checks, so it still binds to `127.0.0.1` by default (override only
-> deliberately via `MCP_HOST`). To reach it remotely, put an **authenticating**
-> layer in front (a Cloudflare Tunnel + Access policy, an authenticating
-> reverse proxy, or a private VPN/Tailscale network) — never bind it to
-> `0.0.0.0` / expose `MCP_PORT` to the public internet directly.
+> **The HTTP/SSE transport requires a bearer token.** `GET /sse` and
+> `POST /messages` both check `Authorization: Bearer <token>` against
+> `MCP_HTTP_TOKEN` if set, else the same credential this process was started
+> with (`API_OWNER_TOKEN` here), compared via a hashed constant-time check —
+> see `http-auth.ts`. **Set `MCP_HTTP_TOKEN` to its own value distinct from
+> `API_OWNER_TOKEN`**: without it, the transport credential and the god key
+> are the same string, so anything that can see one (a proxy log, a client
+> config file, phone telemetry) can see the other. Connect your remote MCP
+> client with that header set. It still binds to `127.0.0.1` by default
+> (override only deliberately via `MCP_HOST`). To reach it remotely, put an
+> **authenticating** layer in front (a Cloudflare Tunnel + Access policy, an
+> authenticating reverse proxy, or a private VPN/Tailscale network) — never
+> bind it to `0.0.0.0` / expose `MCP_PORT` to the public internet directly.
+> **`POST /messages` does not yet process a tool call** (it 200s without
+> calling the SDK's message handler) — the transport authenticates a
+> connection today, it does not yet serve one. See AGENTS.md's MCP server
+> section.
 
 ### 2. Make sure your repos have an owner
 
@@ -137,16 +143,19 @@ keep straight:
 
 1. **The token on your phone.** Treat it like any root credential; rotate on
    loss.
-2. **The owner-mode MCP server itself.** The HTTP transport now requires the
-   same `API_OWNER_TOKEN` as a bearer header (see Setup step 1), but that's the
-   god key itself gating its own door — whoever holds the token can reach the
-   port directly. The authenticating layer in front is still what actually
-   protects you against anyone who doesn't hold the token; it's the only thing
-   standing between a leaked token and the port if `MCP_HOST` is ever widened.
+2. **The owner-mode MCP server itself.** The HTTP transport now requires a
+   bearer header (see Setup step 1) — set `MCP_HTTP_TOKEN` so that header is
+   NOT the god key itself. Without it, whoever holds the one credential can
+   reach the port directly, which is the same failure mode as before this
+   fix, just moved one layer out. The authenticating layer in front is still
+   what actually protects you against anyone who doesn't hold a valid
+   credential; it's the only thing standing between a leaked token and the
+   port if `MCP_HOST` is ever widened.
 
 A dedicated scoped owner-token type (resolves to a fixed `users.id`, can't
-impersonate others) is the intended follow-up that would let the transport
-defend itself with something less than the god key.
+impersonate others) is the intended follow-up for the credential the MCP
+server forwards upstream — `MCP_HTTP_TOKEN` only narrows what the transport
+itself exposes.
 
 ## Related: in-worker subagent fan-out
 

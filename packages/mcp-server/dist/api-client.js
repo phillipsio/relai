@@ -6,8 +6,10 @@ exports.ApiClient = void 0;
 class ApiClient {
     baseUrl;
     headers;
+    apiUrl;
     constructor(config) {
         this.baseUrl = config.baseUrl.replace(/\/$/, "");
+        this.apiUrl = this.baseUrl;
         this.headers = {
             "Content-Type": "application/json",
             Authorization: `Bearer ${config.secret}`,
@@ -22,7 +24,9 @@ class ApiClient {
             headers: this.headers,
             body: body ? JSON.stringify(body) : undefined,
         });
-        const json = await res.json();
+        // A 204 carries no body, so res.json() rejects. Parse defensively rather
+        // than checking only for 204: a body-less error must still fail, loudly.
+        const json = await res.json().catch(() => ({}));
         if (!res.ok) {
             throw new Error(json.error?.message ?? `API error ${res.status}`);
         }
@@ -38,6 +42,27 @@ class ApiClient {
     }
     listRepos() {
         return this.request("GET", "/repos");
+    }
+    createRepo(body) {
+        return this.request("POST", "/repos", body);
+    }
+    // Used at startup to decide whether this credential carries owner scope. The
+    // `current` flag marks the row that authenticated the request, which is the
+    // only row that answers the question.
+    listAgentTokens(agentId) {
+        return this.request("GET", `/agents/${agentId}/tokens`);
+    }
+    listInvites(repoId) {
+        return this.request("GET", `/repos/${repoId}/invites`);
+    }
+    revokeInvite(inviteId) {
+        return this.request("DELETE", `/invites/${inviteId}`);
+    }
+    // `code` is a sibling of `data`, not a field inside it: unwrapping `.data`
+    // returns an invite row with no way to redeem it.
+    async createInvite(repoId, body) {
+        const json = await this.requestEnvelope("POST", `/repos/${repoId}/invites`, body);
+        return { invite: json.data, code: json.code };
     }
     // Artifacts
     publishArtifact(body) {

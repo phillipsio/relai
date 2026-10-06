@@ -218,9 +218,13 @@ async function main() {
 
     const port = Number(process.env.MCP_PORT ?? 3001);
     const host = process.env.MCP_HOST ?? "127.0.0.1";
-    const credential = OWNER_MODE ? API_OWNER_TOKEN! : API_SECRET!;
+    // MCP_HTTP_TOKEN lets the transport gate use a credential distinct from
+    // the one forwarded to the API — so a leaked transport token doesn't
+    // itself grant upstream API access. Falls back to the process credential
+    // when unset, preserving the simpler single-credential setup.
+    const credential = process.env.MCP_HTTP_TOKEN || (OWNER_MODE ? API_OWNER_TOKEN! : API_SECRET!);
 
-    const listener = await createHttpRequestListener(server, credential);
+    const listener = createHttpRequestListener(server, credential);
     const httpServer = http.createServer(listener);
 
     httpServer.listen(port, host, () => {

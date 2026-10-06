@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { createDb, users, tokens, ownerGodAgents } from "@getrelai/db";
+import { createDb, users, tokens, invites, agents, ownerGodAgents } from "@getrelai/db";
 import { generateToken, hashToken } from "../lib/tokens.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
@@ -80,6 +80,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (createdOwners.length) await db.delete(ownerGodAgents).where(inArray(ownerGodAgents.ownerId, createdOwners));
   for (const id of createdRepos) await app.inject({ method: "DELETE", url: `/repos/${id}`, headers: ADMIN });
   for (const id of createdOwners) await db.delete(users).where(eq(users.id, id));
   await app?.close();
@@ -146,6 +147,23 @@ describe("the god agent mints credentials only by invite, so the kill switch can
     expect(other.statusCode).toBe(403);
     const self = await app.inject({ method: "POST", url: `/agents/${god.agentId}/tokens`, headers: as(god.token), body: JSON.stringify({ keepExisting: true }) });
     expect(self.statusCode).toBe(201);
+  });
+
+  it("can invite workers but not orchestrators, so nothing it brings in can mint outside an invite", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const repoId = await mkRepo(owner);
+    const res = await app.inject({ method: "POST", url: `/repos/${repoId}/invites`, headers: as(god.token), body: JSON.stringify({ role: "orchestrator" }) });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("tells a worker it may not delete the top-level agent, without saying which one it is", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const code = (await app.inject({ method: "POST", url: `/repos/${god.repoId}/invites`, headers: as(god.token), body: "{}" })).json().code;
+    const worker = (await accept(code, "worker")).json().token as string;
+    const res = await app.inject({ method: "DELETE", url: `/agents/${god.agentId}`, headers: as(worker) });
+    expect(res.statusCode).toBe(403);
   });
 
   it("cannot be deleted out from under the kill switch", async () => {
@@ -278,6 +296,49 @@ describe("the owner's kill switch", () => {
       ]);
       if (redeemed.statusCode === 201) expect(await authenticates(redeemed.json().token)).toBe(false);
     }
+  });
+
+  it("leaves no invite redeemable once its issuer has been revoked", async () => {
+    const s = await scenario();
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" });
+    const [late] = await db.select({ id: invites.id }).from(invites).where(eq(invites.createdBy, s.god.agentId)).limit(1);
+    await db.update(invites).set({ revokedAt: null, acceptedAt: null }).where(eq(invites.id, late.id));
+    const code = `inv_late_${uniq()}`;
+    await db.update(invites).set({ codeHash: hashToken(code), expiresAt: new Date(Date.now() + 3600_000) }).where(eq(invites.id, late.id));
+    expect((await accept(code, "worker")).statusCode).toBe(400);
+  });
+
+  it("refuses a self-rotation whose presenting token was revoked under it", async () => {
+    const s = await scenario();
+    const results = await Promise.all([
+      app.inject({ method: "POST", url: `/agents/${s.god.agentId}/tokens`, headers: as(s.god.token), body: JSON.stringify({ keepExisting: true }) }),
+      app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" }),
+    ]);
+    const rotated = results[0];
+    if (rotated.statusCode === 201) expect(await authenticates(rotated.json().token)).toBe(false);
+  });
+
+  it("will not delete the repo that holds the top-level agent", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const res = await app.inject({ method: "DELETE", url: `/repos/${god.repoId}`, headers: asOwner(owner) });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("god_agent_exists");
+  });
+
+  it("waits for a rotation holding the agent's row, so it cannot miss the token that rotation inserts", async () => {
+    const s = await scenario();
+    let revoked = false;
+    await db.transaction(async (tx) => {
+      await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, s.god.agentId)).for("update");
+      const pending = app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" })
+        .then(() => { revoked = true; });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(revoked).toBe(false);
+      void pending;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(revoked).toBe(true);
   });
 
   it("frees the slot for a new god agent", async () => {

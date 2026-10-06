@@ -47,12 +47,12 @@ export const ownerRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       const reached = new Set(seeds);
       for (let frontier = seeds; frontier.length > 0;) {
         const redeemed = await tx.select({ agentId: invites.acceptedAgentId }).from(invites)
-          .where(inArray(invites.createdBy, frontier)).for("update");
+          .where(inArray(invites.createdBy, frontier)).orderBy(invites.id).for("update");
         frontier = redeemed.flatMap((r) => (r.agentId && !reached.has(r.agentId) ? [r.agentId] : []));
         for (const id of frontier) reached.add(id);
       }
       const ids = [...reached];
-      await tx.select({ id: agents.id }).from(agents).where(inArray(agents.id, ids)).for("update");
+      await tx.select({ id: agents.id }).from(agents).where(inArray(agents.id, ids)).orderBy(agents.id).for("update");
 
       const now = new Date();
       const pending = await tx.update(invites).set({ revokedAt: now })

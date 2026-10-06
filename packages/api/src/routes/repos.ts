@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { and, eq, inArray, or } from "drizzle-orm";
-import { repos, agents, threads, messages, tasks, routingLog, verificationLog, invites } from "@getrelai/db";
+import { repos, agents, threads, messages, tasks, routingLog, verificationLog, invites, ownerGodAgents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { assertRepoAccess, callerMayAdministerRepo, scopedRepoFilter } from "../lib/ownership.js";
 import type { Db } from "@getrelai/db";
@@ -136,6 +136,13 @@ export const repoRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     }
     const [project] = await db.select().from(repos).where(eq(repos.id, id));
     if (!project) return reply.status(404).send({ error: { code: "not_found", message: "Repo not found" } });
+    const [holder] = await db.select({ agentId: ownerGodAgents.agentId }).from(ownerGodAgents)
+      .innerJoin(agents, eq(agents.id, ownerGodAgents.agentId)).where(eq(agents.repoId, id));
+    if (holder) {
+      return reply.status(409).send({
+        error: { code: "god_agent_exists", message: "This repo holds the account's top-level agent. Revoke it with the owner's kill switch before deleting the repo." },
+      });
+    }
 
     // One transaction, same reason as DELETE /agents/:id: a partial cascade
     // leaves the repo alive with its tasks and threads already gone.

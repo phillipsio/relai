@@ -161,7 +161,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     }
 
     const plaintext = generateToken();
-    const { row, revoked, carried } = await db.transaction(async (tx) => {
+    const rotated = await db.transaction(async (tx) => {
       // The lock serialises rotations of one agent: under READ COMMITTED a
       // second one would otherwise revoke what it can see and miss the row the
       // first just inserted, leaving two live. Revoke precedes insert so no
@@ -199,6 +199,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
             .where(and(eq(tokens.id, request.tokenId), isNull(tokens.revokedAt)))
             .for("update")
         : [];
+      if (request.tokenId && !presenting) return null;
 
       const retired = body.data.keepExisting
         ? []
@@ -241,6 +242,10 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
 
       return { row: inserted, revoked: retired.map((r) => r.id), carried: carriedOwnerId };
     });
+    if (!rotated) {
+      return reply.status(401).send({ error: { code: "unauthorized", message: "The presenting token was revoked." } });
+    }
+    const { row, revoked, carried } = rotated;
 
     return reply.status(201).send({
       data: { ...row, ownerScoped: carried !== null },
@@ -277,16 +282,16 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
 
+    if (!callerMayActOnAgent(request, check.agent.id)) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "Only the agent itself or an orchestrator may delete this agent." },
+      });
+    }
+
     const [slot] = await db.select().from(ownerGodAgents).where(eq(ownerGodAgents.agentId, check.agent.id));
     if (slot) {
       return reply.status(409).send({
         error: { code: "god_agent_exists", message: "This is the account's top-level agent. Revoke it with the owner's kill switch before deleting it." },
-      });
-    }
-
-    if (!callerMayActOnAgent(request, check.agent.id)) {
-      return reply.status(403).send({
-        error: { code: "forbidden", message: "Only the agent itself or an orchestrator may delete this agent." },
       });
     }
 

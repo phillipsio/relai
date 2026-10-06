@@ -53,6 +53,8 @@ const acceptSchema = z.object({
   repoPath:       promptSafePath.optional(),
 });
 
+class IssuerRevoked extends Error {}
+
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.post<{ Params: { id: string } }>("/repos/:id/invites", async (request, reply) => {
     const access = await assertRepoAccess(request, db, request.params.id);
@@ -66,6 +68,11 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     // Minting a privileged invite is itself privileged, or the accepter gate is
     // just moved one hop rather than closed.
     const role = body.data.role ?? "worker";
+    if (role === "orchestrator" && request.agent && request.ownerId) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "The top-level agent invites workers only; an orchestrator seat comes from the owner's dashboard." },
+      });
+    }
     if (role === "orchestrator" && request.agent && request.agent.role !== "orchestrator") {
       return reply.status(403).send({
         error: { code: "forbidden", message: "Only orchestrator agents may issue an orchestrator invite." },
@@ -158,6 +165,11 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
         .where(and(eq(invites.id, invite.id), isNull(invites.acceptedAt), isNull(invites.revokedAt)))
         .returning();
       if (!claimed) return null;
+      if (claimed.createdBy) {
+        const [issuerLive] = await tx.select({ id: tokens.id }).from(tokens)
+          .where(and(eq(tokens.agentId, claimed.createdBy), isNull(tokens.revokedAt))).limit(1);
+        if (!issuerLive) throw new IssuerRevoked();
+      }
 
       const [agent] = await tx.insert(agents).values({
         id:             newId("agent"),
@@ -188,6 +200,9 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
         return agent;
       });
     } catch (err) {
+      if (err instanceof IssuerRevoked) {
+        return reply.status(400).send({ error: { code: "invalid_invite", message: "The agent that issued this invite has been revoked." } });
+      }
       if (isConstraintViolation(err, ONE_GOD_AGENT_PER_OWNER)) {
         return reply.status(409).send({
           error: {

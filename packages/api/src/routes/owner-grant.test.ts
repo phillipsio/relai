@@ -289,10 +289,38 @@ describe("rotation must not hand the super agent's scope to a peer", () => {
   // ordinary repo-scoped orchestrator mint itself the user's tenant-wide
   // authority. `agents_one_orchestrator_per_repo` closes this by construction
   // rather than by a token-scope check — a peer orchestrator can no longer be
-  // registered in the super agent's own repo at all (see
-  // one-orchestrator.test.ts), so the premise this scenario needed can't
-  // exist. The two tests that exercised it were removed rather than kept as
-  // permanently-skipped dead code.
+  // registered in the super agent's own repo at all. The two tests that
+  // exercised the rotation-scope check directly were removed rather than
+  // kept as permanently-skipped dead code; the test below proves the
+  // replacement claim instead of just asserting it in a comment —
+  // `one-orchestrator.test.ts` never touches owner scope, so without this,
+  // nothing confirms the unique index (on `agents.repoId` + `role`, blind to
+  // `tokens.ownerId`) actually fires for an owner-scoped repo too.
+  it("refuses a second orchestrator in a repo that already holds an owner-scoped one, by the same constraint", async () => {
+    const home = await mkRepo("__test__ og peer-blocked", ownerA);
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
+    await redeem(deviceCode, `og-super-${Date.now()}`);
+
+    const viaAgents = await app.inject({
+      method: "POST", url: "/agents", headers: ADMIN,
+      body: JSON.stringify({ repoId: home, name: `og-peer-${Date.now()}`, role: "orchestrator" }),
+    });
+    expect(viaAgents.statusCode).toBe(409);
+    expect(viaAgents.json().error.code).toBe("conflict");
+
+    const inv = await app.inject({
+      method: "POST", url: `/repos/${home}/invites`, headers: ADMIN,
+      body: JSON.stringify({ role: "orchestrator" }),
+    });
+    const viaInvite = await app.inject({
+      method: "POST", url: "/auth/accept-invite", headers: JSON_ONLY,
+      body: JSON.stringify({ code: inv.json().code, name: `og-peer-inv-${Date.now()}`, role: "orchestrator" }),
+    });
+    expect(viaInvite.statusCode).toBe(409);
+    expect(viaInvite.json().error.code).toBe("conflict");
+    // The refused invite stays redeemable, same as the plain (non-owner) case.
+    expect(viaInvite.json().error.message).not.toContain("inv_");
+  });
 
   it("preserves scope when the super agent rotates itself", async () => {
     const { home, sibling: siblingRepo } = await mkRepoPair(ownerA, "self-rotate");
@@ -408,13 +436,34 @@ describe("the invariant holds at the point of trust, not only at approve", () =>
     expect(res.statusCode).toBe(400);
   });
 
-  // Same structural conflict as the peer-orchestrator-rotation scenario
-  // removed from the "rotation must not hand the super agent's scope to a
-  // peer" block above: this needs a second orchestrator in the super agent's
-  // own repo to create the peer-initiated rotation row at all, which
-  // agents_one_orchestrator_per_repo no longer allows. See that comment for
-  // the full reasoning; removed here for the same reason rather than kept as
-  // permanently-skipped dead code.
+  it("carries the scope of the credential presenting the request, not the newest row", async () => {
+    // A newer repo-scoped live token row on the super agent doesn't need a
+    // second orchestrator at all — the admin path with keepExisting produces
+    // exactly that. Self-rotation must not read that newer row and silently
+    // downgrade the super agent, which needs a fresh device grant to recover.
+    const { home, sibling: siblingRepo } = await mkRepoPair(ownerA, "present-scope");
+    const { deviceCode } = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
+    const { token, agentId } = await redeem(deviceCode, `og-present-${Date.now()}`);
+
+    const adminRot = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: ADMIN,
+      body: JSON.stringify({ keepExisting: true }),
+    });
+    expect(adminRot.statusCode).toBe(201);
+    expect(adminRot.json().data.ownerScoped).toBe(false);
+
+    // The super agent's own credential is still live; rotating with it must keep scope.
+    const self = await app.inject({
+      method: "POST", url: `/agents/${agentId}/tokens`, headers: as(token),
+      body: JSON.stringify({ keepExisting: true }),
+    });
+    expect(self.statusCode).toBe(201);
+    expect(self.json().data.ownerScoped).toBe(true);
+    const reach = await app.inject({
+      method: "GET", url: `/repos/${siblingRepo}`, headers: as(self.json().token as string),
+    });
+    expect(reach.statusCode).toBe(200);
+  });
 });
 
 describe("one invite is one credential, under concurrency", () => {

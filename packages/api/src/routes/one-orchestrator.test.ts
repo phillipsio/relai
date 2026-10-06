@@ -64,10 +64,12 @@ describe("a repo holds at most one orchestrator", () => {
   });
 
   it("refuses a second with a 409 that says why, not a 500", async () => {
-    // A bare constraint would surface as an unhandled DB error, and this repo
-    // has no setErrorHandler, so the 500 body would carry the SQL statement.
+    // A bare constraint violation would still only 500 generically (server.ts's
+    // setErrorHandler already keeps the real error out of the body) — this
+    // pins the useful part: a 409 that actually says what went wrong.
     const res = await mkAgent(repoA, "orch-two", "orchestrator");
     expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("conflict");
     expect(res.json().error.message).toMatch(/orchestrator/i);
   });
 
@@ -101,6 +103,7 @@ describe("the invite path is gated too, because it is the one an orchestrator ca
       body: JSON.stringify({ name: "second-orch", code: mint.json().code }),
     });
     expect(join.statusCode).toBe(409);
+    expect(join.json().error.code).toBe("conflict");
     expect(join.json().error.message).toMatch(/orchestrator/i);
   });
 
@@ -166,5 +169,31 @@ describe("the database holds the line, because the routes are not the only write
       .filter((a) => a.role === "orchestrator");
     await app.inject({ method: "DELETE", url: `/agents/${orch.id}`, headers: ADMIN });
     expect((await mkAgent(repoB, "orch-b-again", "orchestrator")).statusCode).toBe(201);
+  });
+});
+
+describe("the index is the only guard, so concurrent attempts must still resolve to exactly one winner", () => {
+  // A sequential conflict only ever exercises isConstraintViolation()'s
+  // .cause-unwrap against a post-hoc index check. Real concurrent contention
+  // hits Postgres while the index is actually being written, which could in
+  // principle surface a different error shape (a lock wait, a serialization
+  // failure) that the unwrap doesn't recognize — this is the test that would
+  // catch that, the same reasoning owner-grant.test.ts's "one invite is one
+  // credential, under concurrency" test gives for firing requests together
+  // rather than one after another.
+  it("lets exactly one of N simultaneous registrations win", async () => {
+    const repoC = await mkRepo("__test__ one-orch concurrent");
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 6 }, (_, i) => mkAgent(repoC, `race-${i}`, "orchestrator")),
+      );
+      const statuses = results.map((r) => r.statusCode).sort();
+      expect(statuses).toEqual([201, 409, 409, 409, 409, 409]);
+      for (const r of results) {
+        if (r.statusCode === 409) expect(r.json().error.code).toBe("conflict");
+      }
+    } finally {
+      await app.inject({ method: "DELETE", url: `/repos/${repoC}`, headers: ADMIN });
+    }
   });
 });

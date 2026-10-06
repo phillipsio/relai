@@ -447,7 +447,7 @@ Production runs on a **DigitalOcean VPS**, not a PaaS.
 
 **Nothing applies the schema on deploy** — no CI, no release command, no pre-deploy hook — so migrations are applied by hand ON THE BOX, with `DATABASE_URL` from `/etc/relai/api.env` (the repo's `.env` is dev-only). Do it before the first deploy of a schema change, or the API boots against a schema it doesn't match.
 
-**Before applying any migration, check the data it constrains.** An `ALTER ... ADD CONSTRAINT` aborts on a single violating row, and a failed migration mid-deploy is worse than the defect it closes. Migration 0007 is the worked example: run its count query first, and decide what to do with violating rows before touching the schema.
+**Before applying any migration, check the data it constrains.** An `ALTER ... ADD CONSTRAINT` aborts on a single violating row, and a failed migration mid-deploy is worse than the defect it closes. Migration 0007 is the worked example: run its count query first, and decide what to do with violating rows before touching the schema. **Migration 0010 (`agents_one_orchestrator_per_repo`) needs the same check before it's applied anywhere this repo was checked out before 2026-10-06**: `select repo_id, count(*) from agents where role='orchestrator' group by 1 having count(*) > 1;` — zero rows locally (`relai` and `relai_test`) as of this migration's authoring, but that was never confirmed against production, which is migrated by hand and may be several commits behind.
 
 **Read `drizzle.__drizzle_migrations` rather than assuming which migrations are pending** — prod can be several commits behind `origin/main`.
 

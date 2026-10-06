@@ -44,21 +44,32 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       });
     }
 
+    const plaintext = generateToken();
     let agent: typeof agents.$inferSelect;
     try {
-      const [row] = await db.insert(agents).values({
-        id:             newId("agent"),
-        repoId:      body.data.repoId,
-        name:           body.data.name,
-        role:           body.data.role,
-        specialization: body.data.specialization ?? null,
-        tier:           body.data.tier ?? null,
-        domains:        body.data.domains,
-        workerType:     body.data.workerType ?? null,
-        repoPath:       body.data.repoPath ?? null,
-        lastSeenAt:     new Date(0), // never connected; first heartbeat marks it online
-      }).returning();
-      agent = row;
+      // One transaction: an agent row with no token is a dead orchestrator
+      // slot nothing can authenticate as, and with agents_one_orchestrator_per_repo
+      // there is no longer a second orchestrator to register as a workaround.
+      agent = await db.transaction(async (tx) => {
+        const [row] = await tx.insert(agents).values({
+          id:             newId("agent"),
+          repoId:      body.data.repoId,
+          name:           body.data.name,
+          role:           body.data.role,
+          specialization: body.data.specialization ?? null,
+          tier:           body.data.tier ?? null,
+          domains:        body.data.domains,
+          workerType:     body.data.workerType ?? null,
+          repoPath:       body.data.repoPath ?? null,
+          lastSeenAt:     new Date(0), // never connected; first heartbeat marks it online
+        }).returning();
+        await tx.insert(tokens).values({
+          id:        newId("tok"),
+          agentId:   row.id,
+          tokenHash: hashToken(plaintext),
+        });
+        return row;
+      });
     } catch (err) {
       if (isConstraintViolation(err, ONE_ORCHESTRATOR_PER_REPO)) {
         return reply.status(409).send({
@@ -70,13 +81,6 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       }
       throw err;
     }
-
-    const plaintext = generateToken();
-    await db.insert(tokens).values({
-      id:        newId("tok"),
-      agentId:   agent.id,
-      tokenHash: hashToken(plaintext),
-    });
 
     return reply.status(201).send({ data: agent, token: plaintext });
   });
@@ -263,6 +267,30 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       return reply.status(403).send({
         error: { code: "forbidden", message: "Only the agent itself or an orchestrator may delete this agent." },
       });
+    }
+
+    // Deleting the repo's only orchestrator leaves nothing in-band that can
+    // register a replacement: POST /agents and orchestrator invites both
+    // require an orchestrator caller, and agents_one_orchestrator_per_repo
+    // means there is no standing second one to fall back on, unlike before
+    // this constraint existed. Refused on the agent-token path only — by
+    // construction the only agent-token caller callerMayActOnAgent admits
+    // here is the orchestrator itself, since no peer orchestrator exists in
+    // this repo to act as the other arm. The admin/owner path can still
+    // remove it.
+    if (request.agent && check.agent.role === "orchestrator") {
+      const orchestrators = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.repoId, check.agent.repoId), eq(agents.role, "orchestrator")));
+      if (orchestrators.length <= 1) {
+        return reply.status(409).send({
+          error: {
+            code: "conflict",
+            message: "This is the project's only orchestrator. Register or invite a replacement first, or use the admin/owner path to remove it.",
+          },
+        });
+      }
     }
 
     const agentId = request.params.id;

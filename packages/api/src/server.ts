@@ -20,6 +20,7 @@ import { routingLogRoutes } from "./routes/routing-log.js";
 import { notificationChannelRoutes } from "./routes/notification-channels.js";
 import { sessionRoutes } from "./routes/session.js";
 import { feedbackRoutes } from "./routes/feedback.js";
+import { ownerRoutes } from "./routes/owner.js";
 import { startRoutingScheduler } from "./lib/router/scheduler.js";
 import { startNotificationDelivery } from "./lib/notifications.js";
 
@@ -84,6 +85,7 @@ export function buildServer({ logger = true, scheduler = true }: { logger?: bool
   fastify.register(messageRoutes, { db });
   fastify.register(routingLogRoutes, { db });
   fastify.register(notificationChannelRoutes, { db });
+  fastify.register(ownerRoutes, { db });
   fastify.register(sessionRoutes, { db });
   fastify.register(feedbackRoutes, { db });
 

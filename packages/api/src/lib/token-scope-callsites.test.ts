@@ -54,6 +54,7 @@ const CARRIERS = new Set([
   "routes/agents.ts",
   "routes/device-auth.ts",
   "routes/invites.ts",
+  "routes/owner.ts",
 ]);
 
 function scopeFacts(files: Array<{ name: string; text: string }>): ScopeFacts {
@@ -159,6 +160,7 @@ describe("owner scope on a credential has a pinned set of call sites", () => {
       "routes/agents.ts  .select({ ownerId: tokens.ownerId }) .from(tokens) .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt))) .orderBy(desc(tokens.createdAt)) .limit(1);",
       "routes/agents.ts  .select({ ownerId: tokens.ownerId }) .from(tokens) .where(and(eq(tokens.id, request.tokenId), isNull(tokens.revokedAt))) .for(\"update\") : [];",
       "routes/agents.ts  ownerId: tokens.ownerId, }) .from(tokens) .where(eq(tokens.agentId, check.agent.id)) .orderBy(desc(tokens.createdAt));",
+      "routes/owner.ts  .where(and(isNull(tokens.revokedAt), or(inArray(tokens.agentId, reached), eq(tokens.ownerId, owner)))) .returning({ id: tokens.id });",
     ]);
   });
 

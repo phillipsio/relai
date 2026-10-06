@@ -2,12 +2,12 @@ import { promptSafeText, promptSafeDomains, promptSafePath } from "../lib/router
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { and, eq, isNull, getTableColumns } from "drizzle-orm";
-import { agents, invites, repos, tokens } from "@getrelai/db";
+import { agents, invites, repos, tokens, ownerGodAgents } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js";
 import { assertRepoAccess } from "../lib/ownership.js";
-import { isConstraintViolation, ONE_ORCHESTRATOR_PER_REPO } from "../lib/constraints.js";
+import { isConstraintViolation, ONE_ORCHESTRATOR_PER_REPO, ONE_GOD_AGENT_PER_OWNER } from "../lib/constraints.js";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 // Clamped here rather than in the schema: a rejected request tells the caller
@@ -15,6 +15,7 @@ const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 // MCP tool that prints one into a chat transcript is not the only caller.
 // An unclamped value also overflows Date and 500s past ~3e11 seconds.
 const MAX_TTL_SECONDS = DEFAULT_TTL_SECONDS;
+const GOD_MINTED_TTL_SECONDS = 60 * 60;
 
 // Named fields, not the row: codeHash must never leave the server. Derived from
 // the table rather than typed out, so a column added later cannot silently stop
@@ -78,7 +79,8 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     // refuses removing a repo's sole orchestrator on the agent-token path for
     // exactly this reason) — gating creation here would remove that.
     const code = generateInviteCode();
-    const ttl  = Math.min(body.data.ttlSeconds ?? DEFAULT_TTL_SECONDS, MAX_TTL_SECONDS);
+    const cap  = request.agent && request.ownerId ? GOD_MINTED_TTL_SECONDS : MAX_TTL_SECONDS;
+    const ttl  = Math.min(body.data.ttlSeconds ?? cap, cap);
     const [row] = await db.insert(invites).values({
       id:        newId("invite"),
       repoId: project.id,
@@ -178,10 +180,22 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
         tokenHash: hashSecret(plaintext),
       });
 
+      if (claimed.ownerId) {
+        await tx.insert(ownerGodAgents).values({ ownerId: claimed.ownerId, agentId: agent.id });
+      }
+
       await tx.update(invites).set({ acceptedAgentId: agent.id }).where(eq(invites.id, claimed.id));
         return agent;
       });
     } catch (err) {
+      if (isConstraintViolation(err, ONE_GOD_AGENT_PER_OWNER)) {
+        return reply.status(409).send({
+          error: {
+            code: "god_agent_exists",
+            message: "This account already has a top-level agent. Revoke it from the dashboard first; this code stays valid until it expires.",
+          },
+        });
+      }
       if (isConstraintViolation(err, ONE_ORCHESTRATOR_PER_REPO)) {
         return reply.status(409).send({
           error: {

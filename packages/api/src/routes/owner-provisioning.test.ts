@@ -199,24 +199,24 @@ describe("the invite's time bound is the server's, not the caller's", () => {
   it("clamps an absurd TTL to the ceiling rather than honouring it", async () => {
     const res = await mint(31_536_000_000);
     expect(res.statusCode).toBe(201);
-    expect(daysOut(res)).toBeLessThanOrEqual(7.1);
+    expect(daysOut(res)).toBeLessThanOrEqual(1 / 24 + 0.001);
   });
 
   it("does not 500 on a TTL that overflows Date, which it used to", async () => {
     const res = await mint(315_360_000_000);
     expect(res.statusCode).toBe(201);
-    expect(daysOut(res)).toBeLessThanOrEqual(7.1);
+    expect(daysOut(res)).toBeLessThanOrEqual(1 / 24 + 0.001);
   });
 
   it("still honours a shorter TTL, because the clamp is a ceiling not an override", async () => {
-    const res = await mint(3600);
-    expect(daysOut(res)).toBeLessThan(0.2);
+    const res = await mint(600);
+    expect(daysOut(res)).toBeLessThan(600 / 86_400 + 0.001);
   });
 
-  it("defaults to 7 days when none is given", async () => {
+  it("defaults to one hour for an owner-scoped minter when none is given", async () => {
     const res = await mint();
-    expect(daysOut(res)).toBeGreaterThan(6.9);
-    expect(daysOut(res)).toBeLessThanOrEqual(7.1);
+    expect(daysOut(res)).toBeGreaterThan(0.9 / 24);
+    expect(daysOut(res)).toBeLessThanOrEqual(1 / 24 + 0.001);
   });
 });
 

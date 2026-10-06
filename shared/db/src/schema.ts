@@ -118,6 +118,15 @@ export const tokens = pgTable("tokens", {
   revokedAt:  timestamp("revoked_at", { withTimezone: true }),
 });
 
+// One god agent per owner: the agent holding that owner's owner-scoped credential.
+// A primary key rather than a check in the routes, because approve and redeem are
+// minutes apart and two grants can be in flight at once.
+export const ownerGodAgents = pgTable("owner_god_agents", {
+  ownerId:   text("owner_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  agentId:   text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ── Project invites ───────────────────────────────────────────────────────────
 
 export const invites = pgTable("invites", {

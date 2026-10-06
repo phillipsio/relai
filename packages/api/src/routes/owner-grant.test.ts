@@ -13,10 +13,10 @@
 // The property that matters most: the owner stamped on the credential comes
 // from the APPROVER's own authenticated scope, never from a request body. A
 // caller cannot mint itself a token for a tenant it does not hold.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { createDb, users, invites, tokens, deviceAuthorizations } from "@getrelai/db";
-import { eq } from "drizzle-orm";
+import { createDb, users, invites, tokens, deviceAuthorizations, ownerGodAgents } from "@getrelai/db";
+import { eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
@@ -112,6 +112,12 @@ beforeAll(async () => {
   ]);
   repoA1 = await mkRepo("__test__ og A1", ownerA);
   repoA2 = await mkRepo("__test__ og A2", ownerA);
+});
+
+// These tests are about how scope travels, not about the one-god-agent rule
+// (god-agent.test.ts owns that), so each starts with the test owners' slots free.
+beforeEach(async () => {
+  await db.delete(ownerGodAgents).where(inArray(ownerGodAgents.ownerId, [ownerA, ownerB]));
 });
 
 afterAll(async () => {
@@ -468,7 +474,7 @@ describe("the invariant holds at the point of trust, not only at approve", () =>
 
 describe("a device grant into an already-staffed repo does not burn the human approval", () => {
   // /auth/device/token used to stamp consumedAt unconditionally before
-  // minting invites, so a second owner-scoped grant into a repo that already
+  // minting invites, so a second orchestrator grant into a repo that already
   // has an orchestrator spent the device code (and the human's approval)
   // before accept-invite ever got a chance to 409. The approval is gone, the
   // CLI has no code left to retry with, and the only way back is redoing the
@@ -489,7 +495,6 @@ describe("a device grant into an already-staffed repo does not burn the human ap
       body: JSON.stringify({
         userCode, repoId: home,
         agents: [{ name: `og-second-${Date.now()}`, workerType: "claude", role: "orchestrator" }],
-        scope: "owner",
       }),
     });
     expect(approve.statusCode).toBe(200);

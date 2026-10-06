@@ -2,7 +2,7 @@ import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { and, eq, isNull, lt } from "drizzle-orm";
-import { deviceAuthorizations, invites, repos, agents } from "@getrelai/db";
+import { deviceAuthorizations, invites, repos, agents, ownerGodAgents } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateDeviceCode, generateInviteCode, generateUserCode, hashSecret } from "../lib/tokens.js";
@@ -347,6 +347,18 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
           message: "An owner-scoped grant needs an approver with an owner; this credential has none.",
         },
       });
+    }
+
+    if (body.data.scope === "owner" && request.ownerId) {
+      const [god] = await db.select().from(ownerGodAgents).where(eq(ownerGodAgents.ownerId, request.ownerId));
+      if (god) {
+        return reply.status(409).send({
+          error: {
+            code: "god_agent_exists",
+            message: "This account already has a top-level agent. Revoke it from the dashboard first, or approve this one without owner scope.",
+          },
+        });
+      }
     }
 
     const row = await claim(body.data.userCode, request.ownerId);

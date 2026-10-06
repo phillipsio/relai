@@ -107,7 +107,8 @@ assert mcp["mcpServers"]["relai"]["env"]["API_SECRET"].startswith("aio_"), "no a
 cursor_cfg = os.path.join(work, ".cursor", "mcp.json")
 assert not os.path.exists(cursor_cfg), "wrote a config for an agent that was never approved"
 assert stat.S_IMODE(os.stat(os.path.join(work, ".mcp.json")).st_mode) == 0o600, ".mcp.json is not 600"
-print(json.dumps({"token": mcp["mcpServers"]["relai"]["env"]["API_SECRET"]}), file=open(os.path.join(home, "token.json"), "w"))
+env = mcp["mcpServers"]["relai"]["env"]
+print(json.dumps({"token": env["API_SECRET"], "agentId": env["AGENT_ID"]}), file=open(os.path.join(home, "token.json"), "w"))
 PY
 
 TOKEN=$(python3 -c "import json;print(json.load(open('$HOME/token.json'))['token'])" 2>/dev/null || echo "")
@@ -117,6 +118,10 @@ if [ -n "$TOKEN" ]; then
 else
   check "the written token actually authenticates" no "no token extracted"
 fi
+
+AGENT_ID=$(python3 -c "import json;print(json.load(open('$HOME/token.json'))['agentId'])" 2>/dev/null || echo "")
+REPO_PATH=$(curl -s -H "Authorization: Bearer $TOKEN" "$API/agents/$AGENT_ID" | python3 -c "import json,sys;print(json.load(sys.stdin)['data'].get('repoPath') or '')" 2>/dev/null || echo "")
+[ -n "$REPO_PATH" ] && [ "$REPO_PATH" = "$(git -C "$WORK" rev-parse --show-toplevel)" ] && check "the agent records the repo it joined from" ok || check "the agent records the repo it joined from" no "repoPath=${REPO_PATH:-<empty>}"
 
 grep -q "^\.mcp\.json$" "$WORK/.git/info/exclude" 2>/dev/null && check "repo config is git-excluded" ok || check "repo config is git-excluded" no
 

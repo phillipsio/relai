@@ -42,9 +42,9 @@ if (OWNER_MODE) {
     process.exit(1);
   }
   // API_OWNER_TOKEN is a cross-project credential — with a different X-Owner-Id
-  // it can act as any owner. The HTTP transport below is unauthenticated, so
-  // this process must sit behind an authenticating proxy / bound to localhost,
-  // never exposed directly. See docs/operator-ingress.md.
+  // it can act as any owner. The HTTP transport below requires this same
+  // credential as a bearer token, but still bind to localhost behind an
+  // authenticating proxy for defense in depth. See docs/operator-ingress.md.
   console.error(
     "[relai-mcp] owner mode: API_OWNER_TOKEN is a god-key credential — keep this server " +
     "off the open internet (localhost bind + authenticating reverse proxy only).",
@@ -207,28 +207,21 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
   } else if (TRANSPORT === "http") {
-    // HTTP/SSE transport — for remote/team scenarios
-    // Import lazily so stdio-only installs don't need the HTTP deps
-    const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
+    // HTTP/SSE transport — for remote/team scenarios. Gated on the same
+    // credential this process already holds (API_SECRET or API_OWNER_TOKEN) —
+    // see http-transport.ts. Still bind to loopback by default and put an
+    // authenticating layer (tunnel/proxy/VPN) in front for remote access
+    // rather than binding to all interfaces. Override only deliberately via
+    // MCP_HOST.
     const http = await import("node:http");
+    const { createHttpRequestListener } = await import("./http-transport.js");
 
     const port = Number(process.env.MCP_PORT ?? 3001);
-    // The HTTP/SSE transport is unauthenticated and, in owner mode, carries a
-    // god-key credential — so bind to loopback by default. Put an
-    // authenticating layer (tunnel/proxy/VPN) in front for remote access rather
-    // than binding to all interfaces. Override only deliberately via MCP_HOST.
     const host = process.env.MCP_HOST ?? "127.0.0.1";
+    const credential = OWNER_MODE ? API_OWNER_TOKEN! : API_SECRET!;
 
-    const httpServer = http.createServer(async (req, res) => {
-      if (req.method === "GET" && req.url === "/sse") {
-        const transport = new SSEServerTransport("/messages", res);
-        await server.connect(transport);
-      } else if (req.method === "POST" && req.url === "/messages") {
-        res.writeHead(200).end();
-      } else {
-        res.writeHead(404).end();
-      }
-    });
+    const listener = await createHttpRequestListener(server, credential);
+    const httpServer = http.createServer(listener);
 
     httpServer.listen(port, host, () => {
       console.error(`[relai-mcp] HTTP/SSE transport listening on ${host}:${port}`);

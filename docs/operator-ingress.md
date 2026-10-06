@@ -65,15 +65,17 @@ TRANSPORT=http
 MCP_PORT=3001
 ```
 
-> **The HTTP/SSE transport is unauthenticated.** It accepts any `GET /sse` /
-> `POST /messages` with no credential check, and in owner mode the process
-> itself holds the `API_OWNER_TOKEN` god key and does all upstream auth — so
-> reaching `MCP_PORT` *is* possession of the key. The server therefore binds to
-> `127.0.0.1` by default (override only deliberately via `MCP_HOST`). To reach
-> it remotely, put an **authenticating** layer in front (a Cloudflare Tunnel +
-> Access policy, an authenticating reverse proxy, or a private VPN/Tailscale
-> network) — never bind it to `0.0.0.0` / expose `MCP_PORT` to the public
-> internet directly.
+> **The HTTP/SSE transport requires the same credential as a bearer token.**
+> `GET /sse` and `POST /messages` both check `Authorization: Bearer <token>`
+> against whatever this process was started with (`API_OWNER_TOKEN` here,
+> `API_SECRET` in agent mode), in constant time — see `http-auth.ts`. Connect
+> your remote MCP client with that header set. This is one credential doing
+> double duty (transport auth and upstream API auth), not two independent
+> checks, so it still binds to `127.0.0.1` by default (override only
+> deliberately via `MCP_HOST`). To reach it remotely, put an **authenticating**
+> layer in front (a Cloudflare Tunnel + Access policy, an authenticating
+> reverse proxy, or a private VPN/Tailscale network) — never bind it to
+> `0.0.0.0` / expose `MCP_PORT` to the public internet directly.
 
 ### 2. Make sure your repos have an owner
 
@@ -135,14 +137,16 @@ keep straight:
 
 1. **The token on your phone.** Treat it like any root credential; rotate on
    loss.
-2. **The owner-mode MCP server itself.** Because the HTTP transport is
-   unauthenticated and the server carries the god key internally (see Setup
-   step 1), reaching its port *is* possession of the key. The authenticating
-   layer in front of it is what actually protects you — not the token's secrecy.
+2. **The owner-mode MCP server itself.** The HTTP transport now requires the
+   same `API_OWNER_TOKEN` as a bearer header (see Setup step 1), but that's the
+   god key itself gating its own door — whoever holds the token can reach the
+   port directly. The authenticating layer in front is still what actually
+   protects you against anyone who doesn't hold the token; it's the only thing
+   standing between a leaked token and the port if `MCP_HOST` is ever widened.
 
 A dedicated scoped owner-token type (resolves to a fixed `users.id`, can't
-impersonate others) and requiring the credential on the `/sse` handshake are the
-intended follow-ups that would let the transport defend itself.
+impersonate others) is the intended follow-up that would let the transport
+defend itself with something less than the god key.
 
 ## Related: in-worker subagent fan-out
 

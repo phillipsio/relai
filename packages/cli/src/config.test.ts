@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { readConfig, writeConfig, configPath } from "./config.js";
@@ -195,6 +195,69 @@ describe("config", () => {
         plantLegacy("legacy");
         fresh.writeConfig({ ...sample, agentName: "migrated" });
         fresh.readConfig();
+        expect(err).not.toHaveBeenCalled();
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it("keeps the config when ~/.config/relai is a symlink to ~/.config/pitboss", () => {
+      mkdirSync(join(fakeHome, ".config", "pitboss"), { recursive: true });
+      symlinkSync(join(fakeHome, ".config", "pitboss"), join(fakeHome, ".config", "relai"));
+      delete process.env.PITBOSS_CONFIG_DIR;
+      writeConfig(sample);
+
+      expect(existsSync(newFile())).toBe(true);
+      expect(readConfig()).toEqual(sample);
+    });
+
+    it("keeps the config when ~/.config/pitboss is a symlink to ~/.config/relai", () => {
+      mkdirSync(join(fakeHome, ".config", "relai"), { recursive: true });
+      symlinkSync(join(fakeHome, ".config", "relai"), join(fakeHome, ".config", "pitboss"));
+      delete process.env.PITBOSS_CONFIG_DIR;
+      writeConfig(sample);
+
+      expect(readConfig()).toEqual(sample);
+    });
+
+    it("reports the write as done when the legacy copy cannot be removed", () => {
+      mkdirSync(legacyFile(), { recursive: true });
+      delete process.env.PITBOSS_CONFIG_DIR;
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(writeConfig(sample)).toBe(newFile());
+        expect(readConfig()).toEqual(sample);
+        expect(err.mock.calls.some(([m]) => String(m).includes(legacyFile()))).toBe(true);
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it("treats an empty config-dir variable as unset, never as a relative path", () => {
+      delete process.env.PITBOSS_CONFIG_DIR;
+      process.env.RELAI_CONFIG_DIR = "";
+      expect(configPath()).toBe(newFile());
+    });
+
+    it("protects the legacy file when only RELAI_CONFIG_DIR is set", () => {
+      plantLegacy("legacy");
+      process.env.RELAI_CONFIG_DIR = configDir;
+      expect(readConfig()).toBeNull();
+      writeConfig(sample);
+      expect(existsSync(legacyFile())).toBe(true);
+    });
+
+    it("reads the new file, silently, when both exist", async () => {
+      vi.resetModules();
+      const fresh = await import("./config.js");
+      plantLegacy("legacy");
+      process.env.PITBOSS_CONFIG_DIR = join(fakeHome, ".config", "pitboss");
+      writeConfig({ ...sample, agentName: "current" });
+      delete process.env.PITBOSS_CONFIG_DIR;
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(existsSync(legacyFile())).toBe(true);
+        expect(fresh.readConfig()?.agentName).toBe("current");
         expect(err).not.toHaveBeenCalled();
       } finally {
         err.mockRestore();

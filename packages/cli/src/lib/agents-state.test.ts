@@ -72,6 +72,17 @@ describe("agents-state", () => {
       });
     }
 
+    it("reads the new file when both exist", () => {
+      const claim = (agentId: string) => ({ agentId, agentName: agentId, workingDir: join(dir, agentId), apiUrl: "http://x", tokenRef: "t" });
+      process.env.PITBOSS_AGENTS_STATE = join(dir, ".config", "relai", "agents.json");
+      claimWorkingDir(claim("agent_legacy"));
+      process.env.PITBOSS_AGENTS_STATE = join(dir, ".config", "pitboss", "agents.json");
+      claimWorkingDir(claim("agent_current"));
+      delete process.env.PITBOSS_AGENTS_STATE;
+
+      expect(readAgentsState().agents.map((a) => a.agentId)).toEqual(["agent_current"]);
+    });
+
     it("writes under ~/.config/pitboss", () => {
       expect(agentsStatePath()).toBe(join(dir, ".config", "pitboss", "agents.json"));
     });

@@ -42,7 +42,7 @@ function writeAgentsState(state: AgentsState): void {
   const p = statePath();
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(state, null, 2));
-  retireLegacy(legacyHomePath("agents.json"), stateOverridden());
+  retireLegacy(legacyHomePath("agents.json"), p, stateOverridden());
 }
 
 export function hashToken(token: string): string {

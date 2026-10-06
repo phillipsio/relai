@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync, lstatSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 export interface Config {
@@ -14,8 +14,10 @@ export interface Config {
 
 // PITBOSS_CONFIG_DIR lets you run multiple agent identities on one machine.
 // Read on every call, not cached, so an override set after import (tests) takes effect.
+const configDirOverride = () => process.env.PITBOSS_CONFIG_DIR || process.env.RELAI_CONFIG_DIR || undefined;
+
 export function configDir(): string {
-  return process.env.PITBOSS_CONFIG_DIR ?? process.env.RELAI_CONFIG_DIR ?? join(homedir(), ".config", "pitboss");
+  return configDirOverride() ?? join(homedir(), ".config", "pitboss");
 }
 
 export function configPath(): string {
@@ -26,20 +28,29 @@ export function legacyHomePath(name: string): string {
   return join(homedir(), ".config", "relai", name);
 }
 
-const configOverridden = () => Boolean(process.env.PITBOSS_CONFIG_DIR || process.env.RELAI_CONFIG_DIR);
+const configOverridden = () => configDirOverride() !== undefined;
 
-let warned = false;
+const warnedFor = new Set<string>();
 export function readableFrom(current: string, legacy: string, overridden: boolean): string {
   if (overridden || existsSync(current) || !existsSync(legacy)) return current;
-  if (!warned) {
-    warned = true;
+  if (!warnedFor.has(legacy)) {
+    warnedFor.add(legacy);
     console.error(`pitboss: reading ${legacy}; the next write moves it to ${current}.`);
   }
   return legacy;
 }
 
-export function retireLegacy(legacy: string, overridden: boolean): void {
-  if (!overridden && existsSync(legacy)) rmSync(legacy);
+export function retireLegacy(legacy: string, current: string, overridden: boolean): void {
+  if (overridden) return;
+  try {
+    const found = lstatSync(legacy, { throwIfNoEntry: false });
+    if (!found) return;
+    if (realpathSync(dirname(legacy)) === realpathSync(dirname(current))) return;
+    if (!found.isFile() && !found.isSymbolicLink()) throw new Error("not a regular file");
+    rmSync(legacy);
+  } catch (err) {
+    console.error(`pitboss: could not remove ${legacy} (${String(err)}); it may still hold a token, delete it by hand.`);
+  }
 }
 
 export function configFileInUse(): string {
@@ -71,7 +82,7 @@ export function writeConfig(config: Config): string {
   const tmp = `${file}.relai-${randomBytes(8).toString("hex")}`;
   writeFileSync(tmp, JSON.stringify(config, null, 2), { mode: 0o600, flag: "wx" });
   renameSync(tmp, file);
-  retireLegacy(legacyHomePath("config.json"), configOverridden());
+  retireLegacy(legacyHomePath("config.json"), file, configOverridden());
   return file;
 }
 

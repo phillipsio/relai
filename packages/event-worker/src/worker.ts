@@ -1,5 +1,6 @@
 import { EventSource } from "eventsource";
-import { runClaudeSession, heartbeat, assertRepoOrExit, assertNotOwnerScopedOrExit, classifySessionError, blockOverflowedTasks } from "@getrelai/claude-worker";
+import { runClaudeSession, heartbeat, assertRepoOrExit, classifySessionError, blockOverflowedTasks } from "@getrelai/claude-worker";
+import { assertNotOwnerScopedOrExit } from "@getrelai/git";
 import { createRunQueue } from "./queue.js";
 import type { EventWorkerConfig } from "./config.js";
 

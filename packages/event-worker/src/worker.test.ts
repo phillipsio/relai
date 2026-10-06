@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { EventWorkerConfig } from "./config.js";
 import { runClaudeSession, blockOverflowedTasks } from "@getrelai/claude-worker";
+import { assertNotOwnerScopedOrExit } from "@getrelai/git";
 
 const esInstances: any[] = [];
 class FakeEventSource {
@@ -34,11 +35,15 @@ vi.mock("@getrelai/claude-worker", async () => {
     runClaudeSession: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     assertRepoOrExit: vi.fn().mockResolvedValue(undefined),
-    assertNotOwnerScopedOrExit: vi.fn().mockResolvedValue(undefined),
     classifySessionError: actual.classifySessionError,
     blockOverflowedTasks: vi.fn().mockResolvedValue([]),
   };
 });
+
+vi.mock("@getrelai/git", async () => ({
+  ...(await vi.importActual<typeof import("@getrelai/git")>("@getrelai/git")),
+  assertNotOwnerScopedOrExit: vi.fn().mockResolvedValue(undefined),
+}));
 
 const TEST_CONFIG: EventWorkerConfig = {
   agentId: "agent_1",
@@ -191,6 +196,14 @@ describe("runEventWorker", () => {
       await new Promise((resolve) => setImmediate(resolve));
     }
     expect(runClaudeSessionMock.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
+  it("refuses the top-level credential before it does anything else", async () => {
+    vi.stubGlobal("fetch", makeFetchMock({ tasks: [], messages: [] }));
+    const { runEventWorker } = await import("./worker.js");
+    void runEventWorker(TEST_CONFIG);
+    await flushMicrotasks();
+    expect(vi.mocked(assertNotOwnerScopedOrExit)).toHaveBeenCalledWith(TEST_CONFIG, "[event-worker]");
   });
 
   it("skips spawning a session when there are no assigned tasks and no unread messages", async () => {

@@ -124,11 +124,28 @@ export async function fetchRepoUrl(
   }
 }
 
-// Throws when it cannot tell, so a caller deciding whether to run fails closed.
-export async function fetchCredentialIsOwnerScoped(apiUrl: string, agentId: string, bearer: string): Promise<boolean> {
-  const res = await fetch(`${apiUrl}/agents/${agentId}/tokens`, { headers: { Authorization: `Bearer ${bearer}` } });
-  if (!res.ok) throw new Error(`GET /agents/${agentId}/tokens returned ${res.status}`);
-  const rows = ((await res.json()) as { data?: Array<{ current?: boolean | null; ownerScoped?: boolean }> }).data;
-  if (!Array.isArray(rows)) throw new Error("unexpected response");
-  return rows.some((t) => t.current === true && t.ownerScoped === true);
+// Headless workers skip permission prompts, so never run with the top-level credential; fails closed.
+export async function assertNotOwnerScopedOrExit(
+  config: { apiUrl: string; agentId: string; apiSecret: string },
+  logPrefix: string,
+): Promise<void> {
+  let reason: string;
+  try {
+    const res = await fetch(`${config.apiUrl}/agents/${config.agentId}/tokens`, {
+      headers: { Authorization: `Bearer ${config.apiSecret}` },
+    });
+    if (!res.ok) throw new Error(`GET /agents/${config.agentId}/tokens returned ${res.status}`);
+    const rows = ((await res.json()) as { data?: Array<{ current?: boolean | null; ownerScoped?: boolean }> }).data;
+    if (!Array.isArray(rows)) throw new Error("unexpected response");
+    const presenting = rows.find((t) => t.current === true);
+    if (presenting && !presenting.ownerScoped) return;
+    if (!presenting && rows.some((t) => t.current === null)) return;
+    reason = presenting
+      ? "this is the account's owner-scoped (top-level) credential; connect this worker without owner scope"
+      : `the credential is not one of ${config.agentId}'s tokens`;
+  } catch (err) {
+    reason = `could not confirm this credential is not owner-scoped (${String(err)})`;
+  }
+  console.error(`${logPrefix} Refusing to start: ${reason}.`);
+  process.exit(1);
 }

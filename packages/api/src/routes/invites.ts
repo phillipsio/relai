@@ -155,7 +155,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       const [claimed] = await tx
         .update(invites)
         .set({ acceptedAt: new Date() })
-        .where(and(eq(invites.id, invite.id), isNull(invites.acceptedAt)))
+        .where(and(eq(invites.id, invite.id), isNull(invites.acceptedAt), isNull(invites.revokedAt)))
         .returning();
       if (!claimed) return null;
 

@@ -606,6 +606,15 @@ describe("an owner-scoped agent gets the provisioning tools ON TOP of its own", 
     expect(res.isError).toBe(true);
   });
 
+  it("pins the god toolset as an exact inventory, so no verb joins the widest agent credential unreviewed", () => {
+    expect(buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name).sort()).toEqual([
+      ...buildTools(mockClient(), AGENT_ID, REPO_ID).map((t) => t.name), ...PROVISIONING,
+    ].sort());
+    expect(PROVISIONING.sort()).toEqual([
+      "create_repo", "invite_agent", "list_invites", "list_repos", "list_tokens", "remove_agent", "revoke_invite", "revoke_token",
+    ]);
+  });
+
   it("registers no duplicate names, which would break registration outright", () => {
     const names = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
     expect(names.length).toBe(new Set(names).size);

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
-import { createDb, users } from "@getrelai/db";
+import { createDb, users, tokens, ownerGodAgents } from "@getrelai/db";
+import { generateToken, hashToken } from "../lib/tokens.js";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
@@ -116,7 +117,7 @@ describe("one god agent per account", () => {
     expect(refused.statusCode).toBe(409);
     expect(refused.json().error.code).toBe("god_agent_exists");
 
-    await app.inject({ method: "DELETE", url: `/agents/${firstGod.json().data.id}`, headers: asOwner(owner) });
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
     expect((await accept(secondCode)).statusCode).toBe(201);
   });
 
@@ -125,12 +126,34 @@ describe("one god agent per account", () => {
     await makeGod(await freshOwner());
   });
 
-  it("frees the slot when the god agent is deleted", async () => {
+
+});
+
+describe("the god agent mints credentials only by invite, so the kill switch can find them", () => {
+  it("cannot register an agent directly", async () => {
     const owner = await freshOwner();
     const god = await makeGod(owner);
-    const del = await app.inject({ method: "DELETE", url: `/agents/${god.agentId}`, headers: asOwner(owner) });
-    expect(del.statusCode).toBeLessThan(300);
-    await makeGod(owner);
+    const res = await app.inject({ method: "POST", url: "/agents", headers: as(god.token), body: JSON.stringify({ repoId: god.repoId, name: `x-${uniq()}`, role: "worker" }) });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("cannot mint a token for another agent, but can rotate its own", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const peerRepo = await mkRepo(owner);
+    const peer = await app.inject({ method: "POST", url: "/agents", headers: asOwner(owner), body: JSON.stringify({ repoId: peerRepo, name: `p-${uniq()}`, role: "worker" }) });
+    const other = await app.inject({ method: "POST", url: `/agents/${peer.json().data.id}/tokens`, headers: as(god.token), body: JSON.stringify({ keepExisting: true }) });
+    expect(other.statusCode).toBe(403);
+    const self = await app.inject({ method: "POST", url: `/agents/${god.agentId}/tokens`, headers: as(god.token), body: JSON.stringify({ keepExisting: true }) });
+    expect(self.statusCode).toBe(201);
+  });
+
+  it("cannot be deleted out from under the kill switch", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const res = await app.inject({ method: "DELETE", url: `/agents/${god.agentId}`, headers: asOwner(owner) });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("god_agent_exists");
   });
 });
 
@@ -153,6 +176,14 @@ describe("invites a god agent mints are short-lived", () => {
     const res = await app.inject({ method: "POST", url: `/repos/${god.repoId}/invites`, headers: as(god.token), body: JSON.stringify({ ttlSeconds: 7 * 24 * 3600 }) });
     expect(res.statusCode).toBe(201);
     expect(new Date(res.json().data.expiresAt).getTime() - before).toBeLessThanOrEqual(61 * 60 * 1000);
+  });
+
+  it("leave the owner's own dashboard invites at the long default", async () => {
+    const owner = await freshOwner();
+    const repoId = await mkRepo(owner);
+    const before = Date.now();
+    const res = await app.inject({ method: "POST", url: `/repos/${repoId}/invites`, headers: asOwner(owner), body: "{}" });
+    expect(new Date(res.json().data.expiresAt).getTime() - before).toBeGreaterThan(24 * 3600 * 1000);
   });
 
   it("leave an ordinary orchestrator's invites at the long default", async () => {
@@ -186,7 +217,7 @@ describe("the owner's kill switch", () => {
     const s = await scenario();
     const res = await app.inject({ method: "GET", url: "/owner/god-agent", headers: asOwner(s.owner) });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.agent.id).toBe(s.god.agentId);
+    expect(res.json().data.agents.map((a: { id: string }) => a.id)).toEqual([s.god.agentId]);
     expect(res.json().data.invites).toHaveLength(2);
   });
 
@@ -199,6 +230,54 @@ describe("the owner's kill switch", () => {
     expect(await authenticates(s.joinedToken)).toBe(false);
     expect((await accept(s.pendingCode, "worker")).statusCode).toBe(400);
     expect(await authenticates(s.bystanderToken)).toBe(true);
+  });
+
+  it("reaches every agent holding the owner's scope, and what each of them minted, slot or no slot", async () => {
+    const s = await scenario();
+    const legacyRepo = await mkRepo(s.owner);
+    const legacy = await app.inject({ method: "POST", url: "/agents", headers: asOwner(s.owner), body: JSON.stringify({ repoId: legacyRepo, name: `l-${uniq()}`, role: "orchestrator" }) });
+    const legacyId = legacy.json().data.id as string;
+    const legacyToken = generateToken();
+    await db.insert(tokens).values({ id: `tok_${uniq()}`, agentId: legacyId, ownerId: s.owner, tokenHash: hashToken(legacyToken) });
+    const minted = await app.inject({ method: "POST", url: `/repos/${legacyRepo}/invites`, headers: as(legacyToken), body: "{}" });
+    const invitee = (await accept(minted.json().code, "worker")).json().token as string;
+    const unrelatedOwner = await freshOwner();
+    const unrelated = await makeGod(unrelatedOwner);
+
+    await db.delete(ownerGodAgents).where(eq(ownerGodAgents.ownerId, s.owner));
+    const listed = await app.inject({ method: "GET", url: "/owner/god-agent", headers: asOwner(s.owner) });
+    expect(listed.json().data.agents.map((a: { id: string }) => a.id).sort()).toEqual([s.god.agentId, legacyId].sort());
+
+    const res = await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" });
+    expect(res.statusCode).toBe(200);
+    for (const t of [s.god.token, s.joinedToken, legacyToken, invitee]) expect(await authenticates(t)).toBe(false);
+    expect(await authenticates(s.bystanderToken)).toBe(true);
+    expect(await authenticates(unrelated.token)).toBe(true);
+  });
+
+  it("follows the invite chain past the agents the god invited directly", async () => {
+    const s = await scenario();
+    const second = await app.inject({ method: "POST", url: `/repos/${s.god.repoId}/invites`, headers: as(s.joinedToken), body: JSON.stringify({ ttlSeconds: 7 * 24 * 3600 }) });
+    expect(second.statusCode).toBe(201);
+    const grandchild = (await accept(second.json().code, "worker")).json().token as string;
+    const third = await app.inject({ method: "POST", url: `/repos/${s.god.repoId}/invites`, headers: as(grandchild), body: "{}" });
+
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" });
+    expect(await authenticates(grandchild)).toBe(false);
+    expect((await accept(third.json().code, "worker")).statusCode).toBe(400);
+  });
+
+  it("leaves no live token when a redeem races the revoke", async () => {
+    for (let i = 0; i < 10; i++) {
+      const owner = await freshOwner();
+      const god = await makeGod(owner);
+      const code = (await app.inject({ method: "POST", url: `/repos/${god.repoId}/invites`, headers: as(god.token), body: "{}" })).json().code;
+      const [redeemed] = await Promise.all([
+        accept(code, "worker"),
+        app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" }),
+      ]);
+      if (redeemed.statusCode === 201) expect(await authenticates(redeemed.json().token)).toBe(false);
+    }
   });
 
   it("frees the slot for a new god agent", async () => {

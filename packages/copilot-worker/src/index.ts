@@ -3,7 +3,7 @@ import type { MCPServerConfig } from "@github/copilot-sdk";
 import { fileURLToPath } from "url";
 import { loadConfig } from "./config.js";
 import { buildPrompt } from "./prompt.js";
-import { checkRepoMatch, fetchRepoUrl, fetchCredentialIsOwnerScoped } from "@getrelai/git";
+import { checkRepoMatch, fetchRepoUrl, assertNotOwnerScopedOrExit } from "@getrelai/git";
 
 // Refuse to start if REPO_PATH isn't a clone of this agent's repo. No-ops when
 // the repo has no url or under RELAI_SKIP_REPO_CHECK; an unreachable API just
@@ -17,24 +17,13 @@ async function assertRepoOrExit(config: ReturnType<typeof loadConfig>): Promise<
   }
 }
 
-// approveAll runs every tool call unconfirmed, so never with the god credential.
-async function assertNotOwnerScopedOrExit(config: ReturnType<typeof loadConfig>): Promise<void> {
-  try {
-    if (!(await fetchCredentialIsOwnerScoped(config.apiUrl, config.agentId, config.apiSecret))) return;
-    console.error("[copilot-worker] Refusing to start: this is the account's owner-scoped (top-level) credential. Connect this worker without owner scope.");
-  } catch (err) {
-    console.error(`[copilot-worker] Refusing to start: could not confirm this credential is not owner-scoped (${String(err)}).`);
-  }
-  process.exit(1);
-}
-
 async function main() {
   const config = loadConfig();
 
   console.log(`[copilot-worker] Starting — agent ${config.agentId}, poll every ${config.pollIntervalMs}ms`);
 
   await assertRepoOrExit(config);
-  await assertNotOwnerScopedOrExit(config);
+  await assertNotOwnerScopedOrExit(config, "[copilot-worker]");
 
   const client = new CopilotClient();
   await client.start();

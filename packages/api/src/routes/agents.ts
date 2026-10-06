@@ -2,7 +2,7 @@ import { promptSafeText, promptSafeDomains, promptSafePath } from "../lib/router
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray, isNull, desc } from "drizzle-orm";
-import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions } from "@getrelai/db";
+import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions, ownerGodAgents } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { isConstraintViolation, ONE_ORCHESTRATOR_PER_REPO } from "../lib/constraints.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
@@ -44,6 +44,11 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     if (request.agent && request.agent.role !== "orchestrator") {
       return reply.status(403).send({
         error: { code: "forbidden", message: "Only orchestrator agents may register agents." },
+      });
+    }
+    if (request.agent && request.ownerId) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "The top-level agent adds agents by invite only (invite_agent), so everything it creates stays listed and revocable." },
       });
     }
 
@@ -135,6 +140,12 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
     const agent = check.agent;
+
+    if (request.agent && request.ownerId && request.agent.id !== agent.id) {
+      return reply.status(403).send({
+        error: { code: "forbidden", message: "The top-level agent adds agents by invite only (invite_agent), so everything it creates stays listed and revocable." },
+      });
+    }
 
     // Repo membership alone let any worker mint another agent's token; see
     // callerMayActOnAgent. Same gate as DELETE /tokens/:id, so revoking below
@@ -265,6 +276,13 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
   fastify.delete<{ Params: { id: string } }>("/agents/:id", async (request, reply) => {
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
+
+    const [slot] = await db.select().from(ownerGodAgents).where(eq(ownerGodAgents.agentId, check.agent.id));
+    if (slot) {
+      return reply.status(409).send({
+        error: { code: "god_agent_exists", message: "This is the account's top-level agent. Revoke it with the owner's kill switch before deleting it." },
+      });
+    }
 
     if (!callerMayActOnAgent(request, check.agent.id)) {
       return reply.status(403).send({

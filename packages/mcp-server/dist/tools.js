@@ -858,7 +858,7 @@ function buildProvisioningTools(client, opts = {}) {
                     });
                     const workerTypeFlag = input.workerType ? ` --worker-type ${input.workerType}` : "";
                     // --api, because `login` otherwise prompts with a localhost default and
-                    // a wrong Enter sends the redeem to the wrong server. RELAI_CONFIG_DIR,
+                    // a wrong Enter sends the redeem to the wrong server. PITBOSS_CONFIG_DIR,
                     // because the config is per HOME rather than per directory: with one
                     // already present, `login --invite` prints "Already logged in" and exits
                     // 0 without redeeming, which is the normal second call in an onboarding
@@ -870,12 +870,13 @@ function buildProvisioningTools(client, opts = {}) {
                                 text: JSON.stringify({
                                     invite,
                                     code,
-                                    redeemCommand: `RELAI_CONFIG_DIR=~/.config/relai/${slot} pitboss login --api ${client.apiUrl} ` +
+                                    redeemCommand: `PITBOSS_CONFIG_DIR=~/.config/pitboss/${slot} RELAI_CONFIG_DIR=~/.config/pitboss/${slot} ` +
+                                        `pitboss login --api ${client.apiUrl} ` +
                                         `--invite ${code}${workerTypeFlag}`,
                                     nextStep: "Run redeemCommand in the directory that agent will work from, or give it to the " +
                                         "user to paste there. It will ask for an agent name and a specialization. The " +
                                         "code is single-use and expires. One machine holds one identity per config dir, " +
-                                        "which is why the command sets RELAI_CONFIG_DIR — drop it and a machine that " +
+                                        "which is why the command sets the config dir — drop it and a machine that " +
                                         "already has an agent will report success without redeeming anything.",
                                 }, null, 2),
                             }],

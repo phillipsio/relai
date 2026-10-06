@@ -2,7 +2,7 @@ import { resolve as resolvePath } from "node:path";
 import { input, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import ora from "ora";
-import { requireConfig, writeConfig, readConfig, configPath } from "../config.js";
+import { requireConfig, writeConfig, readConfig, configPath, configFileInUse } from "../config.js";
 import { CliApiClient } from "../api.js";
 import { getGitRoot, getOriginUrl, normalizeRepoUrl, repoNameFromUrl } from "@getrelai/git";
 import {
@@ -94,7 +94,7 @@ export async function loginCommand(opts: {
   const existing = readConfig();
   if (existing && opts.invite) {
     console.log(chalk.yellow(`\nAlready logged in as ${chalk.bold(existing.agentName)} (${existing.agentId})`));
-    console.log(chalk.dim("Delete ~/.config/pitboss/config.json to re-login.\n"));
+    console.log(chalk.dim(`Delete ${configFileInUse()} to re-login.\n`));
     return;
   }
 

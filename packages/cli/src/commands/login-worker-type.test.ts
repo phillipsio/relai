@@ -47,8 +47,8 @@ describe("relai login --worker-type", () => {
   beforeEach(() => {
     workdir   = mkdtempSync(join(tmpdir(), "relai-wt-work-"));
     configDir = mkdtempSync(join(tmpdir(), "relai-wt-cfg-"));
-    process.env.RELAI_CONFIG_DIR   = configDir;
-    process.env.RELAI_AGENTS_STATE = join(configDir, "agents.json");
+    process.env.PITBOSS_CONFIG_DIR   = configDir;
+    process.env.PITBOSS_AGENTS_STATE = join(configDir, "agents.json");
     // No RELAI_NO_INPUT here: the prompts are mocked, so setting it would
     // assert that a non-interactive run works when the real one cannot.
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -60,8 +60,8 @@ describe("relai login --worker-type", () => {
   });
 
   afterEach(() => {
-    delete process.env.RELAI_CONFIG_DIR;
-    delete process.env.RELAI_AGENTS_STATE;
+    delete process.env.PITBOSS_CONFIG_DIR;
+    delete process.env.PITBOSS_AGENTS_STATE;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     rmSync(workdir,   { recursive: true, force: true });

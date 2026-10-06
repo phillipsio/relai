@@ -228,7 +228,7 @@ Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
 ### CLI (packages/cli)
 
-The `relai` binary is the operator surface. It reads its config from `~/.config/pitboss/config.json` (override the dir with `PITBOSS_CONFIG_DIR` for multi-identity testing). Since 0.2.0 it still reads `~/.config/relai` and `RELAI_CONFIG_DIR` when the new ones are absent, and the next write moves the config to the new path; drop the fallback in a later release.
+The `relai` binary is the operator surface. It reads its config from `~/.config/pitboss/config.json` (override the dir with `PITBOSS_CONFIG_DIR` for multi-identity testing). Since 0.2.0 it still reads `~/.config/relai` and `RELAI_CONFIG_DIR` when the new ones are absent, and the next write moves the file to the new path, deleting the legacy copy so no token is left behind. `agents.json` follows the same rule, with `PITBOSS_AGENTS_STATE` ahead of `RELAI_AGENTS_STATE`. Drop the fallback in a later release.
 
 **Setup**
 - `relai init` — interactive first-time setup: prompts for API URL + admin secret, creates a repo (or accepts an existing repo ID), registers an agent, saves the per-agent token, prints the `.mcp.json` snippet.

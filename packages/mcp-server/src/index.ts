@@ -212,7 +212,7 @@ async function main() {
     // deliberately via MCP_HOST.
     const http = await import("node:http");
     const { createHttpRequestListener } = await import("./http-transport.js");
-    const { resolveHttpCredential } = await import("./http-auth.js");
+    const { resolveHttpCredential, isBlankCredential } = await import("./http-auth.js");
 
     const port = Number(process.env.MCP_PORT ?? 3001);
     const host = process.env.MCP_HOST ?? "127.0.0.1";
@@ -221,7 +221,7 @@ async function main() {
     // itself grant upstream API access. Falls back to the process credential
     // when unset, preserving the simpler single-credential setup.
     const credential = resolveHttpCredential(process.env.MCP_HTTP_TOKEN, OWNER_MODE, API_OWNER_TOKEN, API_SECRET);
-    if (!credential.trim()) {
+    if (isBlankCredential(credential)) {
       console.error(
         "[relai-mcp] the HTTP transport credential (MCP_HTTP_TOKEN, API_SECRET, or API_OWNER_TOKEN) is empty " +
         "or whitespace — refusing to start with a credential that would lock out every client",

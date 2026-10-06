@@ -4,6 +4,13 @@ function sha256(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
 }
 
+// `Boolean(" ")` is true, so a whitespace-only env var reads as "set" at
+// every truthiness check upstream of here — this is the one place that
+// actually means it.
+export function isBlankCredential(value: string): boolean {
+  return value.trim().length === 0;
+}
+
 // The HTTP/SSE transport has no per-request identity of its own — the
 // credential is whatever this process was started with (MCP_HTTP_TOKEN,
 // API_SECRET, or API_OWNER_TOKEN). Hashing both sides to a fixed 32-byte
@@ -14,7 +21,7 @@ function sha256(value: string): Buffer {
 // refused outright rather than becoming an always-matching value: nothing
 // upstream guarantees this string came from a non-empty env var.
 export function isAuthorizedBearer(authHeader: string | undefined, credential: string): boolean {
-  if (!credential.trim() || !authHeader) return false;
+  if (isBlankCredential(credential) || !authHeader) return false;
 
   const spaceIndex = authHeader.indexOf(" ");
   if (spaceIndex === -1) return false;

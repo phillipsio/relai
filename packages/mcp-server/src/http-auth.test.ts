@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAuthorizedBearer, resolveHttpCredential } from "./http-auth.js";
+import { isAuthorizedBearer, isBlankCredential, resolveHttpCredential } from "./http-auth.js";
 
 const CREDENTIAL = "owner-token-abc123";
 
@@ -69,5 +69,21 @@ describe("resolveHttpCredential", () => {
   it("treats an empty MCP_HTTP_TOKEN as unset, not as a real value", () => {
     expect(resolveHttpCredential("", true, "owner-token", undefined)).toBe("owner-token");
     expect(resolveHttpCredential("", false, undefined, "api-secret")).toBe("api-secret");
+  });
+});
+
+describe("isBlankCredential", () => {
+  it("treats an empty string as blank", () => {
+    expect(isBlankCredential("")).toBe(true);
+  });
+
+  it("treats a whitespace-only string as blank", () => {
+    expect(isBlankCredential(" ")).toBe(true);
+    expect(isBlankCredential("\t\n ")).toBe(true);
+  });
+
+  it("treats any non-whitespace content as not blank", () => {
+    expect(isBlankCredential("x")).toBe(false);
+    expect(isBlankCredential("  x  ")).toBe(false);
   });
 });

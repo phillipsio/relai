@@ -78,9 +78,9 @@ MCP_PORT=3001
 > **authenticating** layer in front (a Cloudflare Tunnel + Access policy, an
 > authenticating reverse proxy, or a private VPN/Tailscale network) — never
 > bind it to `0.0.0.0` / expose `MCP_PORT` to the public internet directly.
-> **`POST /messages` does not yet process a tool call** (it 200s without
-> calling the SDK's message handler) — the transport authenticates a
-> connection today, it does not yet serve one. See AGENTS.md's MCP server
+> **`POST /messages` does not yet process a tool call** (it answers `501`
+> rather than calling the SDK's message handler) — the transport
+> authenticates a connection today, it does not yet serve one. See AGENTS.md's MCP server
 > section.
 
 ### 2. Make sure your repos have an owner

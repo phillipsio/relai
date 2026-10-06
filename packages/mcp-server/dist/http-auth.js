@@ -1,10 +1,17 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isBlankCredential = isBlankCredential;
 exports.isAuthorizedBearer = isAuthorizedBearer;
 exports.resolveHttpCredential = resolveHttpCredential;
 const node_crypto_1 = require("node:crypto");
 function sha256(value) {
     return (0, node_crypto_1.createHash)("sha256").update(value, "utf8").digest();
+}
+// `Boolean(" ")` is true, so a whitespace-only env var reads as "set" at
+// every truthiness check upstream of here — this is the one place that
+// actually means it.
+function isBlankCredential(value) {
+    return value.trim().length === 0;
 }
 // The HTTP/SSE transport has no per-request identity of its own — the
 // credential is whatever this process was started with (MCP_HTTP_TOKEN,
@@ -16,7 +23,7 @@ function sha256(value) {
 // refused outright rather than becoming an always-matching value: nothing
 // upstream guarantees this string came from a non-empty env var.
 function isAuthorizedBearer(authHeader, credential) {
-    if (!credential.trim() || !authHeader)
+    if (isBlankCredential(credential) || !authHeader)
         return false;
     const spaceIndex = authHeader.indexOf(" ");
     if (spaceIndex === -1)

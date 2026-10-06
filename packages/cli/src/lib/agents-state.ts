@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { legacyHomePath, readableFrom, retireLegacy } from "../config.js";
 
 export interface AgentClaim {
   agentId: string;
@@ -15,17 +16,10 @@ export interface AgentsState {
   agents: AgentClaim[];
 }
 
-function statePath(): string {
-  const override = process.env.PITBOSS_AGENTS_STATE ?? process.env.RELAI_AGENTS_STATE;
-  if (override) return override;
-  return join(homedir(), ".config", "pitboss", "agents.json");
-}
+const stateOverridden = () => Boolean(process.env.PITBOSS_AGENTS_STATE || process.env.RELAI_AGENTS_STATE);
 
-function readableStatePath(): string {
-  const current = statePath();
-  if (existsSync(current) || process.env.PITBOSS_AGENTS_STATE || process.env.RELAI_AGENTS_STATE) return current;
-  const legacy = join(homedir(), ".config", "relai", "agents.json");
-  return existsSync(legacy) ? legacy : current;
+function statePath(): string {
+  return process.env.PITBOSS_AGENTS_STATE || process.env.RELAI_AGENTS_STATE || join(homedir(), ".config", "pitboss", "agents.json");
 }
 
 export function agentsStatePath(): string {
@@ -33,7 +27,7 @@ export function agentsStatePath(): string {
 }
 
 export function readAgentsState(): AgentsState {
-  const p = readableStatePath();
+  const p = readableFrom(statePath(), legacyHomePath("agents.json"), stateOverridden());
   if (!existsSync(p)) return { agents: [] };
   try {
     const raw = JSON.parse(readFileSync(p, "utf-8")) as AgentsState;
@@ -48,6 +42,7 @@ function writeAgentsState(state: AgentsState): void {
   const p = statePath();
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(state, null, 2));
+  retireLegacy(legacyHomePath("agents.json"), stateOverridden());
 }
 
 export function hashToken(token: string): string {

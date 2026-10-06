@@ -66,8 +66,8 @@ describe("loginCommand", () => {
     workdir = mkdtempSync(join(tmpdir(), "relai-login-work-"));
     configDir = mkdtempSync(join(tmpdir(), "relai-login-cfg-"));
     stateFile = join(configDir, "agents.json");
-    process.env.RELAI_CONFIG_DIR = configDir;
-    process.env.RELAI_AGENTS_STATE = stateFile;
+    process.env.PITBOSS_CONFIG_DIR = configDir;
+    process.env.PITBOSS_AGENTS_STATE = stateFile;
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit__:${code ?? 0}`);
     }) as never);
@@ -76,8 +76,8 @@ describe("loginCommand", () => {
   });
 
   afterEach(() => {
-    delete process.env.RELAI_CONFIG_DIR;
-    delete process.env.RELAI_AGENTS_STATE;
+    delete process.env.PITBOSS_CONFIG_DIR;
+    delete process.env.PITBOSS_AGENTS_STATE;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     rmSync(workdir, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
@@ -154,13 +154,59 @@ describe("config", () => {
       expect(readConfig()?.agentName).toBe("legacy");
     });
 
-    it("moves to ~/.config/pitboss on the next write and leaves the legacy file alone", () => {
+    it("moves to ~/.config/pitboss on the next write, so no token is left behind in the legacy file", () => {
       plantLegacy("legacy");
       writeConfig({ ...sample, agentName: "migrated" });
 
       expect(JSON.parse(readFileSync(newFile(), "utf-8")).agentName).toBe("migrated");
-      expect(JSON.parse(readFileSync(legacyFile(), "utf-8")).agentName).toBe("legacy");
+      expect(existsSync(legacyFile())).toBe(false);
       expect(readConfig()?.agentName).toBe("migrated");
+    });
+
+    it("does not bring the legacy identity back when the new config is deleted", () => {
+      plantLegacy("legacy");
+      writeConfig({ ...sample, agentName: "migrated" });
+      rmSync(newFile());
+
+      expect(readConfig()).toBeNull();
+    });
+
+    it("says once per process where it is reading from, on stderr", async () => {
+      vi.resetModules();
+      const fresh = await import("./config.js");
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        plantLegacy("legacy");
+        fresh.readConfig();
+        fresh.readConfig();
+        expect(err).toHaveBeenCalledTimes(1);
+        expect(String(err.mock.calls[0][0])).toContain(legacyFile());
+        expect(String(err.mock.calls[0][0])).toContain(newFile());
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it("says nothing once the new file exists", async () => {
+      vi.resetModules();
+      const fresh = await import("./config.js");
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        plantLegacy("legacy");
+        fresh.writeConfig({ ...sample, agentName: "migrated" });
+        fresh.readConfig();
+        expect(err).not.toHaveBeenCalled();
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it("leaves the legacy file alone when writing to an explicit directory", () => {
+      plantLegacy("legacy");
+      process.env.PITBOSS_CONFIG_DIR = configDir;
+      writeConfig(sample);
+
+      expect(existsSync(legacyFile())).toBe(true);
     });
 
     it("never falls back to the legacy home file when a directory is set explicitly", () => {

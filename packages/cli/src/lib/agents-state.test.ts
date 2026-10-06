@@ -12,15 +12,23 @@ import {
 describe("agents-state", () => {
   let dir: string;
   let stateFile: string;
+  let realPitboss: string | undefined;
+  let realRelai: string | undefined;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "relai-state-"));
     stateFile = join(dir, "agents.json");
-    process.env.RELAI_AGENTS_STATE = stateFile;
+    realPitboss = process.env.PITBOSS_AGENTS_STATE;
+    realRelai = process.env.RELAI_AGENTS_STATE;
+    process.env.PITBOSS_AGENTS_STATE = stateFile;
+    delete process.env.RELAI_AGENTS_STATE;
   });
 
   afterEach(() => {
-    delete process.env.RELAI_AGENTS_STATE;
+    if (realPitboss === undefined) delete process.env.PITBOSS_AGENTS_STATE;
+    else process.env.PITBOSS_AGENTS_STATE = realPitboss;
+    if (realRelai === undefined) delete process.env.RELAI_AGENTS_STATE;
+    else process.env.RELAI_AGENTS_STATE = realRelai;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -28,20 +36,18 @@ describe("agents-state", () => {
     expect(agentsStatePath()).toBe(stateFile);
   });
 
-  it("prefers PITBOSS_AGENTS_STATE over RELAI_AGENTS_STATE", () => {
-    const preferred = join(dir, "pitboss-agents.json");
-    process.env.PITBOSS_AGENTS_STATE = preferred;
-    try {
-      expect(agentsStatePath()).toBe(preferred);
-    } finally {
-      delete process.env.PITBOSS_AGENTS_STATE;
-    }
+  it("still honours RELAI_AGENTS_STATE, below PITBOSS_AGENTS_STATE", () => {
+    const legacyOverride = join(dir, "relai-agents.json");
+    process.env.RELAI_AGENTS_STATE = legacyOverride;
+    expect(agentsStatePath()).toBe(stateFile);
+    delete process.env.PITBOSS_AGENTS_STATE;
+    expect(agentsStatePath()).toBe(legacyOverride);
   });
 
   describe("without an override", () => {
     let realHome: string | undefined;
     beforeEach(() => {
-      delete process.env.RELAI_AGENTS_STATE;
+      delete process.env.PITBOSS_AGENTS_STATE;
       realHome = process.env.HOME;
       process.env.HOME = dir;
     });
@@ -49,6 +55,22 @@ describe("agents-state", () => {
       if (realHome === undefined) delete process.env.HOME;
       else process.env.HOME = realHome;
     });
+
+    for (const envVar of ["PITBOSS_AGENTS_STATE", "RELAI_AGENTS_STATE"]) {
+      it(`never reads the legacy home file when ${envVar} is set`, () => {
+        const legacy = join(dir, ".config", "relai", "agents.json");
+        process.env.PITBOSS_AGENTS_STATE = legacy;
+        claimWorkingDir({ agentId: "agent_old", agentName: "old", workingDir: join(dir, "old"), apiUrl: "http://x", tokenRef: "t" });
+        delete process.env.PITBOSS_AGENTS_STATE;
+
+        process.env[envVar] = join(dir, "not-yet-created.json");
+        try {
+          expect(readAgentsState()).toEqual({ agents: [] });
+        } finally {
+          delete process.env[envVar];
+        }
+      });
+    }
 
     it("writes under ~/.config/pitboss", () => {
       expect(agentsStatePath()).toBe(join(dir, ".config", "pitboss", "agents.json"));
@@ -64,6 +86,7 @@ describe("agents-state", () => {
       claimWorkingDir({ agentId: "agent_new", agentName: "new", workingDir: join(dir, "new"), apiUrl: "http://x", tokenRef: "t" });
 
       expect(existsSync(join(dir, ".config", "pitboss", "agents.json"))).toBe(true);
+      expect(existsSync(legacy)).toBe(false);
       expect(readAgentsState().agents.map((a) => a.agentId)).toEqual(["agent_old", "agent_new"]);
     });
   });

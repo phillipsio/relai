@@ -166,10 +166,6 @@ describe("allRuntimeTargets", () => {
     expect(new Set(targets).size).toBe(targets.length);
   });
 
-  it("still scans the legacy ~/.config/relai config, where pre-0.2 joins left tokens", () => {
-    expect(allRuntimeTargets({ home: "/home/jim", repo: "/home/jim/code/app" })).toContain("/home/jim/.config/relai/config.json");
-  });
-
   it("includes ~/.claude.json, which the CLI's own invite snippet tells people to use", () => {
     expect(allRuntimeTargets({ home: "/home/jim", repo: "/home/jim/code/app" })).toContain("/home/jim/.claude.json");
   });

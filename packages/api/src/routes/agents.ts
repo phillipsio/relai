@@ -253,7 +253,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       .where(eq(agents.id, request.params.id))
       .returning();
 
-    return { data: agent };
+    return { data: withoutPeerPath(request, agent) };
   });
 
   fastify.get<{ Params: { id: string } }>("/agents/:id", async (request, reply) => {

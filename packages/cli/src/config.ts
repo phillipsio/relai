@@ -47,9 +47,9 @@ export function retireLegacy(legacy: string, current: string, overridden: boolea
     if (!found) return;
     const [a, b] = [statSync(dirname(legacy)), statSync(dirname(current))];
     if (a.dev === b.dev && a.ino === b.ino) return;
-    if (!found.isFile() && !found.isSymbolicLink()) throw new Error("not a regular file");
     rmSync(legacy);
   } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
     console.error(`pitboss: could not remove ${legacy} (${String(err)}); it may still hold a token, delete it by hand.`);
   }
 }

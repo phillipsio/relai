@@ -12,15 +12,35 @@ export interface Config {
   specialization?: string;
 }
 
-// RELAI_CONFIG_DIR lets you run multiple agent identities on one machine.
+// PITBOSS_CONFIG_DIR lets you run multiple agent identities on one machine.
 // Read on every call, not cached, so an override set after import (tests) takes effect.
+export function configDir(): string {
+  return process.env.PITBOSS_CONFIG_DIR ?? process.env.RELAI_CONFIG_DIR ?? join(homedir(), ".config", "pitboss");
+}
+
 export function configPath(): string {
-  const dir = process.env.RELAI_CONFIG_DIR ?? join(homedir(), ".config", "relai");
-  return join(dir, "config.json");
+  return join(configDir(), "config.json");
+}
+
+export function legacyConfigDir(): string {
+  return join(homedir(), ".config", "relai");
+}
+
+let warned = false;
+export function readablePath(name: string): string {
+  const current = join(configDir(), name);
+  if (existsSync(current) || process.env.PITBOSS_CONFIG_DIR || process.env.RELAI_CONFIG_DIR) return current;
+  const legacy = join(legacyConfigDir(), name);
+  if (!existsSync(legacy)) return current;
+  if (!warned) {
+    warned = true;
+    console.error(`pitboss: reading ${legacy}; the next write moves it to ${current}.`);
+  }
+  return legacy;
 }
 
 export function readConfig(): Config | null {
-  const file = configPath();
+  const file = readablePath("config.json");
   if (!existsSync(file)) return null;
   try {
     const raw = JSON.parse(readFileSync(file, "utf-8")) as Config & { apiSecret?: string };
@@ -34,7 +54,7 @@ export function readConfig(): Config | null {
 }
 
 // Returns where it wrote. Callers used to compute that path a second time and
-// chmod it, which silently diverged whenever RELAI_CONFIG_DIR was set.
+// chmod it, which silently diverged whenever PITBOSS_CONFIG_DIR was set.
 export function writeConfig(config: Config): string {
   const file = configPath();
   mkdirSync(dirname(file), { recursive: true });
@@ -50,7 +70,7 @@ export function writeConfig(config: Config): string {
 export function requireConfig(): Config {
   const config = readConfig();
   if (!config) {
-    console.error("Not initialized. Run `relai init` first.");
+    console.error("Not initialized. Run `pitboss join` first.");
     process.exit(1);
   }
   return config;

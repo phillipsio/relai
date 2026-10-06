@@ -228,7 +228,7 @@ Supports stdio transport (default) and HTTP/SSE transport (`TRANSPORT=http`).
 
 ### CLI (packages/cli)
 
-The `relai` binary is the operator surface. It reads its config from `~/.config/relai/config.json` (override the dir with `RELAI_CONFIG_DIR` for multi-identity testing).
+The `relai` binary is the operator surface. It reads its config from `~/.config/pitboss/config.json` (override the dir with `PITBOSS_CONFIG_DIR` for multi-identity testing). Since 0.2.0 it still reads `~/.config/relai` and `RELAI_CONFIG_DIR` when the new ones are absent, and the next write moves the config to the new path; drop the fallback in a later release.
 
 **Setup**
 - `relai init` — interactive first-time setup: prompts for API URL + admin secret, creates a repo (or accepts an existing repo ID), registers an agent, saves the per-agent token, prints the `.mcp.json` snippet.
@@ -372,7 +372,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `API_OWNER_TOKEN` | — | MCP server owner-mode credential (= the API's `SERVICE_ADMIN_TOKEN`). When set, the MCP server runs the operator toolset across all the owner's repos instead of the per-agent tools. See `docs/operator-ingress.md`. |
 | `OWNER_ID` | — | MCP owner-mode user id (`usr_…`); required alongside `API_OWNER_TOKEN`. Sent as `X-Owner-Id`. |
 | `MCP_HTTP_TOKEN` | — | MCP server, `TRANSPORT=http` only: the bearer credential `GET /sse`/`POST /messages` check. Falls back to `API_SECRET`/`API_OWNER_TOKEN` when unset — set it explicitly in owner mode so the transport credential isn't the same string as the cross-repo god key. |
-| `RELAI_CONFIG_DIR` | `~/.config/relai` | Override CLI config location (multi-identity testing) |
+| `PITBOSS_CONFIG_DIR` | `~/.config/pitboss` | Override CLI config location (multi-identity testing). `RELAI_CONFIG_DIR` still works as a fallback |
 | `RELAI_SKIP_REPO_CHECK` | — | Escape hatch for the repo-access guard, skipping the "you must be in a clone of this agent's repo" check in CLI login / MCP agent-mode / the workers. |
 | `RELAI_REPO_PATH` | — | MCP agent-mode: explicit override for the repo guard's working directory, consulted only when `process.cwd()` isn't a git repo at all. Requires a real clone with a matching origin. |
 | `RELAI_DASHBOARD_URL` | — | Base URL of the dashboard where a human approves a `join` device request. Unset (or whitespace) omits `verificationUri` rather than refusing, since approval has other routes (an owner-scoped caller, `DEVICE_ALLOW_LEGACY_SECRET`, or a human on the dashboard) and `start` can't see which the operator has. |

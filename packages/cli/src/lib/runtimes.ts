@@ -16,7 +16,7 @@ export function runtimeTargets(workerType: WorkerType, { home, repo }: Paths): s
     case "gemini":   return [join(home, ".gemini", "settings.json")];
     case "copilot":  return [join(home, ".config", "github-copilot", "mcp.json")];
     case "gpt":      return [join(home, ".codex", "mcp.json")];
-    case "mcp":      return [join(home, ".config", "relai", "config.json")];
+    case "mcp":      return [join(home, ".config", "pitboss", "config.json")];
     // A person, not a runtime. Nothing to configure.
     case "human":    return [];
   }
@@ -64,7 +64,7 @@ export function mergeMcpServer(existing: Json | null, name: string, entry: Json)
 // nothing; missing one leaves a client holding a revoked token.
 export function allRuntimeTargets({ home, repo }: Paths): string[] {
   const fromRuntimes = RUNTIMES.flatMap((w) => runtimeTargets(w, { home, repo }));
-  return [...new Set([...fromRuntimes, join(home, ".claude.json")])];
+  return [...new Set([...fromRuntimes, join(home, ".claude.json"), join(home, ".config", "relai", "config.json")])];
 }
 
 /**

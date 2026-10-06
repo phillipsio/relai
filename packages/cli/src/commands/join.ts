@@ -220,7 +220,7 @@ async function run(opts: { api?: string }) {
     const written: string[] = [];
     try {
       for (const target of targets) {
-        // The mcp branch writes wherever RELAI_CONFIG_DIR points, which is not
+        // The mcp branch writes wherever PITBOSS_CONFIG_DIR points, which is not
         // the nominal target, so the tracked check has to follow the real path.
         const dest = invite.workerType === "mcp" ? cliConfigPath() : target;
         if (isTracked(dest)) {

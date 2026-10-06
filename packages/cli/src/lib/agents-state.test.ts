@@ -28,6 +28,46 @@ describe("agents-state", () => {
     expect(agentsStatePath()).toBe(stateFile);
   });
 
+  it("prefers PITBOSS_AGENTS_STATE over RELAI_AGENTS_STATE", () => {
+    const preferred = join(dir, "pitboss-agents.json");
+    process.env.PITBOSS_AGENTS_STATE = preferred;
+    try {
+      expect(agentsStatePath()).toBe(preferred);
+    } finally {
+      delete process.env.PITBOSS_AGENTS_STATE;
+    }
+  });
+
+  describe("without an override", () => {
+    let realHome: string | undefined;
+    beforeEach(() => {
+      delete process.env.RELAI_AGENTS_STATE;
+      realHome = process.env.HOME;
+      process.env.HOME = dir;
+    });
+    afterEach(() => {
+      if (realHome === undefined) delete process.env.HOME;
+      else process.env.HOME = realHome;
+    });
+
+    it("writes under ~/.config/pitboss", () => {
+      expect(agentsStatePath()).toBe(join(dir, ".config", "pitboss", "agents.json"));
+    });
+
+    it("reads ~/.config/relai until the first write moves it", () => {
+      const legacy = join(dir, ".config", "relai", "agents.json");
+      process.env.PITBOSS_AGENTS_STATE = legacy;
+      claimWorkingDir({ agentId: "agent_old", agentName: "old", workingDir: join(dir, "old"), apiUrl: "http://x", tokenRef: "t" });
+      delete process.env.PITBOSS_AGENTS_STATE;
+
+      expect(readAgentsState().agents.map((a) => a.agentId)).toEqual(["agent_old"]);
+      claimWorkingDir({ agentId: "agent_new", agentName: "new", workingDir: join(dir, "new"), apiUrl: "http://x", tokenRef: "t" });
+
+      expect(existsSync(join(dir, ".config", "pitboss", "agents.json"))).toBe(true);
+      expect(readAgentsState().agents.map((a) => a.agentId)).toEqual(["agent_old", "agent_new"]);
+    });
+  });
+
   it("returns empty state when file is missing", () => {
     expect(readAgentsState()).toEqual({ agents: [] });
   });

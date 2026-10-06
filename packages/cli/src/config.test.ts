@@ -10,6 +10,7 @@ describe("config", () => {
   let realHome: string | undefined;
   let realUserProfile: string | undefined;
   let realConfigDir: string | undefined;
+  let realLegacyDir: string | undefined;
 
   const sample = {
     apiUrl: "http://localhost:3010",
@@ -24,17 +25,21 @@ describe("config", () => {
     fakeHome = mkdtempSync(join(tmpdir(), "relai-home-"));
     realHome = process.env.HOME;
     realUserProfile = process.env.USERPROFILE;
-    realConfigDir = process.env.RELAI_CONFIG_DIR;
+    realConfigDir = process.env.PITBOSS_CONFIG_DIR;
+    realLegacyDir = process.env.RELAI_CONFIG_DIR;
+    delete process.env.RELAI_CONFIG_DIR;
     // Redirect home so an accidental write to the default location lands
     // somewhere we can assert on instead of the developer's real config.
     process.env.HOME = fakeHome;
     process.env.USERPROFILE = fakeHome;
-    process.env.RELAI_CONFIG_DIR = configDir;
+    process.env.PITBOSS_CONFIG_DIR = configDir;
   });
 
   afterEach(() => {
-    if (realConfigDir === undefined) delete process.env.RELAI_CONFIG_DIR;
-    else process.env.RELAI_CONFIG_DIR = realConfigDir;
+    if (realLegacyDir === undefined) delete process.env.RELAI_CONFIG_DIR;
+    else process.env.RELAI_CONFIG_DIR = realLegacyDir;
+    if (realConfigDir === undefined) delete process.env.PITBOSS_CONFIG_DIR;
+    else process.env.PITBOSS_CONFIG_DIR = realConfigDir;
     if (realHome === undefined) delete process.env.HOME;
     else process.env.HOME = realHome;
     if (realUserProfile === undefined) delete process.env.USERPROFILE;
@@ -43,25 +48,25 @@ describe("config", () => {
     rmSync(fakeHome, { recursive: true, force: true });
   });
 
-  it("honours a RELAI_CONFIG_DIR set after this module was imported", () => {
+  it("honours a PITBOSS_CONFIG_DIR set after this module was imported", () => {
     expect(configPath()).toBe(join(configDir, "config.json"));
   });
 
-  it("writes into RELAI_CONFIG_DIR, not the home directory", () => {
+  it("writes into PITBOSS_CONFIG_DIR, not the home directory", () => {
     writeConfig(sample);
 
     expect(existsSync(join(configDir, "config.json"))).toBe(true);
-    expect(existsSync(join(fakeHome, ".config", "relai", "config.json"))).toBe(false);
+    expect(existsSync(join(fakeHome, ".config", "pitboss", "config.json"))).toBe(false);
   });
 
   it("never touches the home directory even when it already holds a config", () => {
     // Simulates a developer with a real credential on disk: running the suite
     // must not overwrite it.
-    const homeConfigDir = join(fakeHome, ".config", "relai");
+    const homeConfigDir = join(fakeHome, ".config", "pitboss");
     const homeConfig = join(homeConfigDir, "config.json");
-    process.env.RELAI_CONFIG_DIR = homeConfigDir;
+    process.env.PITBOSS_CONFIG_DIR = homeConfigDir;
     writeConfig({ ...sample, apiToken: "t_real_credential" });
-    process.env.RELAI_CONFIG_DIR = configDir;
+    process.env.PITBOSS_CONFIG_DIR = configDir;
 
     writeConfig({ ...sample, apiToken: "t_from_the_test" });
 
@@ -76,18 +81,18 @@ describe("config", () => {
     expect(readConfig()).toEqual(sample);
   });
 
-  it("follows RELAI_CONFIG_DIR when it changes between calls", () => {
+  it("follows PITBOSS_CONFIG_DIR when it changes between calls", () => {
     writeConfig(sample);
 
     const second = mkdtempSync(join(tmpdir(), "relai-config-2-"));
     try {
-      process.env.RELAI_CONFIG_DIR = second;
+      process.env.PITBOSS_CONFIG_DIR = second;
       expect(readConfig()).toBeNull();
 
       writeConfig({ ...sample, agentName: "other" });
       expect(readConfig()?.agentName).toBe("other");
 
-      process.env.RELAI_CONFIG_DIR = configDir;
+      process.env.PITBOSS_CONFIG_DIR = configDir;
       expect(readConfig()?.agentName).toBe("tester");
     } finally {
       rmSync(second, { recursive: true, force: true });
@@ -99,7 +104,7 @@ describe("config", () => {
     const { apiToken, ...withoutToken } = sample;
     const legacy = { ...withoutToken, apiSecret: apiToken };
     rmSync(join(configDir, "config.json"));
-    process.env.RELAI_CONFIG_DIR = configDir;
+    process.env.PITBOSS_CONFIG_DIR = configDir;
     writeConfig(legacy as never);
 
     expect(readConfig()?.apiToken).toBe(apiToken);
@@ -114,9 +119,9 @@ describe("config", () => {
     expect(readConfig()).toBeNull();
   });
 
-  it("falls back to ~/.config/relai when RELAI_CONFIG_DIR is unset", () => {
-    delete process.env.RELAI_CONFIG_DIR;
-    const defaultPath = join(fakeHome, ".config", "relai", "config.json");
+  it("defaults to ~/.config/pitboss when PITBOSS_CONFIG_DIR is unset", () => {
+    delete process.env.PITBOSS_CONFIG_DIR;
+    const defaultPath = join(fakeHome, ".config", "pitboss", "config.json");
 
     expect(configPath()).toBe(defaultPath);
     writeConfig(sample);
@@ -124,11 +129,52 @@ describe("config", () => {
     expect(readConfig()).toEqual(sample);
   });
 
+  describe("the legacy relai names", () => {
+    const legacyFile = () => join(fakeHome, ".config", "relai", "config.json");
+    const newFile = () => join(fakeHome, ".config", "pitboss", "config.json");
+    const plantLegacy = (agentName: string) => {
+      process.env.PITBOSS_CONFIG_DIR = join(fakeHome, ".config", "relai");
+      writeConfig({ ...sample, agentName });
+      delete process.env.PITBOSS_CONFIG_DIR;
+    };
+
+    it("still honours RELAI_CONFIG_DIR when PITBOSS_CONFIG_DIR is unset", () => {
+      delete process.env.PITBOSS_CONFIG_DIR;
+      process.env.RELAI_CONFIG_DIR = configDir;
+      expect(configPath()).toBe(join(configDir, "config.json"));
+    });
+
+    it("prefers PITBOSS_CONFIG_DIR over RELAI_CONFIG_DIR", () => {
+      process.env.RELAI_CONFIG_DIR = join(fakeHome, "legacy");
+      expect(configPath()).toBe(join(configDir, "config.json"));
+    });
+
+    it("reads ~/.config/relai when ~/.config/pitboss has no config", () => {
+      plantLegacy("legacy");
+      expect(readConfig()?.agentName).toBe("legacy");
+    });
+
+    it("moves to ~/.config/pitboss on the next write and leaves the legacy file alone", () => {
+      plantLegacy("legacy");
+      writeConfig({ ...sample, agentName: "migrated" });
+
+      expect(JSON.parse(readFileSync(newFile(), "utf-8")).agentName).toBe("migrated");
+      expect(JSON.parse(readFileSync(legacyFile(), "utf-8")).agentName).toBe("legacy");
+      expect(readConfig()?.agentName).toBe("migrated");
+    });
+
+    it("never falls back to the legacy home file when a directory is set explicitly", () => {
+      plantLegacy("legacy");
+      process.env.PITBOSS_CONFIG_DIR = configDir;
+      expect(readConfig()).toBeNull();
+    });
+  });
+
   it("does not create the home config directory as a side effect", () => {
     writeConfig(sample);
     readConfig();
     configPath();
 
-    expect(existsSync(join(fakeHome, ".config", "relai"))).toBe(false);
+    expect(existsSync(join(fakeHome, ".config", "pitboss"))).toBe(false);
   });
 });

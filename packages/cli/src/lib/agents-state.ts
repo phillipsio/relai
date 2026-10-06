@@ -16,8 +16,16 @@ export interface AgentsState {
 }
 
 function statePath(): string {
-  if (process.env.RELAI_AGENTS_STATE) return process.env.RELAI_AGENTS_STATE;
-  return join(homedir(), ".config", "relai", "agents.json");
+  const override = process.env.PITBOSS_AGENTS_STATE ?? process.env.RELAI_AGENTS_STATE;
+  if (override) return override;
+  return join(homedir(), ".config", "pitboss", "agents.json");
+}
+
+function readableStatePath(): string {
+  const current = statePath();
+  if (existsSync(current) || process.env.PITBOSS_AGENTS_STATE || process.env.RELAI_AGENTS_STATE) return current;
+  const legacy = join(homedir(), ".config", "relai", "agents.json");
+  return existsSync(legacy) ? legacy : current;
 }
 
 export function agentsStatePath(): string {
@@ -25,7 +33,7 @@ export function agentsStatePath(): string {
 }
 
 export function readAgentsState(): AgentsState {
-  const p = statePath();
+  const p = readableStatePath();
   if (!existsSync(p)) return { agents: [] };
   try {
     const raw = JSON.parse(readFileSync(p, "utf-8")) as AgentsState;

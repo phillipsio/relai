@@ -697,8 +697,9 @@ describe("buildOperatorTools (owner mode)", () => {
     const createInvite = vi.fn().mockResolvedValue({ invite: { id: "invite_1" }, code: "inv_CODE" });
     const tools = buildOperatorTools(mockClient({ createInvite }), "usr_1");
     const result = await getHandler(tools, "invite_agent")({ repoId: "r", name: "reviewer" });
-    expect(result.content[0].text).toContain("RELAI_CONFIG_DIR=");
-    expect(result.content[0].text).toContain("reviewer");
+    const { redeemCommand } = JSON.parse(result.content[0].text);
+    expect(redeemCommand).toContain("PITBOSS_CONFIG_DIR=~/.config/pitboss/reviewer ");
+    expect(redeemCommand).toContain("RELAI_CONFIG_DIR=~/.config/pitboss/reviewer ");
   });
 
   it("revoke_invite asks for an invite id, not the code, which share no prefix", async () => {

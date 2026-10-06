@@ -227,9 +227,13 @@ describe("HTTP/SSE transport auth gate", () => {
     await second.body?.cancel();
   });
 
-  it("responds 500 when server.connect() fails, and leaves the transport usable for the next attempt", async () => {
+  it("responds 500 when server.connect() fails, detaches the failed transport, and leaves the transport usable for the next attempt", async () => {
     const mcpServer = createMcpServer("test", "0.0.0");
-    const connectSpy = vi.spyOn(mcpServer, "connect").mockRejectedValueOnce(new Error("boom"));
+    let failedTransport: { onclose?: () => void } | undefined;
+    const connectSpy = vi.spyOn(mcpServer, "connect").mockImplementationOnce(async (transport: any) => {
+      failedTransport = transport;
+      throw new Error("boom");
+    });
     const server = await startTestServer(mcpServer);
     close = server.close;
     const auth = { authorization: `Bearer ${CREDENTIAL}` };
@@ -238,10 +242,53 @@ describe("HTTP/SSE transport auth gate", () => {
     expect(failed.status).toBe(500);
     const body = (await failed.json()) as { error: { code: string } };
     expect(body.error.code).toBe("connect_failed");
+    // Connect() wires its callbacks before awaiting start(), so a rejected
+    // connect() is the same stray-callback hazard a replaced live transport
+    // is — a failed attempt must come away detached too, not just discarded.
+    expect(failedTransport?.onclose).toBeUndefined();
 
     connectSpy.mockRestore();
     const recovered = await fetch(`${server.url}/sse`, { headers: auth });
     expect(recovered.status).toBe(200);
     await recovered.body?.cancel();
+  });
+
+  it("serializes GET /sse through one takeover at a time, even when connect() is slow", async () => {
+    const mcpServer = createMcpServer("test", "0.0.0");
+    let connectCount = 0;
+    let releaseFirst: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const realConnect = mcpServer.connect.bind(mcpServer);
+    vi.spyOn(mcpServer, "connect").mockImplementation(async (transport: any) => {
+      connectCount++;
+      if (connectCount === 1) await gate;
+      return realConnect(transport);
+    });
+
+    const server = await startTestServer(mcpServer);
+    close = server.close;
+    const auth = { authorization: `Bearer ${CREDENTIAL}` };
+
+    const firstPromise = fetch(`${server.url}/sse`, { headers: auth });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(connectCount).toBe(1);
+
+    // If GET /sse weren't serialized, this second request would start its
+    // own takeover immediately and call connect() a second time right away,
+    // without waiting for the first (still gated) connect() to resolve.
+    const secondPromise = fetch(`${server.url}/sse`, { headers: auth });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(connectCount).toBe(1);
+
+    releaseFirst?.();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(connectCount).toBe(2);
+
+    await readToEnd(first.body);
+    await second.body?.cancel();
   });
 });

@@ -23,16 +23,17 @@ function createHttpRequestListener(server, credential) {
     // — the new one. This also means a peer that silently vanished (no FIN)
     // never locks the transport closed; the next reconnect simply displaces it.
     let current;
-    // Two genuinely concurrent GET /sse requests each await across this whole
-    // sequence, so without serializing them here both could read `current` as
-    // stale and race to write it last — chaining every attempt through one
-    // promise makes "close the old one, connect the new one" atomic relative
-    // to any other connection attempt, not just relative to a single `await`.
+    // SDK 1.6.0's connect()/close() are synchronous under the hood, so two
+    // concurrent GET /sse requests can't currently interleave mid-takeover —
+    // but that's an SDK-version fact, not a property this code enforces on its
+    // own. Serializing every attempt through one promise chain means a future
+    // SDK whose connect() does real I/O can't reintroduce the stale-`current`
+    // race by itself; it's insurance, not a fix for a race measured here.
     let takeoverQueue = Promise.resolve();
-    async function connectSse(res) {
-        const transport = new sse_js_1.SSEServerTransport("/messages", res);
-        await server.connect(transport);
-        return transport;
+    function detach(transport) {
+        transport.onclose = undefined;
+        transport.onerror = undefined;
+        transport.onmessage = undefined;
     }
     async function takeOver(res) {
         const replaced = current;
@@ -46,9 +47,7 @@ function createHttpRequestListener(server, credential) {
             // by then, including the new one this takeover is about to connect.
             // Detaching first means a late close from the replaced transport is a
             // no-op instead of a silent, delayed kill of its successor.
-            replaced.onclose = undefined;
-            replaced.onerror = undefined;
-            replaced.onmessage = undefined;
+            detach(replaced);
             try {
                 await replaced.close();
             }
@@ -56,10 +55,19 @@ function createHttpRequestListener(server, credential) {
                 // Already gone — that's exactly the case this takeover exists for.
             }
         }
+        // Built here, not inside a connect-and-return helper, so a failed
+        // connect() still leaves this function holding the transport it half-
+        // wired — server.connect() attaches its callbacks before awaiting
+        // start(), so a rejection here is the same hazard as an old transport
+        // left wired above, and gets the same detach rather than being handed
+        // off abandoned.
+        const transport = new sse_js_1.SSEServerTransport("/messages", res);
         try {
-            current = await connectSse(res);
+            await server.connect(transport);
+            current = transport;
         }
         catch (err) {
+            detach(transport);
             console.error("[relai-mcp] failed to establish SSE connection:", err instanceof Error ? err.message : err);
             if (!res.headersSent) {
                 res
@@ -82,8 +90,13 @@ function createHttpRequestListener(server, credential) {
         // branch a bare "/messages" does, rather than falling through to 404.
         const path = (req.url ?? "").split("?")[0];
         if (req.method === "GET" && path === "/sse") {
-            takeoverQueue = takeoverQueue.then(() => takeOver(res));
-            await takeoverQueue;
+            // Both arms resolve to the same call: if takeOver throws, the stored
+            // chain must still recover for the next request rather than carrying
+            // the rejection forward forever (which would silently stop serving
+            // GET /sse at all, with nothing to retry it).
+            const attempt = takeoverQueue.then(() => takeOver(res), () => takeOver(res));
+            takeoverQueue = attempt;
+            await attempt;
         }
         else if (req.method === "POST" && path === "/messages") {
             // Not yet wired to handlePostMessage (see AGENTS.md). A bare 200 here

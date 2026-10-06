@@ -207,7 +207,7 @@ async function run(opts: { api?: string }) {
       code: invite.code, name: invite.name, role: invite.role,
       specialization: invite.specialization ?? undefined,
       workerType: invite.workerType, domains: invite.domains ?? [],
-      repoPath: root,
+      ...(/^[^\p{Cc}\u2028\u2029\u0085]{1,1024}$/u.test(root) ? { repoPath: root } : {}),
     });
     if (accepted.status !== 201) {
       const said = (accepted.payload as { error?: { message?: string } } | undefined)?.error?.message;

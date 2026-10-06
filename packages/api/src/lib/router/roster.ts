@@ -20,4 +20,5 @@ export function agentRosterLine(a: {
 // Anything that lands on a roster line is refused at the door too, so a stored
 // value cannot rely on render-time scrubbing being applied everywhere.
 export const promptSafeText = z.string().max(80).regex(/^[^\r\n]+$/);
+export const promptSafePath = z.string().min(1).max(1024).regex(/^[^\p{Cc}\u2028\u2029\u0085]+$/u);
 export const promptSafeDomains = z.array(z.string().max(40).regex(/^[^\r\n]+$/)).max(20);

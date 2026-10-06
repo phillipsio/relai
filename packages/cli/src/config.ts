@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync, lstatSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync, lstatSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 export interface Config {
@@ -45,7 +45,8 @@ export function retireLegacy(legacy: string, current: string, overridden: boolea
   try {
     const found = lstatSync(legacy, { throwIfNoEntry: false });
     if (!found) return;
-    if (realpathSync(dirname(legacy)) === realpathSync(dirname(current))) return;
+    const [a, b] = [statSync(dirname(legacy)), statSync(dirname(current))];
+    if (a.dev === b.dev && a.ino === b.ino) return;
     if (!found.isFile() && !found.isSymbolicLink()) throw new Error("not a regular file");
     rmSync(legacy);
   } catch (err) {

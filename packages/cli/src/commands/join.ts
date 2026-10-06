@@ -209,7 +209,8 @@ async function run(opts: { api?: string }) {
       workerType: invite.workerType, domains: invite.domains ?? [],
     });
     if (accepted.status !== 201) {
-      console.error(chalk.red(`  ✕ ${invite.name}: could not redeem (HTTP ${accepted.status})`));
+      const said = (accepted.payload as { error?: { message?: string } } | undefined)?.error?.message;
+      console.error(chalk.red(`  ✕ ${invite.name}: could not redeem (HTTP ${accepted.status})${said ? `: ${said}` : ""}`));
       continue;
     }
     const agent = (accepted.payload as { data: { id: string }; token: string });

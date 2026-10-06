@@ -76,7 +76,8 @@ git -C "$WORK" remote add origin "git@github.com:someone/e2e-widget.git"
 printf '%s\n' '{"mcpServers":{"playwright":{"command":"npx","args":["playwright"]}},"theme":"dark"}' > "$WORK/.mcp.json"
 
 export HOME="$SANDBOX/home"; mkdir -p "$HOME"
-( cd "$WORK" && CLAUDECODE=1 "$TSX_CLI" "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join.log" 2>&1 ) &
+mkdir -p "$WORK/packages/app"
+( cd "$WORK/packages/app" && CLAUDECODE=1 "$TSX_CLI" "$ROOT/packages/cli/src/index.ts" join --api "$API" > "$SANDBOX/join.log" 2>&1 ) &
 JOIN_PID=$!
 
 CODE=""

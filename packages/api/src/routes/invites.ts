@@ -1,4 +1,4 @@
-import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
+import { promptSafeText, promptSafeDomains, promptSafePath } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { and, eq, isNull, getTableColumns } from "drizzle-orm";
@@ -49,7 +49,7 @@ const acceptSchema = z.object({
   specialization: z.string().min(1).max(80).regex(/^[^\r\n]+$/).optional(),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
   domains:        promptSafeDomains.default([]),
-  repoPath:       z.string().min(1).max(1024).regex(/^[^\r\n]+$/).optional(),
+  repoPath:       promptSafePath.optional(),
 });
 
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {

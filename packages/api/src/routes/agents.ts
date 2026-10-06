@@ -1,5 +1,5 @@
-import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
-import type { FastifyPluginAsync } from "fastify";
+import { promptSafeText, promptSafeDomains, promptSafePath } from "../lib/router/roster.js";
+import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { eq, and, inArray, isNull, desc } from "drizzle-orm";
 import { agents, tokens, repos, tasks, routingLog, invites, artifacts, artifactVersions } from "@getrelai/db";
@@ -17,7 +17,7 @@ const registerSchema = z.object({
   tier:           z.number().int().min(1).max(2).optional(),
   domains:        promptSafeDomains.default([]),
   workerType:     z.enum(["claude", "copilot", "cursor", "windsurf", "gemini", "gpt", "mcp", "human"]).optional(),
-  repoPath:       z.string().optional(),
+  repoPath:       promptSafePath.optional(),
 });
 
 // Rotation retires what it replaces. keepExisting opts out for the rare case
@@ -25,6 +25,9 @@ const registerSchema = z.object({
 // between machines; it is how the pile in task_o6BhrRbJndRhyMdvnctAy formed, so
 // it is opt-in rather than the default.
 const rotateSchema = z.object({ keepExisting: z.boolean().optional() }).strict();
+
+const withoutPeerPath = <T extends { id: string; repoPath: string | null }>(request: FastifyRequest, row: T): T =>
+  request.agent && request.agent.id !== row.id ? { ...row, repoPath: null } : row;
 
 export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.post("/agents", async (request, reply) => {
@@ -256,7 +259,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
   fastify.get<{ Params: { id: string } }>("/agents/:id", async (request, reply) => {
     const check = await assertAgentAccess(request, db, request.params.id);
     if (!check.ok) return reply.status(check.status).send({ error: { code: "not_found", message: "Agent not found" } });
-    return { data: check.agent };
+    return { data: withoutPeerPath(request, check.agent) };
   });
 
   fastify.delete<{ Params: { id: string } }>("/agents/:id", async (request, reply) => {
@@ -348,7 +351,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
 
       if (!ownRepo?.ownerId) {
         const rows = await db.select().from(agents).where(eq(agents.repoId, request.agent.repoId));
-        return { data: rows };
+        return { data: rows.map((row) => withoutPeerPath(request, row)) };
       }
 
       const siblingIds = (await db
@@ -356,7 +359,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
         .from(repos)
         .where(eq(repos.ownerId, ownRepo.ownerId))).map((r) => r.id);
       const rows = await db.select().from(agents).where(inArray(agents.repoId, siblingIds));
-      return { data: rows };
+      return { data: rows.map((row) => withoutPeerPath(request, row)) };
     }
 
     // Service-admin: filter to repos owned by this tenant.

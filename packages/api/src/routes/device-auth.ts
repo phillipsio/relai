@@ -2,11 +2,18 @@ import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { and, eq, isNull, lt } from "drizzle-orm";
-import { deviceAuthorizations, invites, repos } from "@getrelai/db";
+import { deviceAuthorizations, invites, repos, agents } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { generateDeviceCode, generateInviteCode, generateUserCode, hashSecret } from "../lib/tokens.js";
 import { assertRepoAccess } from "../lib/ownership.js";
+
+// Thrown inside the mint transaction (never outside it) so the ROLLBACK that
+// unwinds it also undoes the consumedAt claim a few lines above — the human
+// approval survives a refusal instead of being burned on a repo that already
+// has an orchestrator, which the accept-invite 409 discovers too late to help:
+// by then the device code is long gone.
+class OrchestratorAlreadyExistsError extends Error {}
 
 const TTL_SECONDS = 10 * 60;
 const POLL_INTERVAL_SECONDS = 5;
@@ -170,32 +177,54 @@ export const deviceAuthRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, 
     }
 
     // Minted here, not at approval, so a code never sits at rest. The
-    // conditional update is the ONLY consumption guard: do not add an early one.
-    const minted = await db.transaction(async (tx) => {
-      const [claimed] = await tx.update(deviceAuthorizations)
-        .set({ consumedAt: new Date(now) })
-        .where(and(eq(deviceAuthorizations.id, row.id), isNull(deviceAuthorizations.consumedAt)))
-        .returning();
-      if (!claimed) return null;
+    // conditional update is the ONLY consumption guard before this point: do
+    // not add an early one — but once inside this same transaction, a
+    // same-repo orchestrator grant that's about to be unredeemable rolls the
+    // claim back too, rather than consuming the approval for nothing.
+    let minted;
+    try {
+      minted = await db.transaction(async (tx) => {
+        const [claimed] = await tx.update(deviceAuthorizations)
+          .set({ consumedAt: new Date(now) })
+          .where(and(eq(deviceAuthorizations.id, row.id), isNull(deviceAuthorizations.consumedAt)))
+          .returning();
+        if (!claimed) return null;
 
-      return Promise.all(granted.map(async (g) => {
-        const code = generateInviteCode();
-        await tx.insert(invites).values({
-          id:        newId("invite"),
-          repoId,
-          codeHash:  hashSecret(code),
-          role:      g.role,
-          suggestedName:           g.name,
-          suggestedSpecialization: g.specialization ?? null,
-          expiresAt: new Date(now + TTL_SECONDS * 1000),
-          deviceAuthorizationId: row.id,
-          // claimedBy, not anything from a request body: the tenant that looked
-          // this code up first is the only one that could have approved it.
-          ownerId: row.scope === "owner" ? row.claimedBy : null,
+        if (granted.some((g) => g.role === "orchestrator")) {
+          const [existing] = await tx.select({ id: agents.id }).from(agents)
+            .where(and(eq(agents.repoId, repoId), eq(agents.role, "orchestrator")));
+          if (existing) throw new OrchestratorAlreadyExistsError();
+        }
+
+        return Promise.all(granted.map(async (g) => {
+          const code = generateInviteCode();
+          await tx.insert(invites).values({
+            id:        newId("invite"),
+            repoId,
+            codeHash:  hashSecret(code),
+            role:      g.role,
+            suggestedName:           g.name,
+            suggestedSpecialization: g.specialization ?? null,
+            expiresAt: new Date(now + TTL_SECONDS * 1000),
+            deviceAuthorizationId: row.id,
+            // claimedBy, not anything from a request body: the tenant that looked
+            // this code up first is the only one that could have approved it.
+            ownerId: row.scope === "owner" ? row.claimedBy : null,
+          });
+          return { name: g.name, workerType: g.workerType, role: g.role, specialization: g.specialization ?? null, domains: g.domains, code };
+        }));
+      });
+    } catch (err) {
+      if (err instanceof OrchestratorAlreadyExistsError) {
+        return reply.status(409).send({
+          error: {
+            code: "conflict",
+            message: "This project already has an orchestrator. The approval was not consumed — resolve that and poll again.",
+          },
         });
-        return { name: g.name, workerType: g.workerType, role: g.role, specialization: g.specialization ?? null, domains: g.domains, code };
-      }));
-    });
+      }
+      throw err;
+    }
 
     if (!minted) {
       return reply.status(400).send({ error: { code: "expired_token", message: "This device code is no longer usable" } });

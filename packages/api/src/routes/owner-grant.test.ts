@@ -466,6 +466,49 @@ describe("the invariant holds at the point of trust, not only at approve", () =>
   });
 });
 
+describe("a device grant into an already-staffed repo does not burn the human approval", () => {
+  // /auth/device/token used to stamp consumedAt unconditionally before
+  // minting invites, so a second owner-scoped grant into a repo that already
+  // has an orchestrator spent the device code (and the human's approval)
+  // before accept-invite ever got a chance to 409. The approval is gone, the
+  // CLI has no code left to retry with, and the only way back is redoing the
+  // whole browser-approval dance. The orchestrator check now runs inside the
+  // same transaction as the consumedAt claim, so a conflict rolls both back.
+  it("refuses at /auth/device/token, leaving the approval retryable", async () => {
+    const home = await mkRepo("__test__ og device-conflict", ownerA);
+    const first = await grant({ owner: ownerA, repoId: home, body: { scope: "owner" } });
+    await redeem(first.deviceCode, `og-first-${Date.now()}`);
+
+    const started = await app.inject({
+      method: "POST", url: "/auth/device/start", headers: JSON_ONLY, body: JSON.stringify({}),
+    });
+    const { userCode } = started.json().data;
+    const deviceCode = started.json().deviceCode as string;
+    const approve = await app.inject({
+      method: "POST", url: "/auth/device/approve", headers: asOwner(ownerA),
+      body: JSON.stringify({
+        userCode, repoId: home,
+        agents: [{ name: `og-second-${Date.now()}`, workerType: "claude", role: "orchestrator" }],
+        scope: "owner",
+      }),
+    });
+    expect(approve.statusCode).toBe(200);
+
+    const polled = await app.inject({
+      method: "POST", url: "/auth/device/token",
+      headers: { Authorization: `Bearer ${deviceCode}`, ...JSON_ONLY },
+    });
+    expect(polled.statusCode).toBe(409);
+    expect(polled.json().error.code).toBe("conflict");
+
+    // The conflict check runs inside the same transaction as the consumedAt
+    // claim, so throwing it rolls both back — confirm directly rather than
+    // polling again, which would just hit this route's own rate limit.
+    const [row] = await db.select().from(deviceAuthorizations).where(eq(deviceAuthorizations.userCode, userCode));
+    expect(row.consumedAt).toBeNull();
+  });
+});
+
 describe("one invite is one credential, under concurrency", () => {
   it("mints exactly one agent however many redeems race", async () => {
     // The approve path enforces a single owner-scoped credential. That rule is

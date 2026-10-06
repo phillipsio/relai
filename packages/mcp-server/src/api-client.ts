@@ -75,6 +75,14 @@ export class ApiClient {
     );
   }
 
+  deleteAgent(agentId: string) {
+    return this.request<unknown>("DELETE", `/agents/${agentId}`);
+  }
+
+  revokeToken(tokenId: string) {
+    return this.request<unknown>("DELETE", `/tokens/${tokenId}`);
+  }
+
   listInvites(repoId: string) {
     return this.request<Array<{ id: string; acceptedAt: string | null; expiresAt: string }>>(
       "GET", `/repos/${repoId}/invites`,

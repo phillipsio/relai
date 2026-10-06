@@ -1,5 +1,5 @@
 import { EventSource } from "eventsource";
-import { runClaudeSession, heartbeat, assertRepoOrExit, classifySessionError, blockOverflowedTasks } from "@getrelai/claude-worker";
+import { runClaudeSession, heartbeat, assertRepoOrExit, assertNotOwnerScopedOrExit, classifySessionError, blockOverflowedTasks } from "@getrelai/claude-worker";
 import { createRunQueue } from "./queue.js";
 import type { EventWorkerConfig } from "./config.js";
 
@@ -73,6 +73,7 @@ export async function runEventWorker(config: EventWorkerConfig): Promise<never> 
   console.log(`[event-worker] Repo: ${config.repoPath} | Model: ${config.model}`);
 
   await assertRepoOrExit(config, "[event-worker]");
+  await assertNotOwnerScopedOrExit(config, "[event-worker]");
   await selfSubscribe(config);
 
   const queue = createRunQueue(async () => {

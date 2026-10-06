@@ -109,6 +109,48 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
     name: string;
     description: string;
     inputSchema: z.ZodObject<{
+        agentId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        agentId: string;
+    }, {
+        agentId: string;
+    }>;
+    handler: (input: {
+        agentId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    } | {
+        content: {
+            type: "text";
+            text: string;
+        }[];
+        isError: boolean;
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        tokenId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        tokenId: string;
+    }, {
+        tokenId: string;
+    }>;
+    handler: (input: {
+        tokenId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
         name: z.ZodString;
         body: z.ZodString;
         description: z.ZodOptional<z.ZodString>;
@@ -642,6 +684,49 @@ export declare function buildTools(client: ApiClient, agentId: string, repoId: s
         }[];
     }>;
 })[];
+export declare function buildAgentManagementTools(client: ApiClient, selfId: string): ({
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        agentId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        agentId: string;
+    }, {
+        agentId: string;
+    }>;
+    handler: (input: {
+        agentId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    } | {
+        content: {
+            type: "text";
+            text: string;
+        }[];
+        isError: boolean;
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        tokenId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        tokenId: string;
+    }, {
+        tokenId: string;
+    }>;
+    handler: (input: {
+        tokenId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+})[];
 export type ToolConfig = {
     ownerMode: true;
     ownerId?: string;
@@ -737,6 +822,48 @@ export declare function selectTools(client: ApiClient, config: ToolConfig): ({
     }>;
     handler: (input: {
         inviteId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        agentId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        agentId: string;
+    }, {
+        agentId: string;
+    }>;
+    handler: (input: {
+        agentId: string;
+    }) => Promise<{
+        content: {
+            type: "text";
+            text: string;
+        }[];
+    } | {
+        content: {
+            type: "text";
+            text: string;
+        }[];
+        isError: boolean;
+    }>;
+} | {
+    name: string;
+    description: string;
+    inputSchema: z.ZodObject<{
+        tokenId: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        tokenId: string;
+    }, {
+        tokenId: string;
+    }>;
+    handler: (input: {
+        tokenId: string;
     }) => Promise<{
         content: {
             type: "text";

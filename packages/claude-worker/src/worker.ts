@@ -1,7 +1,7 @@
 import { classifySessionError } from "./errors.js";
 import { blockOverflowedTasks } from "./block-task.js";
 import { runClaudeSession } from "./session.js";
-import { checkRepoMatch, fetchRepoUrl } from "@getrelai/git";
+import { checkRepoMatch, fetchRepoUrl, fetchCredentialIsOwnerScoped } from "@getrelai/git";
 import type { ClaudeWorkerConfig } from "./config.js";
 
 // Shared with @getrelai/event-worker (same heartbeat/repo-check logic, just a
@@ -28,6 +28,23 @@ export async function assertRepoOrExit(config: ClaudeWorkerConfig, logPrefix = "
   }
 }
 
+// A headless session skips every permission prompt, so it must never hold the
+// account's god (owner-scoped) credential, which can mint and revoke credentials.
+export async function assertNotOwnerScopedOrExit(config: ClaudeWorkerConfig, logPrefix = "[claude-worker]"): Promise<void> {
+  try {
+    if (await fetchCredentialIsOwnerScoped(config.apiUrl, config.agentId, config.apiSecret)) {
+      console.error(
+        `${logPrefix} Refusing to start: this is the account's owner-scoped (top-level) credential. ` +
+        "Headless workers skip permission prompts, so connect this one without owner scope.",
+      );
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(`${logPrefix} Refusing to start: could not confirm this credential is not owner-scoped (${String(err)}).`);
+    process.exit(1);
+  }
+}
+
 // The worker's poll-run-backoff loop, factored out so other packages (e.g.
 // @getrelai/agent, which wraps this in a self-registering persistent service)
 // can run it in-process instead of spawning a second `claude-worker` process.
@@ -36,6 +53,7 @@ export async function runWorker(config: ClaudeWorkerConfig): Promise<never> {
   console.log(`[claude-worker] Repo: ${config.repoPath} | Model: ${config.model}`);
 
   await assertRepoOrExit(config);
+  await assertNotOwnerScopedOrExit(config);
   let consecutiveFatal = 0;
   while (true) {
     await heartbeat(config);

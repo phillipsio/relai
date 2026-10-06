@@ -518,11 +518,12 @@ describe("an owner-scoped agent gets the provisioning tools ON TOP of its own", 
   // The seam the owner-credential work left open: tokens.ownerId decided
   // authority at the API, and the MCP server still chose its toolset from an
   // env var, so the credential granted access the model could not reach.
-  // NOT invite_agent. It is the only one of the six that mints a bearer
-  // credential, and agent mode reaches `claude --print
-  // --dangerously-skip-permissions` (claude-worker/src/session.ts:55), where no
-  // human confirms a call and peer text arrives through get_unread_messages.
-  const PROVISIONING = ["create_repo", "list_invites", "revoke_invite", "list_repos"];
+  // The god credential: everything the owner can do through a credential,
+  // invite_agent included. claude-worker refuses to run with one, so the
+  // headless --dangerously-skip-permissions loop never holds these.
+  const SHARED = ["create_repo", "list_invites", "revoke_invite", "list_repos", "invite_agent"];
+  const AGENT_MANAGEMENT = ["remove_agent", "list_tokens", "revoke_token"];
+  const PROVISIONING = [...SHARED, ...AGENT_MANAGEMENT];
   // These assume no agent identity — no heartbeat, no home repo — and
   // buildOperatorTools' create_task bypasses propose/commit, which an
   // owner-scoped WORKER is not entitled to. They stay in owner mode.
@@ -533,7 +534,7 @@ describe("an owner-scoped agent gets the provisioning tools ON TOP of its own", 
     for (const n of PROVISIONING) expect(names).not.toContain(n);
   });
 
-  it("adds exactly the five when the credential is owner-scoped", () => {
+  it("adds exactly these when the credential is owner-scoped", () => {
     const plain = buildTools(mockClient(), AGENT_ID, REPO_ID).map((t) => t.name);
     const scoped = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
     expect(scoped.filter((n) => !plain.includes(n)).sort()).toEqual([...PROVISIONING].sort());
@@ -563,24 +564,46 @@ describe("an owner-scoped agent gets the provisioning tools ON TOP of its own", 
     const fromAgent = new Map(
       buildTools(client, AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => [t.name, t]),
     );
-    for (const n of PROVISIONING) {
+    for (const n of SHARED) {
       expect(fromAgent.get(n)!.description).toBe(fromOperator.get(n)!.description);
       expect(Object.keys((fromAgent.get(n)!.inputSchema as any).shape).sort())
         .toEqual(Object.keys((fromOperator.get(n)!.inputSchema as any).shape).sort());
     }
   });
 
-  it("withholds the one verb that mints a credential", () => {
-    // Before this change NO agent-mode tool took a repoId from the model: every
-    // repoId inside buildTools was the closure constant, so the model's reach
-    // was one repo even when the credential's was not. That gap was doing real
-    // work against prompt injection, and invite_agent would have ended it by
-    // handing an injected turn a redeemable code for any repo the owner owns —
-    // redeemable at POST /auth/accept-invite, which needs no token at all.
+  it("gives the god credential the credential-minting verb, and no other agent", () => {
     const scoped = buildTools(mockClient(), AGENT_ID, REPO_ID, { ownerScoped: true }).map((t) => t.name);
-    expect(scoped).not.toContain("invite_agent");
-    // Owner mode keeps it: a human drives that surface.
-    expect(buildOperatorTools(mockClient(), "usr_1").map((t) => t.name)).toContain("invite_agent");
+    expect(scoped).toContain("invite_agent");
+    const plain = buildTools(mockClient(), AGENT_ID, REPO_ID).map((t) => t.name);
+    for (const n of PROVISIONING) expect(plain).not.toContain(n);
+  });
+
+  it("keeps the agent-management verbs off owner mode, whose inventory is reviewed separately", () => {
+    const operator = buildOperatorTools(mockClient(), "usr_1").map((t) => t.name);
+    for (const n of AGENT_MANAGEMENT) expect(operator).not.toContain(n);
+  });
+
+  it("removes an agent, lists its tokens and revokes one through the API", async () => {
+    const deleteAgent = vi.fn().mockResolvedValue({});
+    const listAgentTokens = vi.fn().mockResolvedValue([{ id: "tok_1", ownerScoped: false, current: false }]);
+    const revokeToken = vi.fn().mockResolvedValue({});
+    const tools = buildTools(mockClient({ deleteAgent, listAgentTokens, revokeToken }), AGENT_ID, REPO_ID, { ownerScoped: true });
+
+    await getHandler(tools, "remove_agent")({ agentId: "agent_x" });
+    expect(deleteAgent).toHaveBeenCalledWith("agent_x");
+    const listed = await getHandler(tools, "list_tokens")({ agentId: "agent_x" });
+    expect(listAgentTokens).toHaveBeenCalledWith("agent_x");
+    expect(listed.content[0].text).toContain("tok_1");
+    await getHandler(tools, "revoke_token")({ tokenId: "tok_1" });
+    expect(revokeToken).toHaveBeenCalledWith("tok_1");
+  });
+
+  it("refuses to remove itself, which would strand the session mid-call", async () => {
+    const deleteAgent = vi.fn().mockResolvedValue({});
+    const tools = buildTools(mockClient({ deleteAgent }), AGENT_ID, REPO_ID, { ownerScoped: true });
+    const res = await getHandler(tools, "remove_agent")({ agentId: AGENT_ID });
+    expect(deleteAgent).not.toHaveBeenCalled();
+    expect(res.isError).toBe(true);
   });
 
   it("registers no duplicate names, which would break registration outright", () => {
@@ -1492,7 +1515,8 @@ describe("selectTools maps a config shape to a toolset", () => {
     expect(n).toContain("session_start");
     expect(n).toContain("get_my_tasks");
     expect(n).toContain("create_repo");
-    expect(n).not.toContain("invite_agent");
+    expect(n).toContain("invite_agent");
+    expect(n).toContain("remove_agent");
     expect(n).toContain("list_repos");
     // Still not the operator-only verbs.
     expect(n).not.toContain("reply_human");

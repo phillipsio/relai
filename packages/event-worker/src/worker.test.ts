@@ -34,6 +34,7 @@ vi.mock("@getrelai/claude-worker", async () => {
     runClaudeSession: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     assertRepoOrExit: vi.fn().mockResolvedValue(undefined),
+    assertNotOwnerScopedOrExit: vi.fn().mockResolvedValue(undefined),
     classifySessionError: actual.classifySessionError,
     blockOverflowedTasks: vi.fn().mockResolvedValue([]),
   };

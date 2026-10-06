@@ -52,6 +52,12 @@ class ApiClient {
     listAgentTokens(agentId) {
         return this.request("GET", `/agents/${agentId}/tokens`);
     }
+    deleteAgent(agentId) {
+        return this.request("DELETE", `/agents/${agentId}`);
+    }
+    revokeToken(tokenId) {
+        return this.request("DELETE", `/tokens/${tokenId}`);
+    }
     listInvites(repoId) {
         return this.request("GET", `/repos/${repoId}/invites`);
     }

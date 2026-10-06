@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PEER_BOUNDARY = void 0;
 exports.buildTools = buildTools;
+exports.buildAgentManagementTools = buildAgentManagementTools;
 exports.selectTools = selectTools;
 exports.buildProvisioningTools = buildProvisioningTools;
 exports.buildOperatorTools = buildOperatorTools;
@@ -735,7 +736,47 @@ function buildTools(client, agentId, repoId, opts = {}) {
         // Additive, never a swap: an owner-scoped agent is still an agent and needs
         // everything above. buildOperatorTools assumes no agent identity, and its
         // create_task bypasses propose/commit.
-        ...(opts.ownerScoped ? buildProvisioningTools(client) : []),
+        ...(opts.ownerScoped
+            ? [...buildProvisioningTools(client, { credentialMinting: true }), ...buildAgentManagementTools(client, agentId)]
+            : []),
+    ];
+}
+// Irreversible (agents have no soft delete); the owner's dashboard kill switch is the backstop.
+function buildAgentManagementTools(client, selfId) {
+    const text = (value) => ({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }] });
+    return [
+        {
+            name: "remove_agent",
+            description: "Permanently delete one of the owner's agents, with its tokens. Cannot be undone: the agent " +
+                "has to be invited again to come back. Use list_agents to find the id. You cannot remove " +
+                "yourself, and a repo's only orchestrator cannot be removed.",
+            inputSchema: zod_1.z.object({ agentId: zod_1.z.string().min(1).describe("The agent to delete.") }),
+            handler: async (input) => {
+                if (input.agentId === selfId) {
+                    return { content: [{ type: "text", text: "Refused: you cannot remove yourself." }], isError: true };
+                }
+                await client.deleteAgent(input.agentId);
+                return text({ removed: input.agentId });
+            },
+        },
+        {
+            name: "list_tokens",
+            description: "List an agent's tokens: id, createdAt, lastUsedAt, revokedAt, whether each is owner-scoped, " +
+                "and which one is current. Never the token itself. Use it before revoke_token.",
+            inputSchema: zod_1.z.object({ agentId: zod_1.z.string().min(1).describe("Whose tokens to list.") }),
+            handler: async (input) => text({ tokens: await client.listAgentTokens(input.agentId) }),
+        },
+        {
+            name: "revoke_token",
+            description: "Revoke one token by id, so whatever holds it stops working at once. The agent itself " +
+                "stays; it needs a new token or invite to reconnect. Revoking your own current token " +
+                "ends this session.",
+            inputSchema: zod_1.z.object({ tokenId: zod_1.z.string().min(1).describe("From list_tokens.") }),
+            handler: async (input) => {
+                await client.revokeToken(input.tokenId);
+                return text({ revoked: input.tokenId });
+            },
+        },
     ];
 }
 function selectTools(client, config) {
@@ -821,11 +862,7 @@ function buildProvisioningTools(client, opts = {}) {
                 return { content: [{ type: "text", text: JSON.stringify({ repo }, null, 2) }] };
             },
         },
-        // invite_agent mints a bearer credential, and agent mode reaches a headless
-        // `claude --print --dangerously-skip-permissions` loop where nothing
-        // confirms a call. Before this, no agent-mode tool took a repoId from the
-        // model at all, so the model's reach was one repo even when the credential
-        // reached every repo the owner owns.
+        // Mints a bearer credential: owner mode and the god credential only.
         ...(opts.credentialMinting ? [{
                 name: "invite_agent",
                 description: "Authorise a new agent to join one of your repos. This does NOT create the agent: it " +

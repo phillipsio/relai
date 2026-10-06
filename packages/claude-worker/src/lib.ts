@@ -1,7 +1,7 @@
 // Reusable pieces consumed by other workers (e.g. @getrelai/event-worker),
 // separate from index.ts's standalone poll-loop entrypoint.
 export { runClaudeSession } from "./session.js";
-export { runWorker, heartbeat, assertRepoOrExit } from "./worker.js";
+export { runWorker, heartbeat, assertRepoOrExit, assertNotOwnerScopedOrExit } from "./worker.js";
 export { classifySessionError } from "./errors.js";
 export type { SessionFailure } from "./errors.js";
 export { blockOverflowedTasks } from "./block-task.js";

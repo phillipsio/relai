@@ -30,6 +30,8 @@ export declare class ApiClient {
         ownerScoped: boolean;
         current: boolean | null;
     }[]>;
+    deleteAgent(agentId: string): Promise<unknown>;
+    revokeToken(tokenId: string): Promise<unknown>;
     listInvites(repoId: string): Promise<{
         id: string;
         acceptedAt: string | null;

@@ -167,6 +167,9 @@ describe("invite.minted_by_top_level", () => {
     await db.insert(subscriptions).values({ id: `sub_${uniq()}`, agentId: peer.json().data.id, targetType: "agent", targetId: god.agentId });
     const [event] = mintedEvents(res.json().data.id);
     expect(await resolveSubscribers(db, event)).toEqual([]);
+    const session = await app.inject({ method: "GET", url: `/session/start?repoId=${god.repoId}`, headers: as(peer.json().token) });
+    expect(session.statusCode).toBe(200);
+    expect(session.json().data.recentEvents.map((e: { id: string }) => e.id)).not.toContain(event.id);
   });
 
   it("does not fire for an invite the owner mints from the dashboard", async () => {

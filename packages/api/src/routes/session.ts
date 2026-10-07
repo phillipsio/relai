@@ -6,6 +6,7 @@ import {
   type Db,
 } from "@getrelai/db";
 import { dmEventFilter } from "../lib/dm.js";
+import { OWNER_ONLY_KINDS } from "../lib/events.js";
 import { clip, clipMetadata } from "../lib/payload.js";
 import { taskLabel, unstartedFirst } from "../lib/task-label.js";
 import { unreadFilter } from "../lib/unread.js";
@@ -190,6 +191,7 @@ export const sessionRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { d
           )
           OR ${events.alsoNotify} @> ${JSON.stringify([{ targetType: "agent", targetId: agent.id }])}::jsonb
         )
+        AND ${events.kind}::text NOT IN (${sql.join([...OWNER_ONLY_KINDS].map((k) => sql`${k}`), sql`, `)})
       `)
       .orderBy(desc(events.createdAt))
       .limit(RECENT_EVENTS_LIMIT);

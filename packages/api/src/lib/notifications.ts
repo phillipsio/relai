@@ -33,6 +33,8 @@ export const OWNER_ATTENTION_KINDS = new Set<EventKind>([
   // which is self-healing and needs nobody, this one is terminal until a human
   // splits it, reassigns it, or drops it.
   "task.stall_exhausted",
+  // Not a stall: the alert an owner needs if their top-level agent is misused.
+  "invite.minted_by_top_level",
 ]);
 
 // Default delivery options. `retries: 2` = up to 3 attempts total.
@@ -164,6 +166,10 @@ function summarizeForSlack(event: AppEvent): string {
     if (task) {
       return `*Task ${event.kind.slice("task.".length)}* (${task.priority ?? "normal"}, ${task.status ?? "?"}): ${task.title ?? event.targetId}`;
     }
+  }
+
+  if (event.kind === "invite.minted_by_top_level") {
+    return `*Top-level agent minted a ${payload.role === "orchestrator" ? "orchestrator" : "worker"} invite* on repo \`${event.repoId}\``;
   }
 
   return `relai event: \`${event.kind}\` on ${event.targetType} \`${event.targetId}\``;

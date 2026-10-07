@@ -568,6 +568,7 @@ describe("owner-scoped notification channels", () => {
   it("pins exactly which kinds count as needing a human", async () => {
     const { OWNER_ATTENTION_KINDS } = await import("../lib/notifications.js");
     expect([...OWNER_ATTENTION_KINDS].sort()).toEqual([
+      "invite.minted_by_top_level",
       "task.blocked",
       "task.blocked_overdue",
       "task.pending_verification",

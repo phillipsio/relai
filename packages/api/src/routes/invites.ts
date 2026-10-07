@@ -5,6 +5,7 @@ import { and, eq, isNull, getTableColumns } from "drizzle-orm";
 import { agents, invites, repos, tokens, ownerGodAgents } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
+import { publish } from "../lib/events.js";
 import { generateInviteCode, generateToken, hashSecret } from "../lib/tokens.js";
 import { assertRepoAccess } from "../lib/ownership.js";
 import { isConstraintViolation, ONE_ORCHESTRATOR_PER_REPO, ONE_GOD_AGENT_PER_OWNER } from "../lib/constraints.js";
@@ -108,6 +109,27 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       suggestedSpecialization: body.data.suggestedSpecialization ?? null,
       expiresAt: new Date(Date.now() + ttl * 1000),
     }).returning(inviteFields);
+
+    if (request.agent && (request.chainSlotId || request.ownerId)) {
+      await publish(db, {
+        id:         newId("evt"),
+        kind:       "invite.minted_by_top_level",
+        repoId:     project.id,
+        targetType: "agent",
+        targetId:   request.agent.id,
+        actorId:    request.agent.id,
+        payload: {
+          inviteId:    row.id,
+          repoId:      project.id,
+          repoName:    project.name,
+          role,
+          expiresAt:   row.expiresAt.toISOString(),
+          mintedBy:    { agentId: request.agent.id, name: request.agent.name },
+          chainSlotId: row.chainSlotId,
+        },
+        createdAt: new Date().toISOString(),
+      });
+    }
 
     return reply.status(201).send({ data: hideOwner(row), code });
   });

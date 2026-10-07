@@ -25,7 +25,8 @@ export type EventKind =
   | "task.stall_released"
   | "task.stall_exhausted"
   | "task.thread_relinked"
-  | "artifact.published";
+  | "artifact.published"
+  | "invite.minted_by_top_level";
 
 export interface AppEvent {
   id:         string;

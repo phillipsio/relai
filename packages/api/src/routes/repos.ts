@@ -158,7 +158,17 @@ export const repoRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
       }
       await tx.delete(tasks).where(eq(tasks.repoId, id));
 
-      // invites.createdBy has no FK cascade, so invites go before agents.
+      // invites.createdBy/acceptedAgentId have no FK cascade, and an
+      // owner-scoped agent can mint or accept an invite in a sibling repo it
+      // doesn't live in — so another repo's invite can reference an agent
+      // about to be deleted here. Null those cross-repo references first, or
+      // the agent delete below 500s on an FK violation instead of just
+      // losing attribution on an invite it has nothing else to do with.
+      const agentIds = (await tx.select({ id: agents.id }).from(agents).where(eq(agents.repoId, id))).map((a) => a.id);
+      if (agentIds.length > 0) {
+        await tx.update(invites).set({ createdBy: null }).where(inArray(invites.createdBy, agentIds));
+        await tx.update(invites).set({ acceptedAgentId: null }).where(inArray(invites.acceptedAgentId, agentIds));
+      }
       await tx.delete(invites).where(eq(invites.repoId, id));
       await tx.delete(agents).where(eq(agents.repoId, id));
       await tx.delete(repos).where(eq(repos.id, id));

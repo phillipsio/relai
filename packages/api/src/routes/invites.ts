@@ -24,8 +24,12 @@ const { codeHash: _codeHash, ...inviteFields } = getTableColumns(invites);
 
 // The tenant behind a pending super-agent grant is reconnaissance for any repo
 // member, and membership is all this route checks. Same treatment as
-// GET /agents/:id/tokens: say whether, never who.
-const hideOwner = <T extends { ownerId: string | null }>({ ownerId, ...rest }: T) => ({
+// GET /agents/:id/tokens: say whether, never who. chainSlotId goes the same
+// way as ownerId, not just alongside it: it's an opaque id, but a shared one
+// across every invite in the same lineage, so returning it to any repo
+// member would let them correlate invites across every repo the owner owns
+// — exactly the reconnaissance ownerScoped is here to avoid leaking.
+const hideOwner = <T extends { ownerId: string | null; chainSlotId: string | null }>({ ownerId, chainSlotId, ...rest }: T) => ({
   ...rest,
   ownerScoped: ownerId !== null,
 });
@@ -54,6 +58,7 @@ const acceptSchema = z.object({
 });
 
 class IssuerRevoked extends Error {}
+class GodAgentRevoked extends Error {}
 
 export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.post<{ Params: { id: string } }>("/repos/:id/invites", async (request, reply) => {
@@ -93,6 +98,11 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       repoId: project.id,
       codeHash:  hashSecret(code),
       createdBy: request.agent?.id ?? null,
+      // Inherited from the presenting token, not looked up: auth already
+      // resolved it and confirmed the slot is live, so an invite minted by a
+      // stamped agent carries the same lineage forward without this route
+      // touching owner_god_agents itself. Null for an ordinary token.
+      chainSlotId: request.chainSlotId ?? null,
       role,
       suggestedName:           body.data.suggestedName           ?? null,
       suggestedSpecialization: body.data.suggestedSpecialization ?? null,
@@ -159,6 +169,23 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
     let minted: typeof agents.$inferSelect | null;
     try {
       minted = await db.transaction(async (tx) => {
+      // Chain-dead check first, before touching the invite row at all.
+      // chain_slot_id is immutable once an invite is created, so the value
+      // read outside this transaction is already authoritative — nothing
+      // can change it out from under us. Ordering it first matters: revoke
+      // locks the slot row then the invite rows it's revoking, in that
+      // order. Checking this after the claim below would lock them in the
+      // opposite order (invite, then slot) and deadlock against a
+      // concurrent revoke under exactly the interleaving this is meant to
+      // be safe under — reproduced before this fix as a redeem that raced a
+      // revoke, lost the deadlock-detection coin flip, and left a live,
+      // unrevoked token behind because the revoke that should have caught it
+      // silently rolled back instead.
+      if (invite.chainSlotId) {
+        const [slot] = await tx.select({ id: ownerGodAgents.id }).from(ownerGodAgents)
+          .where(eq(ownerGodAgents.id, invite.chainSlotId)).for("update");
+        if (!slot) throw new GodAgentRevoked();
+      }
       const [claimed] = await tx
         .update(invites)
         .set({ acceptedAt: new Date() })
@@ -167,7 +194,8 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       if (!claimed) return null;
       if (claimed.createdBy) {
         const [issuerLive] = await tx.select({ id: tokens.id }).from(tokens)
-          .where(and(eq(tokens.agentId, claimed.createdBy), isNull(tokens.revokedAt))).limit(1);
+          .where(and(eq(tokens.agentId, claimed.createdBy), isNull(tokens.revokedAt)))
+          .limit(1).for("update");
         if (!issuerLive) throw new IssuerRevoked();
       }
 
@@ -183,23 +211,35 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
         lastSeenAt:     new Date(0),
       }).returning();
 
+      // A direct owner-scoped grant mints a brand-new slot (never reuses
+      // one — see owner_god_agents' own comment on why `id` exists at all).
+      // Anything else just carries forward whatever the invite inherited,
+      // null included. The two cases are mutually exclusive by construction
+      // (only a device-auth grant invite ever has ownerId set, and it never
+      // has chainSlotId set), so this is a straight either/or, not a merge.
+      const godSlotId = claimed.ownerId ? newId("slot") : null;
+      if (claimed.ownerId && godSlotId) {
+        await tx.insert(ownerGodAgents).values({ id: godSlotId, ownerId: claimed.ownerId, agentId: agent.id });
+      }
+      const newChainSlotId = godSlotId ?? claimed.chainSlotId;
+
       await tx.insert(tokens).values({
         id:        newId("tok"),
         agentId:   agent.id,
         // Owner scope rides the invite rather than being decided here, because
         // only the approval knew it. Null for every ordinary invite.
-        ownerId:   claimed.ownerId ?? null,
-        tokenHash: hashSecret(plaintext),
+        ownerId:     claimed.ownerId ?? null,
+        chainSlotId: newChainSlotId,
+        tokenHash:   hashSecret(plaintext),
       });
-
-      if (claimed.ownerId) {
-        await tx.insert(ownerGodAgents).values({ ownerId: claimed.ownerId, agentId: agent.id });
-      }
 
       await tx.update(invites).set({ acceptedAgentId: agent.id }).where(eq(invites.id, claimed.id));
         return agent;
       });
     } catch (err) {
+      if (err instanceof GodAgentRevoked) {
+        return reply.status(400).send({ error: { code: "invalid_invite", message: "The top-level agent this invite traces back to has been revoked." } });
+      }
       if (err instanceof IssuerRevoked) {
         return reply.status(400).send({ error: { code: "invalid_invite", message: "The agent that issued this invite has been revoked." } });
       }

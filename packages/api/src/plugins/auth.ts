@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import fp from "fastify-plugin";
 import { eq, and, isNull } from "drizzle-orm";
-import { tokens, agents, type Db } from "@getrelai/db";
+import { tokens, agents, ownerGodAgents, type Db } from "@getrelai/db";
 import { hashToken, looksLikeAgentToken, secretsMatch } from "../lib/tokens.js";
 
 type Agent = typeof agents.$inferSelect;
@@ -26,6 +26,12 @@ declare module "fastify" {
     // dashboard" was true until 2026-09-23 and is now false; one route made
     // that assumption and returned owner webhook secrets to an agent.
     ownerId?: string;
+    // The owner_god_agents slot id this token's credential lineage traces
+    // back to, carried straight from tokens.chainSlotId. Set only when the
+    // token resolved here is actually stamped; auth has already confirmed
+    // the slot still exists (see the check below) by the time a handler
+    // reads this, so its mere presence is the "still alive" signal.
+    chainSlotId?: string;
   }
 }
 
@@ -65,6 +71,22 @@ const authPlugin: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
 
       if (!row) {
         return reply.status(401).send({ error: { code: "unauthorized", message: "Invalid or revoked token" } });
+      }
+      // A stamped token is only as live as its slot. This is the kill
+      // switch's actual enforcement point: revoking means deleting the slot
+      // row, and every token that ever traced back to it stops
+      // authenticating on its very next request, regardless of what the
+      // createdBy/acceptedAgentId graph between them looks like by now.
+      if (row.token.chainSlotId) {
+        const [slot] = await db
+          .select({ id: ownerGodAgents.id })
+          .from(ownerGodAgents)
+          .where(eq(ownerGodAgents.id, row.token.chainSlotId))
+          .limit(1);
+        if (!slot) {
+          return reply.status(401).send({ error: { code: "unauthorized", message: "Invalid or revoked token" } });
+        }
+        request.chainSlotId = row.token.chainSlotId;
       }
       request.agent = row.agent;
       request.tokenId = row.token.id;

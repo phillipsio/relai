@@ -103,7 +103,7 @@ describe("one god agent per account", () => {
     expect(asRepoScope.statusCode).toBe(200);
   });
 
-  it("refuses the second of two owner-scoped grants approved before either was redeemed, and keeps its code redeemable", async () => {
+  it("refuses the second of two owner-scoped grants approved before either was redeemed", async () => {
     const owner = await freshOwner();
     const first = await approveOwnerScope(owner, await mkRepo(owner));
     const second = await approveOwnerScope(owner, await mkRepo(owner));
@@ -118,8 +118,13 @@ describe("one god agent per account", () => {
     expect(refused.statusCode).toBe(409);
     expect(refused.json().error.code).toBe("god_agent_exists");
 
+    // The second code is untouched by the failed redeem (no accept, no
+    // revoke on the invite row), so a kill switch that revokes it along
+    // with the first god is tested separately — see "also revokes a
+    // SEPARATE, still-pending grant invite once a slot already exists",
+    // below. It no longer survives a revoke here: see that test for why.
     await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
-    expect((await accept(secondCode)).statusCode).toBe(201);
+    expect((await accept(secondCode)).statusCode).toBe(400);
   });
 
   it("does not limit another owner", async () => {
@@ -236,7 +241,10 @@ describe("the owner's kill switch", () => {
     const res = await app.inject({ method: "GET", url: "/owner/god-agent", headers: asOwner(s.owner) });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.agents.map((a: { id: string }) => a.id)).toEqual([s.god.agentId]);
-    expect(res.json().data.invites).toHaveLength(2);
+    // The 2 ordinary invites the god minted, plus the device-auth grant
+    // invite that created it in the first place (ownerId-matched, already
+    // accepted — listed for visibility, same as the pending-grant case).
+    expect(res.json().data.invites).toHaveLength(3);
   });
 
   it("revokes the god agent, every credential it minted, and nothing else", async () => {
@@ -268,7 +276,22 @@ describe("the owner's kill switch", () => {
 
     const res = await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" });
     expect(res.statusCode).toBe(200);
-    for (const t of [s.god.token, s.joinedToken, legacyToken, invitee]) expect(await authenticates(t)).toBe(false);
+    // `invitee` descends from `legacyToken`, which was inserted directly
+    // (bypassing accept-invite, the only path that ever sets a chain stamp)
+    // to simulate a credential from before this rebuild. `legacyToken` itself
+    // still gets revoked — the direct ownerId scan reaches it regardless of
+    // any stamp. What it invited does not, because the invite it minted was
+    // never stamped either (its own token carried no chainSlotId to pass
+    // on). That is the deliberate boundary of the stamp design: a sweep by
+    // ownerId still closes a legacy *holder*, but it does not re-derive a
+    // lineage for what that holder invited, which is exactly the graph walk
+    // this rebuild exists to not depend on. The historical version of this
+    // gap is closed once, not held open forever, by migration 0011's
+    // backfill stamping every live owner-scoped token at migration time — a
+    // token minted after that outside every route that stamps is out of
+    // scope by construction.
+    for (const t of [s.god.token, s.joinedToken, legacyToken]) expect(await authenticates(t)).toBe(false);
+    expect(await authenticates(invitee)).toBe(true);
     expect(await authenticates(s.bystanderToken)).toBe(true);
     expect(await authenticates(unrelated.token)).toBe(true);
   });
@@ -294,6 +317,13 @@ describe("the owner's kill switch", () => {
         accept(code, "worker"),
         app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" }),
       ]);
+      // A 500 here would mean the chain-dead check regressed back to running
+      // AFTER the invite claim (locking invite-then-slot instead of
+      // slot-then-invite) and reintroduced the lock-order deadlock this
+      // ordering exists to avoid. The two live outcomes are 201 (won the
+      // race) and 400 (lost it, chain-dead or issuer-revoked) — never a
+      // database error surfacing as a 500.
+      expect(redeemed.statusCode, "accept must not 500 under this race").not.toBe(500);
       if (redeemed.statusCode === 201) expect(await authenticates(redeemed.json().token)).toBe(false);
     }
   });
@@ -326,19 +356,22 @@ describe("the owner's kill switch", () => {
     expect(res.json().error.code).toBe("god_agent_exists");
   });
 
-  it("waits for a rotation holding the agent's row, so it cannot miss the token that rotation inserts", async () => {
+  it("does not wait on the agent's row — revoke only ever locks the slot", async () => {
     const s = await scenario();
-    let revoked = false;
+    // Held for the whole transaction below. The old transitive-walk design's
+    // revoke locked this same agents row, because ITS enforcement point was
+    // the bulk sweep itself — a token a concurrent rotation inserted a
+    // moment later would otherwise be missed and stay live forever. The
+    // stamp design's enforcement point moved to auth time (see "refuses a
+    // self-rotation whose presenting token was revoked under it", above), so
+    // revoke no longer needs this row at all. If it still contended for it,
+    // the inject call below would hang behind this same transaction and the
+    // test would time out rather than resolve.
     await db.transaction(async (tx) => {
       await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, s.god.agentId)).for("update");
-      const pending = app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" })
-        .then(() => { revoked = true; });
-      await new Promise((r) => setTimeout(r, 300));
-      expect(revoked).toBe(false);
-      void pending;
+      const res = await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(s.owner), body: "{}" });
+      expect(res.statusCode).toBe(200);
     });
-    await new Promise((r) => setTimeout(r, 300));
-    expect(revoked).toBe(true);
   });
 
   it("frees the slot for a new god agent", async () => {
@@ -360,5 +393,276 @@ describe("the owner's kill switch", () => {
   it("answers 404 when the owner has no god agent", async () => {
     const res = await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(await freshOwner()), body: "{}" });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("findings the stamp rebuild closes", () => {
+  it("keeps a lineage revocable after a downstream agent deletes itself (finding 1)", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const firstInvite = await app.inject({ method: "POST", url: `/repos/${god.repoId}/invites`, headers: as(god.token), body: "{}" });
+    const firstAccept = await accept(firstInvite.json().code, "worker");
+    const firstToken = firstAccept.json().token as string;
+    const firstId = firstAccept.json().data.id as string;
+
+    const secondInvite = await app.inject({ method: "POST", url: `/repos/${god.repoId}/invites`, headers: as(firstToken), body: "{}" });
+    const secondCode = secondInvite.json().code as string;
+    const secondInviteId = secondInvite.json().data.id as string;
+
+    // The first agent deletes itself, nulling createdBy on the invite it
+    // just minted (agents.ts's cascade). The old transitive walk used that
+    // column to find descendants, so this cut them out of it.
+    expect((await app.inject({ method: "DELETE", url: `/agents/${firstId}`, headers: as(firstToken) })).statusCode).toBe(204);
+    const [row] = await db.select({ createdBy: invites.createdBy }).from(invites).where(eq(invites.id, secondInviteId));
+    expect(row.createdBy).toBeNull();
+
+    // The stamp on the invite survives regardless, because it was copied at
+    // mint time and revoke never reads createdBy to find it.
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+    expect((await accept(secondCode, "worker")).statusCode).toBe(400);
+  });
+
+  it("locks the issuer's token row at redeem, so a concurrent revoke can't be missed (finding 2)", async () => {
+    const owner = await freshOwner();
+    const repoId = await mkRepo(owner);
+    const orch = await app.inject({ method: "POST", url: "/agents", headers: asOwner(owner), body: JSON.stringify({ repoId, name: `o2-${uniq()}`, role: "orchestrator" }) });
+    const orchToken = orch.json().token as string;
+    const orchId = orch.json().data.id as string;
+    const code = (await app.inject({ method: "POST", url: `/repos/${repoId}/invites`, headers: as(orchToken), body: "{}" })).json().code as string;
+
+    // Held for the whole transaction below, the way a revoke of the issuer's
+    // own token would hold it. Before this fix the issuer-live check read
+    // unlocked, so accept could read "still live" from a row a concurrent
+    // revoke was about to commit as dead.
+    let accepted: { statusCode: number } | undefined;
+    await db.transaction(async (tx) => {
+      await tx.select({ id: tokens.id }).from(tokens).where(eq(tokens.agentId, orchId)).for("update");
+      const pending = accept(code, "worker").then((r) => { accepted = r; });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(accepted).toBeUndefined();
+      void pending;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(accepted?.statusCode).toBe(201);
+  });
+
+  it("deletes the god's home repo after revoke without 500ing on a sibling repo's invite (finding 3)", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const otherRepo = await mkRepo(owner);
+    const minted = await app.inject({ method: "POST", url: `/repos/${otherRepo}/invites`, headers: as(god.token), body: "{}" });
+    expect(minted.statusCode).toBe(201);
+    const inviteId = minted.json().data.id as string;
+
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+    const res = await app.inject({ method: "DELETE", url: `/repos/${god.repoId}`, headers: asOwner(owner) });
+    expect(res.statusCode).toBe(204);
+
+    const [after] = await db.select({ createdBy: invites.createdBy }).from(invites).where(eq(invites.id, inviteId));
+    expect(after.createdBy).toBeNull();
+  });
+
+  it("lets an owner-scoped token read a sibling repo's tasks by passing repoId", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const siblingRepo = await mkRepo(owner);
+    const created = await app.inject({
+      method: "POST", url: "/tasks", headers: asOwner(owner),
+      body: JSON.stringify({ repoId: siblingRepo, createdBy: "owner", title: `t-${uniq()}`, description: "d" }),
+    });
+    expect(created.statusCode).toBe(201);
+
+    const res = await app.inject({ method: "GET", url: `/tasks?repoId=${siblingRepo}`, headers: as(god.token) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.map((t: { id: string }) => t.id)).toContain(created.json().data.id);
+  });
+
+  it("does not let an owner-scoped token read a DIFFERENT owner's repo by passing its repoId", async () => {
+    const ownerA = await freshOwner();
+    const godA = await makeGod(ownerA);
+    const ownerB = await freshOwner();
+    const repoB = await mkRepo(ownerB);
+    const taskB = await app.inject({
+      method: "POST", url: "/tasks", headers: asOwner(ownerB),
+      body: JSON.stringify({ repoId: repoB, createdBy: "owner", title: `t-${uniq()}`, description: "d" }),
+    });
+    expect(taskB.statusCode).toBe(201);
+
+    const res = await app.inject({ method: "GET", url: `/tasks?repoId=${repoB}`, headers: as(godA.token) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual([]);
+  });
+
+  it("carries the stamp through a PEER-initiated rotation, not just self-rotation", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    // A SEPARATE repo, with its own pre-existing orchestrator — agents_one_
+    // orchestrator_per_repo means the god's own home repo already has one
+    // (the god agent itself, which is separately blocked from rotating
+    // anyone but itself), so a peer-initiated rotation can only be
+    // demonstrated in a repo the god didn't register into.
+    const peerRepo = await mkRepo(owner);
+    const orchestrator = await app.inject({
+      method: "POST", url: "/agents", headers: asOwner(owner),
+      body: JSON.stringify({ repoId: peerRepo, name: `o3-${uniq()}`, role: "orchestrator" }),
+    });
+    expect(orchestrator.statusCode).toBe(201);
+    // The god agent is owner-scoped, so it can mint an invite into ANY repo
+    // the owner owns, not only its own — the same cross-repo reach GET
+    // /repos and GET /agents already grant it.
+    const invite = await app.inject({ method: "POST", url: `/repos/${peerRepo}/invites`, headers: as(god.token), body: "{}" });
+    expect(invite.statusCode).toBe(201);
+    const worker = await accept(invite.json().code, "worker");
+    const workerId = worker.json().data.id as string;
+
+    // That repo's orchestrator — not the worker, not the god agent — rotates
+    // the worker's token. The comment on agents.ts's carriedChainSlotId
+    // claims the stamp survives regardless of who initiates, unlike
+    // ownerId, which is conditional on the rotator being entitled to it.
+    // Pin that claim rather than trusting the comment: the freshly rotated
+    // token must still die when the god agent is revoked.
+    const rotated = await app.inject({
+      method: "POST", url: `/agents/${workerId}/tokens`, headers: as(orchestrator.json().token), body: "{}",
+    });
+    expect(rotated.statusCode).toBe(201);
+    const rotatedToken = rotated.json().token as string;
+
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+    expect(await authenticates(rotatedToken)).toBe(false);
+  });
+
+  it("carries the stamp through a rotation even when the agent has NO live token to read it from", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const peerRepo = await mkRepo(owner);
+    const orchestrator = await app.inject({
+      method: "POST", url: "/agents", headers: asOwner(owner),
+      body: JSON.stringify({ repoId: peerRepo, name: `o4-${uniq()}`, role: "orchestrator" }),
+    });
+    const invite = await app.inject({ method: "POST", url: `/repos/${peerRepo}/invites`, headers: as(god.token), body: "{}" });
+    const worker = await accept(invite.json().code, "worker");
+    const workerId = worker.json().data.id as string;
+
+    // The exploit this closes: revoke the agent's only token first (any
+    // orchestrator in its repo may, via DELETE /tokens/:id — the same gate
+    // as rotation), THEN rotate. Before this fix, the carry-forward read was
+    // filtered to live rows, so `live` came back empty and the freshly
+    // minted token got chainSlotId: null — permanently outside the owner's
+    // kill switch, in two ordinary-looking calls, no revoke race needed.
+    const [tok] = await db.select({ id: tokens.id }).from(tokens).where(eq(tokens.agentId, workerId));
+    const revokeTok = await app.inject({ method: "DELETE", url: `/tokens/${tok.id}`, headers: as(orchestrator.json().token) });
+    expect(revokeTok.statusCode).toBe(204);
+
+    const rotated = await app.inject({
+      method: "POST", url: `/agents/${workerId}/tokens`, headers: as(orchestrator.json().token), body: "{}",
+    });
+    expect(rotated.statusCode).toBe(201);
+    const rotatedToken = rotated.json().token as string;
+
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+    expect(await authenticates(rotatedToken)).toBe(false);
+  });
+
+  it("kills a token minted AFTER revoke's bulk sweep already ran, deterministically", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const [slot] = await db.select({ id: ownerGodAgents.id }).from(ownerGodAgents).where(eq(ownerGodAgents.ownerId, owner));
+    expect(slot?.id).toBeTruthy();
+
+    await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+
+    // Simulate a rotation (or any insert) landing after the sweep: a brand
+    // new token row, stamped with the slot id that is now gone. Nothing in
+    // revoke's bulk updates could have touched this row, since it didn't
+    // exist yet when they ran — the auth-time check is the only thing that
+    // can still kill it.
+    const lateToken = generateToken();
+    await db.insert(tokens).values({
+      id: `tok_${uniq()}`, agentId: god.agentId, chainSlotId: slot.id, tokenHash: hashToken(lateToken),
+    });
+    expect(await authenticates(lateToken)).toBe(false);
+  });
+
+  it("revokes a pending owner-scope grant invite when it's the only thing outstanding", async () => {
+    // Nobody has redeemed anything yet: no slot, no stamped token. The grant
+    // invite itself carries ownerId but no createdBy/chainSlotId (device-auth
+    // never sets either), so neither the slot-based nor the direct-holder
+    // reach can find it — before this fix, the owner's kill switch answered
+    // 404 ("nothing to revoke") while a redeemable, owner-scoped invite code
+    // was still sitting in a chat transcript or CLI output.
+    const owner = await freshOwner();
+    const { deviceCode } = await approveOwnerScope(owner, await mkRepo(owner));
+    const code = await pollInvite(deviceCode);
+
+    const res = await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.invitesRevoked).toBe(1);
+
+    expect((await accept(code)).statusCode).toBe(400);
+  });
+
+  it("also revokes a SEPARATE, still-pending grant invite once a slot already exists", async () => {
+    // Two owner-scope approvals made before either was redeemed is a real,
+    // separately-tested scenario (see "refuses the second of two
+    // owner-scoped grants..." above) — device-auth refuses a SECOND
+    // approval once a god already exists, so both grants have to be
+    // approved first, before either is redeemed.
+    //
+    // This used to leave the second, independently-approved grant alone,
+    // reasoning that revoking the one that got redeemed shouldn't also burn
+    // a separate decision the operator made. Reviewed and reversed: an
+    // owner hitting the kill switch because they believe everything is
+    // compromised must not have a live, owner-scoped invite code survive it
+    // — "total revocation" has to mean total. An operator who genuinely
+    // wants a second grant to survive can re-approve it after revoking;
+    // that is a deliberate second action, not something this silently
+    // assumes on their behalf.
+    const owner = await freshOwner();
+    const first = await approveOwnerScope(owner, await mkRepo(owner));
+    const second = await approveOwnerScope(owner, await mkRepo(owner));
+    expect(first.approve.statusCode).toBe(200);
+    expect(second.approve.statusCode).toBe(200);
+    const god = await accept(await pollInvite(first.deviceCode));
+    expect(god.statusCode).toBe(201);
+    const pendingCode = await pollInvite(second.deviceCode);
+
+    const res = await app.inject({ method: "POST", url: "/owner/god-agent/revoke", headers: asOwner(owner), body: "{}" });
+    expect(res.json().data.invitesRevoked).toBe(1);
+    expect(await authenticates(god.json().token)).toBe(false);
+    expect((await accept(pendingCode)).statusCode).toBe(400);
+  });
+
+  it("would carry the stamp forward through POST /agents, if a stamped caller could ever reach it", async () => {
+    // No LIVE route can put a stamped (chainSlotId set), non-owner-scoped
+    // orchestrator in a position to call POST /agents today: the god can
+    // only mint worker invites (see "can invite workers but not
+    // orchestrators" above), a worker can't hold orchestrator role or call
+    // this route, and nothing promotes a worker's role after creation. That
+    // safety rests on three independent guards elsewhere, none of which is
+    // this route's own job to enforce — so this pins the INSERT itself,
+    // fabricating the otherwise-unreachable state directly, the way a
+    // future change to any one of those three guards could.
+    const owner = await freshOwner();
+    await makeGod(owner); // only needed for the side effect of creating a slot
+    const [slot] = await db.select({ id: ownerGodAgents.id }).from(ownerGodAgents).where(eq(ownerGodAgents.ownerId, owner));
+    const peerRepo = await mkRepo(owner);
+    const fabricated = await app.inject({
+      method: "POST", url: "/agents", headers: asOwner(owner),
+      body: JSON.stringify({ repoId: peerRepo, name: `stamped-orch-${uniq()}`, role: "worker" }),
+    });
+    const fabricatedId = fabricated.json().data.id as string;
+    await db.update(agents).set({ role: "orchestrator" }).where(eq(agents.id, fabricatedId));
+    const stampedToken = generateToken();
+    await db.insert(tokens).values({
+      id: `tok_${uniq()}`, agentId: fabricatedId, chainSlotId: slot.id, tokenHash: hashToken(stampedToken),
+    });
+
+    const registered = await app.inject({
+      method: "POST", url: "/agents", headers: as(stampedToken),
+      body: JSON.stringify({ repoId: peerRepo, name: `w-${uniq()}`, role: "worker" }),
+    });
+    expect(registered.statusCode).toBe(201);
+    const [newTok] = await db.select({ chainSlotId: tokens.chainSlotId }).from(tokens).where(eq(tokens.agentId, registered.json().data.id));
+    expect(newTok.chainSlotId).toBe(slot.id);
   });
 });

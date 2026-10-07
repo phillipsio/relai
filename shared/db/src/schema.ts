@@ -112,17 +112,38 @@ export const tokens = pgTable("tokens", {
   // holder can rewrite. A token that carries its own owner cannot name another.
   // Null for every ordinary repo-scoped token, which is nearly all of them.
   ownerId:    text("owner_id").references(() => users.id, { onDelete: "cascade" }),
+  // Credential-lineage stamp: the owner_god_agents slot this token traces
+  // back to, if any. Deliberately NOT a foreign key — ON DELETE NO ACTION
+  // would block killing the slot while anything still carries its id, and ON
+  // DELETE SET NULL would erase the one thing auth needs to check (same
+  // reasoning as repos.defaultAssignee / tasks.verifyReviewerId: a dangling
+  // value here is the signal, not a bug). Set once at mint time (a fresh
+  // grant redeem, or inherited from the presenting token's own stamp on an
+  // invite-created one) and carried forward by EVERY rotation after that —
+  // self-initiated or peer-initiated, and from the agent's most recent token
+  // regardless of whether it's still live, never from anywhere else. Never
+  // changed or nulled once set. Auth rejects any token whose stamp no longer
+  // names a live slot row — that check, not a bulk revoke, is the kill
+  // switch's actual enforcement point, and it holds regardless of how broken
+  // the createdBy/acceptedAgentId graph gets from agent deletes in between,
+  // or of a peer revoking the agent's only token before rotating it.
+  chainSlotId: text("chain_slot_id"),
   tokenHash:  text("token_hash").notNull().unique(),
   createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt:  timestamp("revoked_at", { withTimezone: true }),
 });
 
-// One god agent per owner: the agent holding that owner's owner-scoped credential.
-// A primary key rather than a check in the routes, because approve and redeem are
-// minutes apart and two grants can be in flight at once.
+// One god agent (slot) per owner. `id` is the lineage stamp tokens/invites
+// carry — regenerated every grant, NEVER reused, so revoking by deleting this
+// row and later re-granting a new one for the same owner can't accidentally
+// resurrect an old stamp. `ownerId` stays unique (not the primary key, so
+// `id` can be) for the same reason it was a primary key before: approve and
+// redeem are minutes apart and two grants can be in flight at once, so the
+// uniqueness has to be a real constraint, not a routes-level check.
 export const ownerGodAgents = pgTable("owner_god_agents", {
-  ownerId:   text("owner_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  id:        text("id").primaryKey(),
+  ownerId:   text("owner_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
   agentId:   text("agent_id").references(() => agents.id, { onDelete: "cascade" }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -138,6 +159,12 @@ export const invites = pgTable("invites", {
   // accept time, which is how owner scope reaches a credential at all.
   ownerId:                text("owner_id").references(() => users.id, { onDelete: "cascade" }),
   createdBy:              text("created_by").references(() => agents.id),
+  // Inherited from the creating agent's own token at mint time (see
+  // tokens.chainSlotId for why this isn't a foreign key either). Lets accept
+  // reject a dead lineage directly, without depending on createdBy still
+  // resolving to a live agent — which self-deletes and cross-repo cascades
+  // can't be relied on to preserve.
+  chainSlotId:            text("chain_slot_id"),
   suggestedName:          text("suggested_name"),
   suggestedSpecialization: text("suggested_specialization"),
   // Pinned by whoever creates the invite; the accepter cannot choose its own

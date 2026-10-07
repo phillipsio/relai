@@ -1,7 +1,7 @@
 import { promptSafeText, promptSafeDomains } from "../lib/router/roster.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray, asc, desc, isNull, count } from "drizzle-orm";
+import { eq, and, or, inArray, asc, desc, isNull, count } from "drizzle-orm";
 import { tasks, repos, agents, threads, messages } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
@@ -449,8 +449,17 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
         conditions.push(inArray(tasks.status, statuses));
       }
 
-      // Per-agent caller: scope to the agent's project.
-      if (request.agent) {
+      // Per-agent caller: scope to the agent's own project, widened to every
+      // repo the owner owns when the credential itself is owner-scoped (the
+      // god agent) — the same union GET /repos and GET /agents already grant
+      // that credential, which GET /tasks had not caught up to.
+      if (request.agent && request.ownerId) {
+        const ownedRepoIds = (await db
+          .select({ id: repos.id })
+          .from(repos)
+          .where(eq(repos.ownerId, request.ownerId))).map((p) => p.id);
+        conditions.push(or(eq(tasks.repoId, request.agent.repoId), inArray(tasks.repoId, ownedRepoIds))!);
+      } else if (request.agent) {
         conditions.push(eq(tasks.repoId, request.agent.repoId));
       } else if (request.ownerId) {
         // Service-admin: scope to repos owned by this tenant.

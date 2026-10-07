@@ -38,10 +38,15 @@ type ScopeFacts = {
   reads: string[];
   requestWriters: string[];
   strayColumnRefs: string[];
+  // tokens inserts that set a non-null ownerId but no chainSlotId in the
+  // same statement — see the "every ownerId mint on tokens also stamps"
+  // test below for why this must stay empty.
+  unstampedOwnerMints: string[];
 };
 
 const MINT = /\.insert\((tokens|invites)\)/;
 const OWNER_KEY = /\bownerId\s*:\s*([^,}]+)/;
+const CHAIN_KEY = /\bchainSlotId\s*:/;
 const COLUMN = /\b(tokens|invites)\.ownerId\b|\bdeviceAuthorizations\.(scope|claimedBy)\b/;
 const TOKEN_COLUMN = /\btokens\.ownerId\b/;
 const CALLER_SUPPLIED = /\bbody\b|request\.(query|params|headers|body)/;
@@ -58,7 +63,7 @@ const CARRIERS = new Set([
 ]);
 
 function scopeFacts(files: Array<{ name: string; text: string }>): ScopeFacts {
-  const facts: ScopeFacts = { mints: [], sources: [], reads: [], requestWriters: [], strayColumnRefs: [] };
+  const facts: ScopeFacts = { mints: [], sources: [], reads: [], requestWriters: [], strayColumnRefs: [], unstampedOwnerMints: [] };
 
   for (const { name, text } of files) {
     const lines = text.split("\n").map(norm);
@@ -67,12 +72,17 @@ function scopeFacts(files: Array<{ name: string; text: string }>): ScopeFacts {
       if (MINT.test(line)) {
         const table = MINT.exec(line)![1];
         let expr = "(unset)";
+        let stamped = false;
         for (let j = i; j < Math.min(i + 25, lines.length); j++) {
           if (j > i && /^\}\)/.test(lines[j])) break;
           const key = OWNER_KEY.exec(lines[j]);
-          if (key) { expr = key[1].trim().replace(/,$/, ""); break; }
+          if (key) expr = key[1].trim().replace(/,$/, "");
+          if (CHAIN_KEY.test(lines[j])) stamped = true;
         }
         facts.mints.push(`${name}  insert(${table}) ownerId: ${expr}`);
+        if (table === "tokens" && expr !== "(unset)" && expr !== "null" && !stamped) {
+          facts.unstampedOwnerMints.push(`${name}  insert(tokens) ownerId: ${expr} (no chainSlotId in the same statement)`);
+        }
 
         // A bare identifier hides the decision one line up. Pin the whole
         // initialiser, or re-pointing it at another row passes unnoticed.
@@ -155,13 +165,26 @@ describe("owner scope on a credential has a pinned set of call sites", () => {
     ]);
   });
 
+  it("stamps a chainSlotId in the same statement everywhere it sets a non-null ownerId on tokens", () => {
+    // The kill switch (owner.ts) finds a stamped token by its chainSlotId,
+    // not by ownerId alone — a tokens row with ownerId set but no stamp is
+    // invisible to that mechanism and only reachable through the separate,
+    // deliberately-narrower directHolders sweep (see owner.ts). This fails
+    // the moment a new owner-scoped mint omits the stamp, the same way the
+    // other facts above fail the moment a mint site changes unreviewed.
+    expect(
+      realFacts().unstampedOwnerMints,
+      "a tokens insert that sets ownerId must also set chainSlotId in the same statement",
+    ).toEqual([]);
+  });
+
   it("reads tokens.ownerId with exactly these queries, revoked rows excluded and the presenting row locked", () => {
     expect(realFacts().reads).toEqual([
-      "routes/agents.ts  .select({ ownerId: tokens.ownerId }) .from(tokens) .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt))) .orderBy(desc(tokens.createdAt)) .limit(1);",
       "routes/agents.ts  .select({ ownerId: tokens.ownerId }) .from(tokens) .where(and(eq(tokens.id, request.tokenId), isNull(tokens.revokedAt))) .for(\"update\") : [];",
+      "routes/agents.ts  .select({ ownerId: tokens.ownerId, chainSlotId: tokens.chainSlotId }) .from(tokens) .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt))) .orderBy(desc(tokens.createdAt)) .limit(1);",
       "routes/agents.ts  ownerId: tokens.ownerId, }) .from(tokens) .where(eq(tokens.agentId, check.agent.id)) .orderBy(desc(tokens.createdAt));",
       "routes/owner.ts  .where(and(eq(tokens.ownerId, owner), isNull(tokens.revokedAt)));",
-      "routes/owner.ts  .where(and(isNull(tokens.revokedAt), or(inArray(tokens.agentId, ids), eq(tokens.ownerId, owner)))) .returning({ id: tokens.id });",
+      "routes/owner.ts  const tokenMatch = slot ? or(eq(tokens.chainSlotId, slot.id), eq(tokens.ownerId, owner))! : eq(tokens.ownerId, owner);",
     ]);
   });
 
@@ -219,6 +242,9 @@ describe("owner scope on a credential has a pinned set of call sites", () => {
     expect(facts.sources.filter((s) => CALLER_SUPPLIED.test(s))).toHaveLength(1);
     expect(facts.strayColumnRefs).toEqual([
       "routes/rogue.ts  await db.select({ ownerId: tokens.ownerId }).from(tokens);",
+    ]);
+    expect(facts.unstampedOwnerMints).toEqual([
+      "routes/rogue.ts  insert(tokens) ownerId: smuggled (no chainSlotId in the same statement)",
     ]);
   });
 });

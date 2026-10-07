@@ -71,10 +71,20 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
           repoPath:       body.data.repoPath ?? null,
           lastSeenAt:     new Date(0), // never connected; first heartbeat marks it online
         }).returning();
+        // Carries the caller's own stamp forward, same as invite-creation
+        // and rotation. Nothing can reach this route while stamped (a god
+        // is 403'd above; a stamped worker can't hold orchestrator role,
+        // since the god can only invite workers and a worker can't mint an
+        // orchestrator invite or call this route at all) — but that safety
+        // is three independent guards elsewhere, not this one. Stamping
+        // here too means none of them is load-bearing for this specific
+        // property, and a future change to any of them can't silently
+        // reopen it.
         await tx.insert(tokens).values({
-          id:        newId("tok"),
-          agentId:   row.id,
-          tokenHash: hashToken(plaintext),
+          id:          newId("tok"),
+          agentId:     row.id,
+          chainSlotId: request.chainSlotId ?? null,
+          tokenHash:   hashToken(plaintext),
         });
         return row;
       });
@@ -171,7 +181,7 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       // credential is an operator's containment lever, and copying from a row
       // it just killed would undo that on the next rotation.
       const [live] = await tx
-        .select({ ownerId: tokens.ownerId })
+        .select({ ownerId: tokens.ownerId, chainSlotId: tokens.chainSlotId })
         .from(tokens)
         .where(and(eq(tokens.agentId, agent.id), isNull(tokens.revokedAt)))
         .orderBy(desc(tokens.createdAt))
@@ -227,11 +237,33 @@ export const agentRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
             ? live?.ownerId ?? null
             : null;
 
+      // Unlike ownerId, the lineage stamp carries forward regardless of who
+      // initiates the rotation, and regardless of whether the agent
+      // currently holds a LIVE token at all. ownerId is an authority grant
+      // and must not spread to an identity not already entitled to it; the
+      // stamp is a liability marker on the agent itself, permanent until the
+      // slot it names is gone, and reading it only from `live` reopened
+      // exactly the hole this exists to close: revoke the agent's one token
+      // (`DELETE /tokens/:id`, which any orchestrator in its repo may do),
+      // then rotate — `live` comes back empty, and the agent would mint
+      // itself a fresh, unstamped credential that survives the owner's kill
+      // switch forever after. The stamp is immutable once set, so the most
+      // recent token EVER issued to this agent, live or not, still names the
+      // correct lineage; only `ownerId` has a reason to ignore a dead row.
+      const [mostRecentAny] = await tx
+        .select({ chainSlotId: tokens.chainSlotId })
+        .from(tokens)
+        .where(eq(tokens.agentId, agent.id))
+        .orderBy(desc(tokens.createdAt))
+        .limit(1);
+      const carriedChainSlotId = mostRecentAny?.chainSlotId ?? null;
+
       const [inserted] = await tx.insert(tokens).values({
-        id:        newId("tok"),
-        agentId:   agent.id,
-        ownerId:   carriedOwnerId,
-        tokenHash: hashToken(plaintext),
+        id:          newId("tok"),
+        agentId:     agent.id,
+        ownerId:     carriedOwnerId,
+        chainSlotId: carriedChainSlotId,
+        tokenHash:   hashToken(plaintext),
       }).returning({
         id:         tokens.id,
         agentId:    tokens.agentId,

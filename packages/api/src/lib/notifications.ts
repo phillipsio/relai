@@ -169,7 +169,7 @@ function summarizeForSlack(event: AppEvent): string {
   }
 
   if (event.kind === "invite.minted_by_top_level") {
-    return `*Top-level agent minted a ${payload.role === "orchestrator" ? "orchestrator" : "worker"} invite* on repo \`${event.repoId}\``;
+    return `*Top-level agent minted a worker invite* on repo \`${event.repoId}\``;
   }
 
   return `relai event: \`${event.kind}\` on ${event.targetType} \`${event.targetId}\``;

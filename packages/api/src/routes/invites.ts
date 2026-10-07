@@ -58,6 +58,9 @@ const acceptSchema = z.object({
   repoPath:       promptSafePath.optional(),
 });
 
+const MINT_NOTICE_WINDOW_MS = 10 * 60_000;
+const lastMintNotice = new Map<string, number>();
+
 class IssuerRevoked extends Error {}
 class GodAgentRevoked extends Error {}
 
@@ -110,7 +113,9 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
       expiresAt: new Date(Date.now() + ttl * 1000),
     }).returning(inviteFields);
 
-    if (request.agent && (request.chainSlotId || request.ownerId)) {
+    const lineage = request.agent ? request.chainSlotId ?? request.ownerId : null;
+    if (request.agent && lineage && Date.now() - (lastMintNotice.get(lineage) ?? 0) >= MINT_NOTICE_WINDOW_MS) {
+      lastMintNotice.set(lineage, Date.now());
       await publish(db, {
         id:         newId("evt"),
         kind:       "invite.minted_by_top_level",
@@ -125,7 +130,6 @@ export const inviteRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db
           role,
           expiresAt:   row.expiresAt.toISOString(),
           mintedBy:    { agentId: request.agent.id, name: request.agent.name },
-          chainSlotId: row.chainSlotId,
         },
         createdAt: new Date().toISOString(),
       });

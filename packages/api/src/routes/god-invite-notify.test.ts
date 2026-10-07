@@ -1,11 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { buildServer } from "../server.js";
-import { createDb, users, tokens, invites, agents, ownerGodAgents } from "@getrelai/db";
+import { createDb, users, tokens, invites, agents, ownerGodAgents, subscriptions } from "@getrelai/db";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { bus, type AppEvent } from "../lib/events.js";
-import { OWNER_ATTENTION_KINDS } from "../lib/notifications.js";
+import { bus, resolveSubscribers, type AppEvent } from "../lib/events.js";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
 const SECRET = "test-secret-god-invite-notify";
@@ -109,12 +108,14 @@ describe("invite.minted_by_top_level", () => {
     expect(rest).toHaveLength(0);
     expect(event.repoId).toBe(target);
     expect(event.actorId).toBe(god.agentId);
+    expect(event.targetType).toBe("agent");
     expect(event.payload).toMatchObject({
-      inviteId: res.json().data.id, repoId: target, role: "worker",
-      expiresAt: res.json().data.expiresAt, mintedBy: { agentId: god.agentId },
+      inviteId: res.json().data.id, repoId: target, role: "worker", expiresAt: res.json().data.expiresAt,
     });
+    expect((event.payload.mintedBy as { agentId: string }).agentId).toBe(god.agentId);
+    expect(typeof (event.payload.mintedBy as { name: unknown }).name).toBe("string");
     expect(typeof event.payload.repoName).toBe("string");
-    expect(typeof event.payload.chainSlotId).toBe("string");
+    expect(event.payload).not.toHaveProperty("chainSlotId");
     const raw = JSON.stringify(event);
     expect(raw).not.toContain(res.json().code);
     expect(raw).not.toContain("codeHash");
@@ -127,10 +128,45 @@ describe("invite.minted_by_top_level", () => {
     const joined = await accept(invited.json().code, "worker");
     expect(joined.statusCode).toBe(201);
 
-    const res = await mint(god.repoId, as(joined.json().token));
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11 * 60_000 });
+    try {
+      const res = await mint(god.repoId, as(joined.json().token));
+      expect(res.statusCode).toBe(201);
+      expect(mintedEvents(res.json().data.id)).toHaveLength(1);
+      expect(mintedEvents(res.json().data.id)[0].payload.mintedBy).toMatchObject({ agentId: joined.json().data.id });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends one notice per lineage per ten minutes", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const first = await mint(god.repoId, as(god.token));
+    const second = await mint(god.repoId, as(god.token));
+    expect(second.statusCode).toBe(201);
+    expect(mintedEvents(first.json().data.id)).toHaveLength(1);
+    expect(mintedEvents(second.json().data.id)).toHaveLength(0);
+  });
+
+  it("fires for an owner-scoped token that carries no lineage stamp", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    await db.update(tokens).set({ chainSlotId: null }).where(eq(tokens.agentId, god.agentId));
+    const res = await mint(god.repoId, as(god.token));
     expect(res.statusCode).toBe(201);
     expect(mintedEvents(res.json().data.id)).toHaveLength(1);
-    expect(mintedEvents(res.json().data.id)[0].payload.mintedBy).toMatchObject({ agentId: joined.json().data.id });
+  });
+
+  it("reaches no agent subscriber, only owner channels", async () => {
+    const owner = await freshOwner();
+    const god = await makeGod(owner);
+    const res = await mint(god.repoId, as(god.token));
+    const seed = await mint(god.repoId, asOwner(owner));
+    const peer = await accept(seed.json().code, "worker");
+    await db.insert(subscriptions).values({ id: `sub_${uniq()}`, agentId: peer.json().data.id, targetType: "agent", targetId: god.agentId });
+    const [event] = mintedEvents(res.json().data.id);
+    expect(await resolveSubscribers(db, event)).toEqual([]);
   });
 
   it("does not fire for an invite the owner mints from the dashboard", async () => {
@@ -151,9 +187,5 @@ describe("invite.minted_by_top_level", () => {
     const res = await mint(repoId, as(joined.json().token));
     expect(res.statusCode).toBe(201);
     expect(mintedEvents(res.json().data.id)).toHaveLength(0);
-  });
-
-  it("is routed to owner channels", () => {
-    expect(OWNER_ATTENTION_KINDS.has(KIND)).toBe(true);
   });
 });

@@ -78,7 +78,10 @@ export async function publish(db: Db, event: AppEvent): Promise<void> {
 
 // Resolve which agents should receive an event, based on currently-stored
 // subscriptions. Used by SSE filtering and (later) webhook fan-out.
+export const OWNER_ONLY_KINDS = new Set<EventKind>(["invite.minted_by_top_level"]);
+
 export async function resolveSubscribers(db: Db, event: AppEvent): Promise<string[]> {
+  if (OWNER_ONLY_KINDS.has(event.kind)) return [];
   const targets = [
     { targetType: event.targetType, targetId: event.targetId },
     ...(event.alsoNotify ?? []),

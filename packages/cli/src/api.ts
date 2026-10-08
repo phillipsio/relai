@@ -124,7 +124,7 @@ export class CliApiClient {
 
   async acceptInvite(body: {
     code: string;
-    name: string;
+    name?: string;
     role?: "orchestrator" | "worker";
     specialization?: string;
     workerType?: string;

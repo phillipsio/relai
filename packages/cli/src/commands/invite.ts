@@ -130,7 +130,7 @@ export async function loginCommand(opts: {
   } else {
     const client = new CliApiClient({ apiUrl });
     const name = opts.name
-      || (ni ? requireFlag("agent name", "--name <name>") : await input({
+      || (ni ? undefined : await input({
         message: "Agent name",
         default: `${process.env.USER ?? "agent"}-claude-code`,
       }));

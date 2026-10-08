@@ -30,16 +30,6 @@ describe("login without a TTY (spawned, real prompt path)", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
-  it("exits 2 naming --name when stdin is not a TTY and no name is given", () => {
-    const r = runCli(
-      ["login", "--invite", "inv_never_redeemed", "--api", "http://127.0.0.1:9"],
-      { PITBOSS_CONFIG_DIR: configDir, PITBOSS_AGENTS_STATE: join(configDir, "agents.json") },
-    );
-    expect(r.stderr).toMatch(/--name/);
-    expect(r.status).toBe(2);
-    expect(existsSync(join(configDir, "config.json"))).toBe(false);
-  });
-
   it("exits 2 naming --api under --no-input when the API URL is omitted", () => {
     const r = runCli(
       ["--no-input", "login", "--invite", "inv_never_redeemed", "--name", "bot"],
@@ -70,7 +60,7 @@ describe("login non-interactive redeem (in-process)", () => {
       if (u.pathname === "/auth/accept-invite") {
         acceptBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify({
-          data: { id: "agent_n", name: acceptBody!.name, repoId: "repo_1", specialization: acceptBody!.specialization ?? "tester" },
+          data: { id: "agent_n", name: acceptBody!.name ?? "suggested-bot", repoId: "repo_1", specialization: acceptBody!.specialization ?? "tester" },
           token: "t_new",
         }), { status: 201, headers: { "Content-Type": "application/json" } });
       }
@@ -105,6 +95,13 @@ describe("login non-interactive redeem (in-process)", () => {
     const cfg = JSON.parse(readFileSync(join(configDir, "config.json"), "utf-8"));
     expect(cfg.agentId).toBe("agent_n");
     expect(cfg.specialization).toBe("tester");
+  });
+
+  it("omits the name without a TTY so the invite's suggested name applies", async () => {
+    await loginCommand({ invite: "inv_x", api: "http://localhost:3010", workingDir: workdir });
+
+    expect(acceptBody).not.toHaveProperty("name");
+    expect(JSON.parse(readFileSync(join(configDir, "config.json"), "utf-8")).agentName).toBe("suggested-bot");
   });
 
   it("passes --specialization through", async () => {

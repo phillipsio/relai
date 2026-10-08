@@ -211,6 +211,8 @@ program
   .option("--api <url>", "API URL (skips prompt)")
   .option("--working-dir <path>", "Override the working directory (defaults to CWD)")
   .option("--worker-type <type>", "Agent runtime: claude, copilot, cursor, windsurf, gemini, gpt, mcp, human (default: human)")
+  .option("--name <name>", "Agent name (defaults to the invite's suggestion when not interactive)")
+  .option("--specialization <spec>", "Agent specialization: writer, reviewer, tester, architect, devops, orchestrator (defaults to the invite's suggestion)")
   .action(loginCommand);
 
 // ── repo invite ───────────────────────────────────────────────────────────

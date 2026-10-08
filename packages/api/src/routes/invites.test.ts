@@ -140,6 +140,40 @@ describe("POST /auth/accept-invite", () => {
   });
 });
 
+describe("POST /auth/accept-invite without a name", () => {
+  const mint = async (body: Record<string, unknown>) =>
+    (await app.inject({ method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN, body: JSON.stringify(body) })).json().code;
+  const accept = (body: Record<string, unknown>) =>
+    app.inject({ method: "POST", url: "/auth/accept-invite", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("takes the invite's suggested name", async () => {
+    const res = await accept({ code: await mint({ suggestedName: "suggested-bot" }) });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.name).toBe("suggested-bot");
+  });
+
+  it("prefers an explicit name over the suggestion", async () => {
+    const res = await accept({ code: await mint({ suggestedName: "suggested-bot" }), name: "chosen-bot" });
+    expect(res.json().data.name).toBe("chosen-bot");
+  });
+
+  it("refuses without spending the code when the invite suggests no name", async () => {
+    const code = await mint({});
+    const refused = await accept({ code });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error.code).toBe("validation_error");
+    expect((await accept({ code, name: "late-name" })).statusCode).toBe(201);
+  });
+
+  it("refuses at mint time a suggested name the accept rules would reject", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ suggestedName: "two\nlines" }),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe("POST /auth/accept-invite records where the agent runs", () => {
   const freshCode = async () => {
     const res = await app.inject({

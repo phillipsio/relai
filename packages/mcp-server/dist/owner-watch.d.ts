@@ -8,8 +8,13 @@ export interface WatchTask {
     metadata?: Record<string, unknown> | null;
 }
 export declare function attentionStateOf(task: WatchTask): AttentionState | null;
+export interface Notice {
+    text: string;
+    ids: string[];
+}
 export declare function diffAttention(prev: Map<string, AttentionState> | null, tasks: WatchTask[]): {
-    notices: string[];
+    notices: Notice[];
     next: Map<string, AttentionState>;
 };
+export declare function deliverAttention(prev: Map<string, AttentionState> | null, tasks: WatchTask[], send: (text: string) => Promise<unknown>): Promise<Map<string, AttentionState> | null>;
 //# sourceMappingURL=owner-watch.d.ts.map

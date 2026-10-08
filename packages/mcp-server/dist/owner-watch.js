@@ -4,6 +4,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.attentionStateOf = attentionStateOf;
 exports.diffAttention = diffAttention;
+exports.deliverAttention = deliverAttention;
 const LABEL = {
     blocked: "BLOCKED, waiting on you",
     pending_verification: "awaiting a review decision",
@@ -51,7 +52,7 @@ function diffAttention(prev, tasks) {
             counts.set(s, (counts.get(s) ?? 0) + 1);
         const parts = [...counts.entries()].map(([s, n]) => `${n} ${s}`).sort();
         return {
-            notices: [`relai: ${next.size} item(s) need you (${parts.join(", ")}). Call list_attention.`],
+            notices: [{ text: `relai: ${next.size} item(s) need you (${parts.join(", ")}). Call list_attention.`, ids: [...next.keys()] }],
             next,
         };
     }
@@ -59,8 +60,35 @@ function diffAttention(prev, tasks) {
     const notices = [];
     for (const [id, state] of next) {
         if (prev.get(id) !== state)
-            notices.push(describe(byId.get(id), state));
+            notices.push({ text: describe(byId.get(id), state), ids: [id] });
     }
     return { notices, next };
+}
+async function deliverAttention(prev, tasks, send) {
+    const { notices, next } = diffAttention(prev, tasks);
+    const undelivered = new Set();
+    for (const [i, n] of notices.entries()) {
+        try {
+            await send(n.text);
+        }
+        catch (err) {
+            const held = notices.slice(i);
+            console.error(`[relai-mcp] ${held.length} attention notice(s) held for the next poll:`, err instanceof Error ? err.message : err);
+            held.forEach((h) => h.ids.forEach((id) => undelivered.add(id)));
+            break;
+        }
+    }
+    if (undelivered.size === 0)
+        return next;
+    if (prev === null)
+        return null;
+    for (const id of undelivered) {
+        const before = prev.get(id);
+        if (before)
+            next.set(id, before);
+        else
+            next.delete(id);
+    }
+    return next;
 }
 //# sourceMappingURL=owner-watch.js.map

@@ -103,6 +103,11 @@ export function callerMayAdministerRepo(request: FastifyRequest): boolean {
   return request.agent.role === "orchestrator";
 }
 
+// The deprecated shared secret sets neither agent nor ownerId, so it sees no private artifact.
+export function callerMaySeePrivateArtifact(request: FastifyRequest, ownerAgentId: string | null): boolean {
+  return request.agent ? ownerAgentId === request.agent.id : Boolean(request.ownerId);
+}
+
 // Convenience for routes that scope by agent (subscriptions, notification
 // channels, tokens). Resolves the agent's project and reuses
 // `assertRepoAccess`. Returns 404 to avoid leaking agent existence across

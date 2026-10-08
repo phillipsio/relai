@@ -5,7 +5,7 @@ import { artifacts, artifactVersions, artifactReads } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertRepoAccess } from "../lib/ownership.js";
+import { assertRepoAccess, callerMaySeePrivateArtifact } from "../lib/ownership.js";
 
 // Well under BODY_LIMIT_BYTES, leaving room for the surrounding JSON. Artifacts
 // are documents an agent writes, not file uploads; blob storage is out of scope.
@@ -100,9 +100,7 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
     }
 
     const rows = await db.select().from(artifacts).where(eq(artifacts.repoId, repoId));
-    const visible = rows.filter(
-      (a) => a.visibility === "repo" || !request.agent || a.ownerAgentId === request.agent.id,
-    );
+    const visible = rows.filter((a) => a.visibility === "repo" || callerMaySeePrivateArtifact(request, a.ownerAgentId));
 
     const withCurrent = await Promise.all(visible.map(async (a) => {
       const [{ value }] = await db
@@ -134,7 +132,7 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
         eq(artifacts.name,   decodeURIComponent(request.params.name)),
       ));
       if (!artifact) return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
-      if (artifact.visibility === "private" && request.agent && artifact.ownerAgentId !== request.agent.id) {
+      if (artifact.visibility === "private" && !callerMaySeePrivateArtifact(request, artifact.ownerAgentId)) {
         return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
       }
 
@@ -187,6 +185,9 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
         eq(artifacts.name,   decodeURIComponent(request.params.name)),
       ));
       if (!artifact) return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
+      if (artifact.visibility === "private" && !callerMaySeePrivateArtifact(request, artifact.ownerAgentId)) {
+        return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
+      }
 
       // Bodies omitted: a version list is for choosing one, not for reading them all.
       const rows = await db

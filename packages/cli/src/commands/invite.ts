@@ -2,6 +2,7 @@ import { resolve as resolvePath } from "node:path";
 import { input, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import ora from "ora";
+import { nonInteractive, requireFlag } from "../lib/interactive.js";
 import { requireConfig, writeConfig, readConfig, configPath, configFileInUse } from "../config.js";
 import { CliApiClient } from "../api.js";
 import { getGitRoot, getOriginUrl, normalizeRepoUrl, repoNameFromUrl } from "@getrelai/git";
@@ -68,6 +69,8 @@ export async function loginCommand(opts: {
   token?: string;
   workingDir?: string;
   workerType?: string;
+  name?: string;
+  specialization?: string;
 }) {
   if (opts.invite && opts.token) {
     console.error(chalk.red("Pass either --invite or --token, not both"));
@@ -98,7 +101,9 @@ export async function loginCommand(opts: {
     return;
   }
 
-  const apiUrl = opts.api ?? await input({ message: "API URL", default: "http://localhost:3010" });
+  const ni = nonInteractive();
+  const apiUrl = opts.api
+    ?? (ni ? requireFlag("API URL", "--api <url>") : await input({ message: "API URL", default: "http://localhost:3010" }));
 
   let agentId: string;
   let agentName: string;
@@ -124,14 +129,16 @@ export async function loginCommand(opts: {
     }
   } else {
     const client = new CliApiClient({ apiUrl });
-    const name = await input({
-      message: "Agent name",
-      default: `${process.env.USER ?? "agent"}-claude-code`,
-    });
-    const specialization = await select({
-      message: "Specialization",
-      choices: SPECIALIZATION_CHOICES,
-    });
+    const name = opts.name
+      ?? (ni ? requireFlag("agent name", "--name <name>") : await input({
+        message: "Agent name",
+        default: `${process.env.USER ?? "agent"}-claude-code`,
+      }));
+    const specialization = opts.specialization
+      ?? (ni ? undefined : await select({
+        message: "Specialization",
+        choices: SPECIALIZATION_CHOICES,
+      }));
     const specForApi = specialization === "custom" ? undefined : specialization;
 
     const s = ora("Accepting invite…").start();
@@ -145,7 +152,7 @@ export async function loginCommand(opts: {
       agentId = result.agent.id;
       agentName = result.agent.name;
       repoId = result.agent.repoId;
-      agentSpecialization = specialization === "custom" ? undefined : specialization;
+      agentSpecialization = result.agent.specialization ?? undefined;
       token = result.token;
       s.succeed(chalk.green("Logged in"));
     } catch (err) {

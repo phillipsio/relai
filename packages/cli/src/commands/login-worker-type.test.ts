@@ -49,8 +49,9 @@ describe("relai login --worker-type", () => {
     configDir = mkdtempSync(join(tmpdir(), "relai-wt-cfg-"));
     process.env.PITBOSS_CONFIG_DIR   = configDir;
     process.env.PITBOSS_AGENTS_STATE = join(configDir, "agents.json");
-    // No RELAI_NO_INPUT here: the prompts are mocked, so setting it would
-    // assert that a non-interactive run works when the real one cannot.
+    // The prompts are mocked, so this drives the interactive path; a
+    // non-interactive run is covered unmocked in login-noninteractive.test.ts.
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit__:${code ?? 0}`);
     }) as never);
@@ -60,6 +61,7 @@ describe("relai login --worker-type", () => {
   });
 
   afterEach(() => {
+    Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
     delete process.env.PITBOSS_CONFIG_DIR;
     delete process.env.PITBOSS_AGENTS_STATE;
     vi.unstubAllGlobals();

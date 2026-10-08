@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { buildServer } from "../../server.js";
-import { detectStalls, watchProposedTasks, watchBlockedTasks, reapStalledTasks, routePendingTasks } from "./scheduler.js";
+import { detectStalls, watchProposedTasks, watchBlockedTasks, reapStalledTasks, routePendingTasks, archiveFinishedTasks } from "./scheduler.js";
 import { bus, type AppEvent } from "../events.js";
 import { createDb, tasks, subscriptions, agents } from "@getrelai/db";
 import { eq } from "drizzle-orm";
@@ -576,5 +576,44 @@ describe("routePendingTasks: an unchanging skip condition", () => {
       if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = prevKey;
     }
+  });
+});
+
+describe("archiveFinishedTasks", () => {
+  const DAY = 86_400_000;
+
+  async function taskWith(status: "completed" | "cancelled" | "in_progress", daysAgo: number, archivedAt: Date | null = null) {
+    const create = await app.inject({
+      method: "POST", url: "/tasks", headers: ADMIN,
+      body: JSON.stringify({ repoId, createdBy: agentId, title: "archive-test", description: "x" }),
+    });
+    const id = create.json().data.id as string;
+    await db.update(tasks).set({ status, archivedAt, updatedAt: new Date(Date.now() - daysAgo * DAY) }).where(eq(tasks.id, id));
+    return id;
+  }
+  const archivedAt = async (id: string) =>
+    (await db.select({ archivedAt: tasks.archivedAt }).from(tasks).where(eq(tasks.id, id)))[0].archivedAt;
+
+  it("archives completed and cancelled tasks untouched for seven days", async () => {
+    const completed = await taskWith("completed", 8);
+    const cancelled = await taskWith("cancelled", 8);
+    await archiveFinishedTasks(db);
+    expect(await archivedAt(completed)).not.toBeNull();
+    expect(await archivedAt(cancelled)).not.toBeNull();
+  });
+
+  it("leaves recently finished tasks and unfinished ones alone", async () => {
+    const recent = await taskWith("completed", 6);
+    const open = await taskWith("in_progress", 30);
+    await archiveFinishedTasks(db);
+    expect(await archivedAt(recent)).toBeNull();
+    expect(await archivedAt(open)).toBeNull();
+  });
+
+  it("keeps the original archive time of a task archived by hand", async () => {
+    const earlier = new Date(Date.now() - 9 * DAY);
+    const id = await taskWith("completed", 10, earlier);
+    await archiveFinishedTasks(db);
+    expect((await archivedAt(id))?.getTime()).toBe(earlier.getTime());
   });
 });

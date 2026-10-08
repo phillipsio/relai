@@ -101,7 +101,6 @@ describe("publishing is one call and versions itself", () => {
     const res = await publish(consumerToken, { name: "instructions", body: "hijacked" });
 
     expect(res.statusCode).toBe(403);
-    const db = createDb(DB_URL);
     const [art] = await db.select().from(artifacts).where(and(eq(artifacts.repoId, repoId), eq(artifacts.name, "instructions")));
     const rows = await db.select().from(artifactVersions).where(eq(artifactVersions.artifactId, art.id));
     expect(rows).toHaveLength(2);

@@ -86,7 +86,10 @@ if (OWNER_MODE) {
   const OWNER_POLL_INTERVAL_MS = Number(process.env.OWNER_POLL_INTERVAL_MS ?? 60_000);
   let seen: Map<string, AttentionState> | null = null;
 
+  let polling = false;
   async function pollAttention() {
+    if (polling) return;
+    polling = true;
     try {
       // Two calls because stalled work is still `in_progress`: its status looks
       // healthy and only `stalledAt` gives it away.
@@ -101,6 +104,8 @@ if (OWNER_MODE) {
       // logging capability. `seen` is left as-is so a blip does not replay the
       // backlog as new transitions.
       console.error("[relai-mcp] attention poll failed:", err instanceof Error ? err.message : err);
+    } finally {
+      polling = false;
     }
   }
 

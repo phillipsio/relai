@@ -118,18 +118,19 @@ describe("a notice that fails to send is retried, not dropped", () => {
     expect(sent[0]).toContain("(t1)");
   });
 
-  it("keeps the rest of the batch when one send throws", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const sent: string[] = [];
-    const after = await deliverAttention(new Map(), [blocked("t1"), blocked("t2")], async (t) => {
-      if (t.includes("(t1)")) throw new Error("Not connected");
-      sent.push(t);
+  it("holds the rest of the batch after a failed send and logs once", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    log.mockClear();
+    let calls = 0;
+    const after = await deliverAttention(new Map(), [blocked("t1"), blocked("t2")], async () => {
+      calls++;
+      throw new Error("Not connected");
     });
-    expect(sent.some((t) => t.includes("(t2)"))).toBe(true);
+    expect(calls).toBe(1);
+    expect(log).toHaveBeenCalledTimes(1);
     const retry: string[] = [];
     await deliverAttention(after, [blocked("t1"), blocked("t2")], async (t) => { retry.push(t); });
-    expect(retry).toHaveLength(1);
-    expect(retry[0]).toContain("(t1)");
+    expect(retry).toHaveLength(2);
   });
 
   it("retries the first-run summary when it could not be sent", async () => {

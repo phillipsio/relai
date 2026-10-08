@@ -81,12 +81,14 @@ export async function deliverAttention(
 ): Promise<Map<string, AttentionState> | null> {
   const { notices, next } = diffAttention(prev, tasks);
   const undelivered = new Set<string>();
-  for (const n of notices) {
+  for (const [i, n] of notices.entries()) {
     try {
       await send(n.text);
     } catch (err) {
-      console.error("[relai-mcp] attention notice not delivered:", err instanceof Error ? err.message : err);
-      n.ids.forEach((id) => undelivered.add(id));
+      const held = notices.slice(i);
+      console.error(`[relai-mcp] ${held.length} attention notice(s) held for the next poll:`, err instanceof Error ? err.message : err);
+      held.forEach((h) => h.ids.forEach((id) => undelivered.add(id)));
+      break;
     }
   }
   if (undelivered.size === 0) return next;

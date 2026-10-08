@@ -165,10 +165,12 @@ describe("POST /auth/accept-invite without a name", () => {
     expect((await accept({ code, name: "late-name" })).statusCode).toBe(201);
   });
 
-  it("refuses a suggested name the accept rules would reject, without spending the code", async () => {
-    const code = await mint({ suggestedName: "two\nlines" });
-    expect((await accept({ code })).statusCode).toBe(400);
-    expect((await accept({ code, name: "fixed" })).statusCode).toBe(201);
+  it("refuses at mint time a suggested name the accept rules would reject", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/repos/${repoId}/invites`, headers: ADMIN,
+      body: JSON.stringify({ suggestedName: "two\nlines" }),
+    });
+    expect(res.statusCode).toBe(400);
   });
 });
 

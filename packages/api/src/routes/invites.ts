@@ -35,16 +35,16 @@ const hideOwner = <T extends { ownerId: string | null; chainSlotId: string | nul
   ownerScoped: ownerId !== null,
 });
 
+const agentName = z.string().min(1).max(80).regex(/^[^\r\n]+$/);
+
 const createSchema = z.object({
-  suggestedName: z.string().min(1).optional(),
+  suggestedName: agentName.optional(),
   suggestedSpecialization: promptSafeText.min(1).optional(),
   ttlSeconds: z.number().int().positive().optional(),
   // Pinned onto the invite row. Defaults to worker so an unqualified invite can
   // never hand out the privileged role.
   role: z.enum(["orchestrator", "worker"]).optional(),
 });
-
-const agentName = z.string().min(1).max(80).regex(/^[^\r\n]+$/);
 
 const acceptSchema = z.object({
   code:           z.string().min(1),

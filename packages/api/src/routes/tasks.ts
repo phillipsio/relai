@@ -691,7 +691,13 @@ export const taskRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }
     // Clear stalledAt on any update — the row is moving again.
     const [task] = await db
       .update(tasks)
-      .set({ ...columnUpdates, ...(mergedBlockedBy ? { blockedBy: mergedBlockedBy } : {}), updatedAt: new Date(), stalledAt: null })
+      .set({
+        ...columnUpdates,
+        ...(mergedBlockedBy ? { blockedBy: mergedBlockedBy } : {}),
+        ...(typeof columnUpdates.status === "string" && !["completed", "cancelled"].includes(columnUpdates.status) ? { archivedAt: null } : {}),
+        updatedAt: new Date(),
+        stalledAt: null,
+      })
       .where(eq(tasks.id, request.params.id))
       .returning();
 

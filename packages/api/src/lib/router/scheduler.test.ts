@@ -610,6 +610,27 @@ describe("archiveFinishedTasks", () => {
     expect(await archivedAt(open)).toBeNull();
   });
 
+  it("falls back to seven days when ARCHIVE_AFTER_MS is empty", async () => {
+    const recent = await taskWith("completed", 1);
+    process.env.ARCHIVE_AFTER_MS = "";
+    try {
+      await archiveFinishedTasks(db);
+    } finally {
+      delete process.env.ARCHIVE_AFTER_MS;
+    }
+    expect(await archivedAt(recent)).toBeNull();
+  });
+
+  it("unarchives a task that is reopened", async () => {
+    const id = await taskWith("completed", 8);
+    await archiveFinishedTasks(db);
+    const reopened = await app.inject({ method: "PUT", url: `/tasks/${id}`, headers: ADMIN, body: JSON.stringify({ status: "pending" }) });
+    expect(reopened.statusCode).toBe(200);
+    expect(await archivedAt(id)).toBeNull();
+    const live = await app.inject({ method: "GET", url: `/tasks?repoId=${repoId}`, headers: ADMIN });
+    expect(live.json().data.map((t: { id: string }) => t.id)).toContain(id);
+  });
+
   it("keeps the original archive time of a task archived by hand", async () => {
     const earlier = new Date(Date.now() - 9 * DAY);
     const id = await taskWith("completed", 10, earlier);

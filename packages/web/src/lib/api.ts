@@ -95,10 +95,11 @@ export class WebApiClient {
       role: body.role ?? "worker",
     });
   }
-  getTasks(status?: string, epicId?: string) {
+  getTasks(status?: string, epicId?: string, archived = false) {
     const qs = new URLSearchParams({ repoId: this.repoId });
     if (status) qs.set("status", status);
     if (epicId) qs.set("epicId", epicId);
+    if (archived) qs.set("archived", "true");
     return this.request<TaskRow[]>("GET", `/tasks?${qs}`);
   }
   getThreads(type?: string) {

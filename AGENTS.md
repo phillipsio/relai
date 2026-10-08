@@ -176,6 +176,8 @@ Runs inside the API process — no separate daemon needed. On startup and every 
 
 **Stall handling.** `detectStalls` stamps `stalledAt` on an `in_progress` task and stops; `reapStalledTasks` acts on it `STALLED_REAP_MS` later, re-queueing to **`pending`+`autoAssign`, not `assigned`** (`assigned` still counts toward load balancing, and `detectStalls` would no longer see it) and clearing `stalledAt`. Bounded by `STALLED_MAX_RELEASES` (`metadata.stallReleaseCount`); past the bound the task goes to `blocked` with `metadata.blockedReason` and no `blockedThreadId`, so the resume watcher won't revive it. Emits `task.stall_released` per re-queue and a one-time `task.stall_exhausted` at the bound (owner-attention). The repo scan feeding each cycle counts any `in_progress` row, not just ones with `stalledAt IS NULL`.
 
+**Auto-archive.** Once an hour the scheduler archives every `completed` or `cancelled` task across all repos that has gone `ARCHIVE_AFTER_MS` (default 7 days) without an update, the same effect as `PUT /tasks/:id/archive`. Archived tasks drop out of default lists and still show with `archived=true`. Moving a task back to any other status unarchives it.
+
 The proposed-task watcher emits a one-time `task.proposed_overdue` (notifying the repo's orchestrators) when a worker's `proposed` task waits past `PROPOSED_OVERDUE_MS` without being committed.
 
 **Message loop (opt-in, `ENABLE_MESSAGE_ROUTING=true`):** the scheduler runs `message-loop.ts` per repo per tick, processing each repo's `role="orchestrator"` agent's repo-wide unread feed:
@@ -349,6 +351,7 @@ All secrets in `.env` (see `.env.example`). Key vars:
 | `PROPOSED_OVERDUE_MS` | `600000` | How long a worker's `proposed` task may wait for commit before `task.proposed_overdue` (notifies the repo's orchestrators). |
 | `UNSTARTED_AFTER_MS` | `14400000` | How long an `assigned` task may sit untouched before every read surface labels it `"Not picked up"` instead of `"Starting"`. Emits nothing, unlike the `_OVERDUE_MS` family, since it's a read rather than a delivery-dependent event. Parsed with a validated fallback — an empty value must not parse to `0`. |
 | `STALLED_REAP_MS` | `3600000` | How long a task sits with `stalledAt` stamped before the reaper hands its work back. On **top of** the stall-detection threshold, so the real delay is the sum (~5h by default). |
+| `ARCHIVE_AFTER_MS` | `604800000` | How long a `completed` or `cancelled` task sits without an update before the scheduler archives it. Parsed with a validated fallback, so an empty value does not archive every finished task at once. |
 | `STALLED_MAX_RELEASES` | `2` | How many times a stalled task may be re-queued before it is blocked for a human instead. |
 | `ENABLE_MESSAGE_ROUTING` | `false` | When `true`/`1`, the API scheduler runs the in-process message loop per tick. Costs a Claude call per inbound handoff/question/finding. |
 | `OWNER_POLL_INTERVAL_MS` | `60000` | Owner-mode MCP attention poll interval. Each transition pushes one MCP logging notification. |

@@ -32,7 +32,7 @@ function ChildIssues({ epicId, api }: { epicId: string; api: WebApiClient }) {
 
   const issues = useQuery({
     queryKey: ["epic-issues", epicId],
-    queryFn: () => api.getTasks(undefined, epicId),
+    queryFn: () => api.getTasks(undefined, epicId, true),
     refetchInterval: 5_000,
   });
   const spawn = useMutation({

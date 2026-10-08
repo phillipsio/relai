@@ -788,7 +788,10 @@ async function verifyOne(
     }
 }
 
-const ARCHIVE_AFTER_MS = Number(process.env.ARCHIVE_AFTER_MS ?? 7 * 86_400_000);
+function archiveAfterMs(): number {
+  const n = Number(process.env.ARCHIVE_AFTER_MS);
+  return Number.isFinite(n) && n >= 1 ? n : 7 * 86_400_000;
+}
 
 export async function archiveFinishedTasks(db: Db): Promise<void> {
   await db.update(tasks)
@@ -796,7 +799,7 @@ export async function archiveFinishedTasks(db: Db): Promise<void> {
     .where(and(
       inArray(tasks.status, ["completed", "cancelled"]),
       isNull(tasks.archivedAt),
-      lt(tasks.updatedAt, new Date(Date.now() - ARCHIVE_AFTER_MS)),
+      lt(tasks.updatedAt, new Date(Date.now() - archiveAfterMs())),
     ));
 }
 
@@ -840,8 +843,12 @@ async function runCycle(db: Db, repoId: string): Promise<void> {
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 export function startRoutingScheduler(db: Db): void {
+  let lastArchive = 0;
   async function tick() {
-    await archiveFinishedTasks(db).catch((err) => console.error("[scheduler] archive error:", err));
+    if (Date.now() - lastArchive >= 3_600_000) {
+      lastArchive = Date.now();
+      await archiveFinishedTasks(db).catch((err) => console.error("[scheduler] archive error:", err));
+    }
     try {
       // Find every project that currently has work for the scheduler:
       // pending+autoAssign tasks (routing) or blocked tasks with thread metadata

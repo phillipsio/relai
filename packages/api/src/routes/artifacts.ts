@@ -1,11 +1,11 @@
-import type { FastifyPluginAsync, FastifyRequest } from "fastify";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { artifacts, artifactVersions, artifactReads } from "@getrelai/db";
 import type { Db } from "@getrelai/db";
 import { newId } from "../lib/id.js";
 import { publish, ensureSubscription } from "../lib/events.js";
-import { assertRepoAccess } from "../lib/ownership.js";
+import { assertRepoAccess, callerMaySeePrivateArtifact } from "../lib/ownership.js";
 
 // Well under BODY_LIMIT_BYTES, leaving room for the surrounding JSON. Artifacts
 // are documents an agent writes, not file uploads; blob storage is out of scope.
@@ -21,11 +21,6 @@ const publishSchema = z.object({
   taskId:      z.string().optional(),
   metadata:    z.record(z.unknown()).optional(),
 });
-
-// The owner path is privileged; the deprecated shared secret sets neither agent nor ownerId.
-function seesPrivate(request: FastifyRequest, ownerAgentId: string | null): boolean {
-  return request.agent ? ownerAgentId === request.agent.id : Boolean(request.ownerId);
-}
 
 export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   // Create-or-append. Publishing is deliberately one call with no ceremony: the
@@ -105,7 +100,7 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
     }
 
     const rows = await db.select().from(artifacts).where(eq(artifacts.repoId, repoId));
-    const visible = rows.filter((a) => a.visibility === "repo" || seesPrivate(request, a.ownerAgentId));
+    const visible = rows.filter((a) => a.visibility === "repo" || callerMaySeePrivateArtifact(request, a.ownerAgentId));
 
     const withCurrent = await Promise.all(visible.map(async (a) => {
       const [{ value }] = await db
@@ -137,7 +132,7 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
         eq(artifacts.name,   decodeURIComponent(request.params.name)),
       ));
       if (!artifact) return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
-      if (artifact.visibility === "private" && !seesPrivate(request, artifact.ownerAgentId)) {
+      if (artifact.visibility === "private" && !callerMaySeePrivateArtifact(request, artifact.ownerAgentId)) {
         return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
       }
 
@@ -190,6 +185,9 @@ export const artifactRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { 
         eq(artifacts.name,   decodeURIComponent(request.params.name)),
       ));
       if (!artifact) return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
+      if (artifact.visibility === "private" && !callerMaySeePrivateArtifact(request, artifact.ownerAgentId)) {
+        return reply.status(404).send({ error: { code: "not_found", message: "Artifact not found" } });
+      }
 
       // Bodies omitted: a version list is for choosing one, not for reading them all.
       const rows = await db

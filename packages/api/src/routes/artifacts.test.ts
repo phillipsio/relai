@@ -1,17 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildServer } from "../server.js";
 import { ARTIFACT_BODY_MAX } from "./artifacts.js";
-import { createDb, artifacts, artifactVersions } from "@getrelai/db";
+import { createDb, artifacts, artifactVersions, users } from "@getrelai/db";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 
 const DB_URL = process.env.DATABASE_URL ?? "postgresql://relai:relai@localhost:5433/relai";
 const SECRET = "test-secret-artifacts";
+const SERVICE_TOKEN = "test-service-artifacts";
+const ownerId = "usr_artifacts_owner";
 
 process.env.DATABASE_URL = DB_URL;
 process.env.API_SECRET = SECRET;
+process.env.SERVICE_ADMIN_TOKEN = SERVICE_TOKEN;
 
 const ADMIN = { Authorization: `Bearer ${SECRET}`, "Content-Type": "application/json" };
+const OWNER = { Authorization: `Bearer ${SERVICE_TOKEN}`, "X-Owner-Id": ownerId, "Content-Type": "application/json" };
 const asAgent = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
 
 let app: FastifyInstance;
@@ -23,8 +27,9 @@ beforeAll(async () => {
   app = buildServer({ logger: false, scheduler: false });
   await app.ready();
 
+  await createDb(DB_URL).insert(users).values({ id: ownerId, email: `${ownerId}@test.local` }).onConflictDoNothing();
   const repo = await app.inject({
-    method: "POST", url: "/repos", headers: ADMIN, body: JSON.stringify({ name: "__test__ artifacts" }),
+    method: "POST", url: "/repos", headers: OWNER, body: JSON.stringify({ name: "__test__ artifacts" }),
   });
   repoId = repo.json().data.id;
 
@@ -109,6 +114,29 @@ describe("publishing is one call and versions itself", () => {
 
     const list = await app.inject({ method: "GET", url: `/artifacts?repoId=${repoId}`, headers: asAgent(consumerToken) });
     expect(list.json().data.map((a: { name: string }) => a.name)).not.toContain("draft");
+  });
+
+  const listAs = (headers: Record<string, string>) =>
+    app.inject({ method: "GET", url: `/artifacts?repoId=${repoId}`, headers });
+  const pullAs = (headers: Record<string, string>, name: string) =>
+    app.inject({ method: "GET", url: `/artifacts/${name}?repoId=${repoId}`, headers });
+
+  it("shows a private artifact to the repo's owner", async () => {
+    await publish(publisherToken, { name: "owner-sees", body: "wip", visibility: "private" });
+
+    expect((await pullAs(OWNER, "owner-sees")).statusCode).toBe(200);
+    expect((await listAs(OWNER)).json().data.map((a: { name: string }) => a.name)).toContain("owner-sees");
+  });
+
+  it("hides a private artifact from the deprecated shared secret", async () => {
+    await publish(publisherToken, { name: "secret-blind", body: "wip", visibility: "private" });
+    await publish(publisherToken, { name: "secret-sees", body: "shared" });
+
+    expect((await pullAs(ADMIN, "secret-blind")).statusCode).toBe(404);
+    expect((await pullAs(ADMIN, "secret-sees")).statusCode).toBe(200);
+    const names = (await listAs(ADMIN)).json().data.map((a: { name: string }) => a.name);
+    expect(names).toContain("secret-sees");
+    expect(names).not.toContain("secret-blind");
   });
 });
 

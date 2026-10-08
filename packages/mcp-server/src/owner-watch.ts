@@ -41,12 +41,14 @@ function describe(task: WatchTask, state: AttentionState): string {
   return `relai: "${title}" is ${LABEL[state]}${where} (${task.id}).${thread}${next}`;
 }
 
+export interface Notice { text: string; ids: string[] }
+
 // `prev === null` is the first run: summarise, or opening a session fires dozens.
 // Tasks leaving the set are dropped, so re-entry notifies again.
 export function diffAttention(
   prev: Map<string, AttentionState> | null,
   tasks: WatchTask[],
-): { notices: string[]; next: Map<string, AttentionState> } {
+): { notices: Notice[]; next: Map<string, AttentionState> } {
   const next = new Map<string, AttentionState>();
   for (const t of tasks) {
     const state = attentionStateOf(t);
@@ -59,15 +61,40 @@ export function diffAttention(
     for (const s of next.values()) counts.set(s, (counts.get(s) ?? 0) + 1);
     const parts = [...counts.entries()].map(([s, n]) => `${n} ${s}`).sort();
     return {
-      notices: [`relai: ${next.size} item(s) need you (${parts.join(", ")}). Call list_attention.`],
+      notices: [{ text: `relai: ${next.size} item(s) need you (${parts.join(", ")}). Call list_attention.`, ids: [...next.keys()] }],
       next,
     };
   }
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const notices: string[] = [];
+  const notices: Notice[] = [];
   for (const [id, state] of next) {
-    if (prev.get(id) !== state) notices.push(describe(byId.get(id)!, state));
+    if (prev.get(id) !== state) notices.push({ text: describe(byId.get(id)!, state), ids: [id] });
   }
   return { notices, next };
+}
+
+export async function deliverAttention(
+  prev: Map<string, AttentionState> | null,
+  tasks: WatchTask[],
+  send: (text: string) => Promise<unknown>,
+): Promise<Map<string, AttentionState> | null> {
+  const { notices, next } = diffAttention(prev, tasks);
+  const undelivered = new Set<string>();
+  for (const n of notices) {
+    try {
+      await send(n.text);
+    } catch (err) {
+      console.error("[relai-mcp] attention notice not delivered:", err instanceof Error ? err.message : err);
+      n.ids.forEach((id) => undelivered.add(id));
+    }
+  }
+  if (undelivered.size === 0) return next;
+  if (prev === null) return null;
+  for (const id of undelivered) {
+    const before = prev.get(id);
+    if (before) next.set(id, before);
+    else next.delete(id);
+  }
+  return next;
 }

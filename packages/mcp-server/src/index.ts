@@ -11,7 +11,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ApiClient } from "./api-client.js";
 import type { ToolConfig } from "./tools.js";
 import { registerTools } from "./register-tools.js";
-import { diffAttention, type AttentionState, type WatchTask } from "./owner-watch.js";
+import { deliverAttention, type AttentionState, type WatchTask } from "./owner-watch.js";
 import { assertRepoMatch } from "./repo-guard.js";
 
 // Report the package version (dist/index.js → ../package.json) so the MCP
@@ -94,11 +94,8 @@ if (OWNER_MODE) {
         apiClient.getTasks({ status: "blocked,pending_verification,proposed" }),
         apiClient.getTasks({ status: "in_progress" }),
       ]);
-      const { notices, next } = diffAttention(seen, [...attention, ...active] as WatchTask[]);
-      seen = next;
-      for (const data of notices) {
-        await server.server.sendLoggingMessage({ level: "warning", data });
-      }
+      seen = await deliverAttention(seen, [...attention, ...active] as WatchTask[],
+        (data) => server.server.sendLoggingMessage({ level: "warning", data }));
     } catch (err) {
       // Logged, not swallowed: a silent catch here is what hid the missing
       // logging capability. `seen` is left as-is so a blip does not replay the

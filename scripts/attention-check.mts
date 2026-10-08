@@ -36,4 +36,4 @@ const all = [
 const { notices, next } = diffAttention(prev, all);
 // Written before printing: a crash after notifying would otherwise repeat it.
 writeFileSync(STATE, JSON.stringify(Object.fromEntries(next), null, 2));
-for (const n of notices) console.log(n);
+for (const n of notices) console.log(n.text);

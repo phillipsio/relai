@@ -74,11 +74,7 @@ if (OWNER_MODE) {
                 apiClient.getTasks({ status: "blocked,pending_verification,proposed" }),
                 apiClient.getTasks({ status: "in_progress" }),
             ]);
-            const { notices, next } = (0, owner_watch_js_1.diffAttention)(seen, [...attention, ...active]);
-            seen = next;
-            for (const data of notices) {
-                await server.server.sendLoggingMessage({ level: "warning", data });
-            }
+            seen = await (0, owner_watch_js_1.deliverAttention)(seen, [...attention, ...active], (data) => server.server.sendLoggingMessage({ level: "warning", data }));
         }
         catch (err) {
             // Logged, not swallowed: a silent catch here is what hid the missing

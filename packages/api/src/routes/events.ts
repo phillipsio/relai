@@ -1,8 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import { bus, resolveSubscribers, deliverableTo, type AppEvent } from "../lib/events.js";
-import type { Db } from "@getrelai/db";
+import { tokens, ownerGodAgents, type Db } from "@getrelai/db";
+import { and, eq, isNull } from "drizzle-orm";
 
-const HEARTBEAT_MS = 25_000;
+function heartbeatMs(): number {
+  const n = Number(process.env.SSE_HEARTBEAT_MS);
+  return Number.isFinite(n) && n >= 1 ? n : 25_000;
+}
 
 export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
   fastify.get("/events", async (request, reply) => {
@@ -13,6 +17,18 @@ export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       });
     }
 
+    const { tokenId, chainSlotId } = request;
+    const credentialLive = async () => {
+      if (!tokenId) return false;
+      const [row] = await db.select({ id: tokens.id }).from(tokens)
+        .where(and(eq(tokens.id, tokenId), isNull(tokens.revokedAt))).limit(1);
+      if (!row) return false;
+      if (!chainSlotId) return true;
+      const [slot] = await db.select({ id: ownerGodAgents.id }).from(ownerGodAgents)
+        .where(eq(ownerGodAgents.id, chainSlotId)).limit(1);
+      return !!slot;
+    };
+
     reply.raw.writeHead(200, {
       "Content-Type":  "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -21,14 +37,23 @@ export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
     });
     reply.raw.write(": connected\n\n");
 
+    const close = () => {
+      clearInterval(heartbeat);
+      bus.off("event", onEvent);
+      reply.raw.end();
+    };
+
     const heartbeat = setInterval(() => {
-      reply.raw.write(": ping\n\n");
-    }, HEARTBEAT_MS);
+      credentialLive()
+        .then((live) => (live ? reply.raw.write(": ping\n\n") : close()))
+        .catch((err) => request.log.error({ err }, "SSE credential check failed"));
+    }, heartbeatMs());
 
     const onEvent = async (event: AppEvent) => {
       try {
         const subscribers = await resolveSubscribers(db, event);
         if (!deliverableTo(event, agent.id, subscribers)) return;
+        if (!(await credentialLive())) return close();
         reply.raw.write(`event: ${event.kind}\n`);
         reply.raw.write(`id: ${event.id}\n`);
         reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -39,10 +64,7 @@ export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
 
     bus.on("event", onEvent);
 
-    request.raw.on("close", () => {
-      clearInterval(heartbeat);
-      bus.off("event", onEvent);
-    });
+    request.raw.on("close", close);
 
     // Returning a never-resolving promise keeps Fastify from closing the response.
     return new Promise<void>(() => {});

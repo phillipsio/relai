@@ -5,7 +5,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 function heartbeatMs(): number {
   const n = Number(process.env.SSE_HEARTBEAT_MS);
-  return Number.isFinite(n) && n >= 1 ? n : 25_000;
+  return Number.isFinite(n) && n >= 100 && n <= 60_000 ? n : 25_000;
 }
 
 export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db }) => {
@@ -43,10 +43,17 @@ export const eventRoutes: FastifyPluginAsync<{ db: Db }> = async (fastify, { db 
       reply.raw.end();
     };
 
+    let checking = false;
     const heartbeat = setInterval(() => {
+      if (checking) return;
+      checking = true;
       credentialLive()
         .then((live) => (live ? reply.raw.write(": ping\n\n") : close()))
-        .catch((err) => request.log.error({ err }, "SSE credential check failed"));
+        .catch((err) => {
+          request.log.error({ err }, "SSE credential check failed");
+          close();
+        })
+        .finally(() => { checking = false; });
     }, heartbeatMs());
 
     const onEvent = async (event: AppEvent) => {

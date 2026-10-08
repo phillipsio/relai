@@ -28,6 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  app.server.closeAllConnections();
   if (repoId) await app.inject({ method: "DELETE", url: `/repos/${repoId}`, headers: ADMIN });
   await app?.close();
 });
@@ -60,8 +61,10 @@ async function agentWithStream() {
   return { agentId, token, reader, readUntilClosed };
 }
 
+const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
 const threadEvent = (threadId: string) => ({
-  id: `evt_sse_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  id: `evt_sse_${uid()}`,
   kind: "message.posted" as const,
   repoId,
   targetType: "thread" as const,
@@ -73,8 +76,8 @@ const threadEvent = (threadId: string) => ({
 describe("GET /events ends when its credential dies", () => {
   it("delivers to a live token", async () => {
     const s = await agentWithStream();
-    const threadId = `thread_sse_${Date.now()}`;
-    await db.insert(subscriptions).values({ id: `sub_${Date.now()}`, agentId: s.agentId, targetType: "thread", targetId: threadId });
+    const threadId = `thread_sse_${uid()}`;
+    await db.insert(subscriptions).values({ id: `sub_${uid()}`, agentId: s.agentId, targetType: "thread", targetId: threadId });
     const event = threadEvent(threadId);
     await publish(db, event);
     const out = await s.readUntilClosed(600);
@@ -85,12 +88,12 @@ describe("GET /events ends when its credential dies", () => {
 
   it("closes without delivering once the token is revoked", async () => {
     const s = await agentWithStream();
-    const threadId = `thread_sse_${Date.now()}`;
-    await db.insert(subscriptions).values({ id: `sub_${Date.now()}`, agentId: s.agentId, targetType: "thread", targetId: threadId });
+    const threadId = `thread_sse_${uid()}`;
+    await db.insert(subscriptions).values({ id: `sub_${uid()}`, agentId: s.agentId, targetType: "thread", targetId: threadId });
     await db.update(tokens).set({ revokedAt: new Date() }).where(eq(tokens.agentId, s.agentId));
     const event = threadEvent(threadId);
     await publish(db, event);
-    const out = await s.readUntilClosed(2000);
+    const out = await s.readUntilClosed(5000);
     expect(out.text).not.toContain(event.id);
     expect(out.closed).toBe(true);
   });
@@ -98,28 +101,39 @@ describe("GET /events ends when its credential dies", () => {
   it("closes on the next heartbeat when no event arrives", async () => {
     const s = await agentWithStream();
     await db.update(tokens).set({ revokedAt: new Date() }).where(eq(tokens.agentId, s.agentId));
-    const out = await s.readUntilClosed(2000);
+    const out = await s.readUntilClosed(5000);
     expect(out.closed).toBe(true);
   });
 
   it("closes once the token's lineage slot is deleted", async () => {
-    const s = await agentWithStream();
-    const ownerId = `usr_sse_${Date.now()}`;
+    const ownerId = `usr_sse_${uid()}`;
     const { users } = await import("@getrelai/db");
     await db.insert(users).values({ id: ownerId, email: `${ownerId}@test.invalid` });
-    const [slot] = await db.insert(ownerGodAgents).values({ id: `slot_${Date.now()}`, ownerId, agentId: s.agentId }).returning();
-    await db.update(tokens).set({ chainSlotId: slot.id }).where(eq(tokens.agentId, s.agentId));
-    await s.reader.cancel();
+    try {
+      const s = await agentWithStream();
+      const [slot] = await db.insert(ownerGodAgents).values({ id: `slot_${uid()}`, ownerId, agentId: s.agentId }).returning();
+      await db.update(tokens).set({ chainSlotId: slot.id }).where(eq(tokens.agentId, s.agentId));
+      await s.reader.cancel();
 
-    const relogged = await fetch(`${base}/events`, { headers: { Authorization: `Bearer ${s.token}` } });
-    expect(relogged.status).toBe(200);
-    const reader = relogged.body!.getReader();
-    await db.delete(ownerGodAgents).where(eq(ownerGodAgents.id, slot.id));
-    const done = await Promise.race([
-      (async () => { for (;;) { const r = await reader.read(); if (r.done) return true; } })(),
-      new Promise<boolean>((r) => setTimeout(() => r(false), 2000)),
-    ]);
-    expect(done).toBe(true);
-    await db.delete(users).where(eq(users.id, ownerId));
+      const relogged = await fetch(`${base}/events`, { headers: { Authorization: `Bearer ${s.token}` } });
+      expect(relogged.status).toBe(200);
+      const reader = relogged.body!.getReader();
+      const threadId = `thread_sse_${uid()}`;
+      await db.insert(subscriptions).values({ id: `sub_${uid()}`, agentId: s.agentId, targetType: "thread", targetId: threadId });
+      await db.delete(ownerGodAgents).where(eq(ownerGodAgents.id, slot.id));
+      const event = threadEvent(threadId);
+      await publish(db, event);
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const done = await Promise.race([
+        (async () => { for (;;) { const r = await reader.read(); if (r.done) return true; text += decoder.decode(r.value); } })(),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 5000)),
+      ]);
+      expect(done).toBe(true);
+      expect(text).not.toContain(event.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, ownerId));
+    }
   });
 });

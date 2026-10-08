@@ -212,7 +212,7 @@ program
   .option("--working-dir <path>", "Override the working directory (defaults to CWD)")
   .option("--worker-type <type>", "Agent runtime: claude, copilot, cursor, windsurf, gemini, gpt, mcp, human (default: human)")
   .option("--name <name>", "Agent name (required with --invite when not interactive)")
-  .option("--specialization <spec>", "Agent specialization (defaults to the invite's suggestion)")
+  .option("--specialization <spec>", "Agent specialization: writer, reviewer, tester, architect, devops, orchestrator (defaults to the invite's suggestion)")
   .action(loginCommand);
 
 // ── repo invite ───────────────────────────────────────────────────────────

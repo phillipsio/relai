@@ -103,7 +103,7 @@ export async function loginCommand(opts: {
 
   const ni = nonInteractive();
   const apiUrl = opts.api
-    ?? (ni ? requireFlag("API URL", "--api <url>") : await input({ message: "API URL", default: "http://localhost:3010" }));
+    || (ni ? requireFlag("api url", "--api <url>") : await input({ message: "API URL", default: "http://localhost:3010" }));
 
   let agentId: string;
   let agentName: string;
@@ -130,12 +130,12 @@ export async function loginCommand(opts: {
   } else {
     const client = new CliApiClient({ apiUrl });
     const name = opts.name
-      ?? (ni ? requireFlag("agent name", "--name <name>") : await input({
+      || (ni ? requireFlag("agent name", "--name <name>") : await input({
         message: "Agent name",
         default: `${process.env.USER ?? "agent"}-claude-code`,
       }));
     const specialization = opts.specialization
-      ?? (ni ? undefined : await select({
+      || (ni ? undefined : await select({
         message: "Specialization",
         choices: SPECIALIZATION_CHOICES,
       }));

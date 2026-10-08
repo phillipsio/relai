@@ -43,14 +43,14 @@ function setupFetchMock(sent: { body?: Record<string, unknown> }) {
 describe("relai login --worker-type", () => {
   let workdir: string;
   let configDir: string;
+  let originalIsTTY: boolean;
 
   beforeEach(() => {
     workdir   = mkdtempSync(join(tmpdir(), "relai-wt-work-"));
     configDir = mkdtempSync(join(tmpdir(), "relai-wt-cfg-"));
     process.env.PITBOSS_CONFIG_DIR   = configDir;
     process.env.PITBOSS_AGENTS_STATE = join(configDir, "agents.json");
-    // The prompts are mocked, so this drives the interactive path; a
-    // non-interactive run is covered unmocked in login-noninteractive.test.ts.
+    originalIsTTY = process.stdin.isTTY;
     Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit__:${code ?? 0}`);
@@ -61,7 +61,7 @@ describe("relai login --worker-type", () => {
   });
 
   afterEach(() => {
-    Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
     delete process.env.PITBOSS_CONFIG_DIR;
     delete process.env.PITBOSS_AGENTS_STATE;
     vi.unstubAllGlobals();
